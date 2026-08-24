@@ -9,11 +9,20 @@ Modules map to the paper's Part 1:
     agenttime      raw vs critical agent-time              (Section 4)
     repro          error bars, CONFIRM, non-overlapping CI (Section 6)
     probes         probe output parsers                    (Section 3)
+
+Part 2 (the operation):
+    operation      seven-slot schema, three-type typology, registers, milestones
+    session        session-as-trace and the excess-vs-optimal efficiency metric
 """
 from __future__ import annotations
 
-from . import adapters, probes, runners, traceio
+from . import adapters, operation, probes, runners, session, traceio
 from .agenttime import decompose, inference_seconds
+from .operation import (
+    ACTIVE, APP_SERVING, DEPROVISION, OPERATE_MUTATE, PROVISION, SSH_READY,
+    Operation, Phase, has_defined_endpoints, is_schema_conformant, register_of,
+)
+from .session import Session, efficiency
 from .capability import dci, dominant_axis, normalize_phase, ratios
 from .criticalpath import critical_path, is_critical, owner_split, schedule
 from .discriminator import fit_fixed_variable, fit_is_valid, is_constant, karp_flatt, plane_shares
@@ -29,6 +38,10 @@ __all__ = [
     "fit_fixed_variable", "fit_is_valid", "plane_shares", "karp_flatt", "is_constant",
     "decompose", "inference_seconds",
     "geomean", "mean_ci", "bootstrap_ci", "confirm", "different",
-    "probes", "runners", "traceio", "adapters",
+    "Operation", "Phase", "PROVISION", "OPERATE_MUTATE", "DEPROVISION",
+    "SSH_READY", "APP_SERVING", "ACTIVE", "register_of",
+    "has_defined_endpoints", "is_schema_conformant",
+    "Session", "efficiency",
+    "probes", "runners", "traceio", "adapters", "operation", "session",
     "__version__",
 ]

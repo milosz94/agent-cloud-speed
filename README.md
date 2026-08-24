@@ -1,12 +1,15 @@
 # acspeed
 
-A reference implementation of **Part 1** of a cloud-agnostic framework for
+A reference implementation of **Parts 1 and 2** of a cloud-agnostic framework for
 measuring **agent-cloud operation efficiency** as a *speed* test.
 
 It implements the computational core of the paper's Part 1 baseline: the
 critical-path split of wall-clock into agent versus platform time, the measured
 delivered-capability normalization, the control-plane versus data-plane
 discriminator, the agent-time decomposition, and the reproducibility statistics.
+**Part 2** adds the operation model: the seven-slot schema, the three-type
+typology, the atom registers, the reused SSH-ready milestone split, and the
+session-as-trace efficiency metric.
 Everything here is pure Python (standard library only), so you can clone and run
 it without installing anything.
 
@@ -23,7 +26,7 @@ python -m acspeed agent-time examples/example_trace.json
 python -m acspeed critical-path examples/example_trace.json
 ```
 
-## What maps to what (paper Part 1)
+## What maps to what (paper Parts 1-2)
 
 | Module | Paper section | Implements |
 |---|---|---|
@@ -33,6 +36,8 @@ python -m acspeed critical-path examples/example_trace.json
 | `acspeed/agenttime.py` | Section 4 (agent) | Raw vs critical agent-time and the component split (inference / orchestration / wait / rework). Inference seconds `= TTFT + TPOT * output_tokens` (MLPerf). |
 | `acspeed/repro.py` | Section 6 | Geometric mean, bootstrap and normal CIs, the CONFIRM repeat-until-tight rule (Maricq et al. 2018), and the non-overlapping-CI comparison rule. |
 | `acspeed/probes.py` | Section 3 (platform) | Parsers for the delivered-capability probes: `sysbench` (compute), STREAM (memory), `fio` (disk), `iperf3` (network). Runner wrappers that shell out live in `runners.py`. |
+| `acspeed/operation.py` | Part 2, Sections 2-4, 6 | The operation as a **composite over atoms**: the seven-slot schema, the three-type typology (provision / operate-mutate / deprovision) via a measured `profile()`, the three atom registers with the platform/agent invariant, and the **milestone split** that reuses SSH-ready to separate the cited lower half from the novel upper-half agent/platform decomposition. Executable falsifiability checks (`is_schema_conformant`). |
+| `acspeed/session.py` | Part 2, Section 7 | Session as a **trace of operations**, and `efficiency(actual, optimal)` = excess critical-path wall-clock vs an optimal reference trace, with the exact identity `excess = selection_excess + execution_excess`. Constructing the optimal trace is Part 3. |
 | `acspeed/adapters/` | Section 5 / coupling | MCP-based cloud adapters. To measure a cloud you point an `MCPAdapter` at that cloud's **MCP server**; the same code serves redu, AWS, GCP and Azure via per-cloud `CloudProfile` tool maps. |
 
 ## The idea in one example
