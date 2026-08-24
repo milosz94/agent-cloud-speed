@@ -16,7 +16,7 @@ from . import adapters, probes, runners, traceio
 from .agenttime import decompose, inference_seconds
 from .capability import dci, dominant_axis, normalize_phase, ratios
 from .criticalpath import critical_path, is_critical, owner_split, schedule
-from .discriminator import fit_fixed_variable, is_constant, karp_flatt, plane_shares
+from .discriminator import fit_fixed_variable, fit_is_valid, is_constant, karp_flatt, plane_shares
 from .repro import bootstrap_ci, confirm, different, geomean, mean_ci
 from .types import AGENT, PLATFORM, CVector, Estimate, Span
 
@@ -26,7 +26,7 @@ __all__ = [
     "Span", "CVector", "Estimate", "AGENT", "PLATFORM",
     "schedule", "critical_path", "owner_split", "is_critical",
     "ratios", "dci", "dominant_axis", "normalize_phase",
-    "fit_fixed_variable", "plane_shares", "karp_flatt", "is_constant",
+    "fit_fixed_variable", "fit_is_valid", "plane_shares", "karp_flatt", "is_constant",
     "decompose", "inference_seconds",
     "geomean", "mean_ci", "bootstrap_ci", "confirm", "different",
     "probes", "runners", "traceio", "adapters",

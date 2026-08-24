@@ -15,7 +15,7 @@ def spans_from_dicts(items) -> List[Span]:
                 id=d["id"],
                 duration=float(d["duration"]),
                 owner=d["owner"],
-                deps=tuple(d.get("deps", ())),
+                deps=tuple(d.get("deps") or ()),  # tolerate absent, null, or empty deps
                 kind=d.get("kind", ""),
             )
         )

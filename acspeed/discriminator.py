@@ -47,12 +47,30 @@ def fit_fixed_variable(rates: Sequence[float], times: Sequence[float]) -> Dict[s
     return {"t_fixed": intercept, "W": slope, "r_squared": r2}
 
 
+def fit_is_valid(fit: Dict[str, float], tol: float = 1e-9) -> bool:
+    """True iff the fit obeys the model (control-plane floor and data-plane work
+    are both non-negative). A negative intercept or slope means the mechanistic
+    fixed-plus-variable model is rejected for this phase."""
+    return fit["t_fixed"] >= -tol and fit["W"] >= -tol
+
+
 def plane_shares(fit: Dict[str, float], rate: float) -> Dict[str, float]:
-    """At a given delivered rate, split predicted time into control- vs data-plane share."""
+    """At a given delivered rate, split predicted time into control- vs data-plane share.
+
+    Raises if the fit is invalid (a negative floor or slope): per the paper the
+    phase should be reported as unresolved rather than given a nonsensical share
+    outside [0, 1]. Use ``fit_is_valid`` to check before calling in a sweep.
+    """
     if rate <= 0:
         raise ValueError("rate must be positive")
-    t_fixed = fit["t_fixed"]
-    data = fit["W"] / rate
+    if not fit_is_valid(fit):
+        raise ValueError(
+            f"fixed-plus-variable model rejected: t_fixed={fit['t_fixed']:.6g}, "
+            f"W={fit['W']:.6g}. A negative control-plane floor or data-plane work is "
+            "unphysical; report this phase as unresolved (see the Karp-Flatt falsifier)."
+        )
+    t_fixed = max(0.0, fit["t_fixed"])   # clamp tiny float-noise negatives to the 0 floor
+    data = max(0.0, fit["W"]) / rate
     total = t_fixed + data
     if total <= 0:
         raise ValueError("non-positive predicted time")

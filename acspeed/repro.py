@@ -36,7 +36,10 @@ def mean_ci(samples: Sequence[float], confidence: float = 0.95) -> Estimate:
         raise ValueError("no samples")
     m = sum(xs) / n
     if n == 1:
-        return Estimate(m, m, m, 1)
+        # a single sample carries no information about spread: unbounded interval,
+        # so different() cannot declare it distinguishable and confirm() will not
+        # treat one sample as convergence.
+        return Estimate(m, -math.inf, math.inf, 1)
     var = sum((x - m) ** 2 for x in xs) / (n - 1)
     se = math.sqrt(var / n)
     z = _Z.get(confidence, _Z[0.95])
@@ -55,6 +58,8 @@ def bootstrap_ci(samples: Sequence[float], confidence: float = 0.95,
     if n == 0:
         raise ValueError("no samples")
     stat = statistic or (lambda v: sum(v) / len(v))
+    if n == 1:
+        return Estimate(stat(xs), -math.inf, math.inf, 1)
     rng = random.Random(seed)
     boot: List[float] = []
     for _ in range(iters):

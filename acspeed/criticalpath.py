@@ -85,9 +85,14 @@ def schedule(spans: Sequence[Span]) -> dict:
 
 
 def is_critical(spans: Sequence[Span], sched: dict = None) -> Dict[str, bool]:
-    """Per-span: True iff the span lies on a critical path (slack ~ 0)."""
+    """Per-span: True iff the span lies on a critical path (slack ~ 0).
+
+    The tolerance scales with the makespan so it stays meaningful at large
+    magnitudes (floating-point ULP grows with the numbers).
+    """
     sched = sched or schedule(spans)
-    return {sid: abs(sl) <= _EPS for sid, sl in sched["slack"].items()}
+    tol = max(_EPS, 1e-9 * abs(sched["makespan"]))
+    return {sid: abs(sl) <= tol for sid, sl in sched["slack"].items()}
 
 
 def critical_path(spans: Sequence[Span]) -> List[Span]:
@@ -104,15 +109,21 @@ def critical_path(spans: Sequence[Span]) -> List[Span]:
     ef = sched["earliest_finish"]
     makespan = sched["makespan"]
 
-    sinks = sorted(sid for sid in ef if abs(ef[sid] - makespan) <= _EPS)
+    # The sink and each binding predecessor are chosen by EXACT match against
+    # stored earliest-finish values (never by subtraction), so the reconstruction
+    # is robust at any magnitude: the binding predecessor of a span is exactly the
+    # dep with the maximum earliest finish (= that span's earliest start).
+    sinks = sorted(sid for sid in ef if ef[sid] == makespan)
     cur = sinks[0]
     chain: List[Span] = []
     while cur is not None:
         s = by_id[cur]
         chain.append(s)
-        start = ef[cur] - s.duration
-        preds = sorted(d for d in s.deps if abs(ef[d] - start) <= _EPS)
-        cur = preds[0] if preds else None
+        if s.deps:
+            mx = max(ef[d] for d in s.deps)
+            cur = sorted(d for d in s.deps if ef[d] == mx)[0]
+        else:
+            cur = None
     chain.reverse()
     return chain
 
