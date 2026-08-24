@@ -12,7 +12,7 @@ Modules map to the paper's Part 1:
 """
 from __future__ import annotations
 
-from . import probes, runners, traceio
+from . import adapters, probes, runners, traceio
 from .agenttime import decompose, inference_seconds
 from .capability import dci, dominant_axis, normalize_phase, ratios
 from .criticalpath import critical_path, is_critical, owner_split, schedule
@@ -29,6 +29,6 @@ __all__ = [
     "fit_fixed_variable", "plane_shares", "karp_flatt", "is_constant",
     "decompose", "inference_seconds",
     "geomean", "mean_ci", "bootstrap_ci", "confirm", "different",
-    "probes", "runners", "traceio",
+    "probes", "runners", "traceio", "adapters",
     "__version__",
 ]

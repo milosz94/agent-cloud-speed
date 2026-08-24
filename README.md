@@ -33,6 +33,7 @@ python -m acspeed critical-path examples/example_trace.json
 | `acspeed/agenttime.py` | Section 4 (agent) | Raw vs critical agent-time and the component split (inference / orchestration / wait / rework). Inference seconds `= TTFT + TPOT * output_tokens` (MLPerf). |
 | `acspeed/repro.py` | Section 6 | Geometric mean, bootstrap and normal CIs, the CONFIRM repeat-until-tight rule (Maricq et al. 2018), and the non-overlapping-CI comparison rule. |
 | `acspeed/probes.py` | Section 3 (platform) | Parsers for the delivered-capability probes: `sysbench` (compute), STREAM (memory), `fio` (disk), `iperf3` (network). Runner wrappers that shell out live in `runners.py`. |
+| `acspeed/adapters/` | Section 5 / coupling | MCP-based cloud adapters. To measure a cloud you point an `MCPAdapter` at that cloud's **MCP server**; the same code serves redu, AWS, GCP and Azure via per-cloud `CloudProfile` tool maps. |
 
 ## The idea in one example
 
@@ -56,6 +57,30 @@ or async call lets the agent overlap instead of poll, and a clean error envelope
 cuts self-rework. The framework *measures* an interface's value: run the same
 operation on the same cloud with the same reference agent via one interface then
 another, and compare the change in critical-agent-time and overlap.
+
+## Adapters are MCP servers
+
+The agent drives the cloud *through MCP*, so an adapter is an **MCP client pointed
+at a cloud's MCP server**, not an SDK wrapper. To measure a cloud, give an
+`MCPAdapter` a transport (its MCP server) and that cloud's `CloudProfile`, which
+maps the canonical operations (`provision`, `wait_ready`, `status`, `teardown`)
+to the server's tool names. The analysis is identical across clouds; only the
+profile differs. redu's profile uses the real redu MCP tool names
+(`create_instance`, `wait_for_deployment`, ...); `aws` / `gcp` / `azure` are
+stubs to fill in against their MCP servers during Part 5. Publishing reports the
+three hyperscalers; redu uses the same tool separately.
+
+Because the adapter times the MCP tool calls, it **measures the interface effect**
+directly. Same cloud, same 9s boot, only the readiness interface changes:
+
+| interface | makespan | critical-platform | critical-agent |
+|---|---|---|---|
+| blocking (`wait_for_deployment`) | 9.05 | 9.05 | 0.00 (agent free) |
+| poll (status loop) | 9.25 | 0.05 | 9.20 (agent stuck polling) |
+
+A blocking/async tool keeps the wait on the platform and frees the agent to
+overlap; a poll loop moves the wait onto the agent. That is the coupling lever,
+turned into a measured number (`tests/test_adapters.py`).
 
 ## Scope and status
 
