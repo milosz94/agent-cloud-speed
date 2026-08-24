@@ -1,0 +1,8 @@
+[
+  {"id": "s1", "duration": 2,  "owner": "agent",    "deps": [],           "kind": "inference"},
+  {"id": "s2", "duration": 10, "owner": "platform", "deps": ["s1"],        "kind": "provision"},
+  {"id": "s3", "duration": 4,  "owner": "agent",    "deps": ["s1"],        "kind": "inference"},
+  {"id": "s4", "duration": 6,  "owner": "platform", "deps": ["s2", "s3"],  "kind": "boot"},
+  {"id": "s5", "duration": 3,  "owner": "agent",    "deps": ["s4"],        "kind": "orchestration"},
+  {"id": "s6", "duration": 2,  "owner": "agent",    "deps": ["s5"],        "kind": "rework"}
+]

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acspeed"
+version = "0.1.0"
+description = "Reference implementation of the Part 1 baseline for measuring agent-cloud operation efficiency as a speed test."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+keywords = ["cloud", "agents", "benchmarking", "critical-path", "measurement"]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+acspeed = "acspeed.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["acspeed*"]
