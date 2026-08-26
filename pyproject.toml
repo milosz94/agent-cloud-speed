@@ -17,6 +17,10 @@ dev = ["pytest"]
 
 [project.scripts]
 acspeed = "acspeed.cli:main"
+acspeed-run = "autorun:main"
+
+[tool.setuptools]
+py-modules = ["autorun", "build_tables", "probe_loadtest"]
 
 [tool.setuptools.packages.find]
 include = ["acspeed*"]

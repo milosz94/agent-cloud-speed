@@ -7,3 +7,9 @@ dist/
 .venv/
 venv/
 .DS_Store
+
+# local microVM sandbox (rootfs/images, ~1GB) -- never commit
+sandbox/
+
+# private substrate denylist (names the infra we strip -- never publish)
+/acspeed/_substrate_rules.py

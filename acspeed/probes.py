@@ -6,7 +6,7 @@ wrappers that actually shell out to the tools live in ``runners.py`` and require
 the tools installed on the target VM.
 
 Axis mapping: compute = sysbench events/s; memory = STREAM Triad GB/s;
-disk = fio IOPS / bandwidth; network = iperf3 bits/s.
+disk = fio IOPS / bandwidth; network = VM-to-VM iperf3 bits/s + ping RTT ms (C17).
 """
 from __future__ import annotations
 
@@ -38,9 +38,20 @@ def parse_stream(output: str) -> Dict[str, float]:
     return out
 
 
+def _first_json(output: str) -> dict:
+    """Parse the first JSON object in `output`, tolerating leading/trailing non-JSON (a login-shell
+    banner, an MOTD, or a tool warning printed before the JSON). fio and iperf3 emit strict JSON but a
+    remote shell can prepend text; regex-based parsers survive that, strict json.loads does not."""
+    i = output.find("{")
+    if i < 0:
+        raise ValueError(f"no JSON object in output: {output[:160]!r}")
+    obj, _ = json.JSONDecoder().raw_decode(output[i:])
+    return obj
+
+
 def parse_fio(output: str) -> Dict[str, float]:
     """IOPS and bandwidth (KB/s) from ``fio --output-format=json`` output."""
-    data = json.loads(output)
+    data = _first_json(output)
     jobs = data.get("jobs", [])
     if not jobs:
         raise ValueError("no fio jobs in output")
@@ -55,13 +66,39 @@ def parse_fio(output: str) -> Dict[str, float]:
     }
 
 
-def parse_iperf3(output: str) -> Dict[str, float]:
-    """Bits per second from ``iperf3 -J`` (JSON) output."""
-    data = json.loads(output)
+def parse_iperf3(output: str) -> Dict[str, object]:
+    """Bits per second from ``iperf3 -J`` (JSON) output, plus the per-interval throughput series so the
+    network axis can report a DISTRIBUTION, not just the mean (C17 E1: report the distribution). The
+    scalar ``received_bps`` stays the headline; ``intervals_bps`` is the disclosed distribution."""
+    data = _first_json(output)
     end = data.get("end", {})
     recv = end.get("sum_received", {})
     sent = end.get("sum_sent", {})
+    intervals = []
+    for iv in data.get("intervals", []):
+        s = iv.get("sum", {})
+        if "bits_per_second" in s:
+            intervals.append(float(s["bits_per_second"]))
     return {
         "received_bps": float(recv.get("bits_per_second", 0.0)),
         "sent_bps": float(sent.get("bits_per_second", 0.0)),
+        "intervals_bps": intervals,
     }
+
+
+def parse_ping(output: str) -> Dict[str, float]:
+    """Round-trip time in milliseconds from ``ping`` summary output. Reads the summary line
+    ``rtt min/avg/max/mdev = a/b/c/d ms`` (Linux iputils) or ``round-trip min/avg/max = a/b/c ms``
+    (BSD). ``min_ms`` is the physical path floor (the tail is queueing), so the RTT sub-metric of the
+    network axis is reported as the minimum (C17)."""
+    m = re.search(r"=\s*([0-9.]+)/([0-9.]+)/([0-9.]+)(?:/([0-9.]+))?\s*ms", output)
+    if not m:
+        raise ValueError("could not find an 'rtt min/avg/max' summary in ping output")
+    out = {
+        "min_ms": float(m.group(1)),
+        "avg_ms": float(m.group(2)),
+        "max_ms": float(m.group(3)),
+    }
+    if m.group(4) is not None:      # mdev (Linux) -> the RTT spread, part of the disclosed distribution
+        out["mdev_ms"] = float(m.group(4))
+    return out

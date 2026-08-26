@@ -49,6 +49,24 @@ class TestProbes(unittest.TestCase):
         self.assertAlmostEqual(n["received_bps"], 9.4e9)
         self.assertAlmostEqual(n["sent_bps"], 9.45e9)
 
+    def test_ping_linux(self):
+        out = ("2 packets transmitted, 2 received, 0% packet loss, time 1001ms\n"
+               "rtt min/avg/max/mdev = 0.298/0.377/0.512/0.061 ms\n")
+        r = probes.parse_ping(out)
+        self.assertAlmostEqual(r["min_ms"], 0.298)
+        self.assertAlmostEqual(r["avg_ms"], 0.377)
+        self.assertAlmostEqual(r["max_ms"], 0.512)
+
+    def test_ping_bsd_three_field(self):
+        out = "round-trip min/avg/max = 0.1/0.2/0.3 ms\n"
+        r = probes.parse_ping(out)
+        self.assertAlmostEqual(r["min_ms"], 0.1)
+        self.assertAlmostEqual(r["max_ms"], 0.3)
+
+    def test_ping_missing(self):
+        with self.assertRaises(ValueError):
+            probes.parse_ping("no rtt summary here")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,7 +13,13 @@ critical-path instrument is the same one used within an operation (Part 1), appl
 one scale up.
 
 Constructing the optimal reference trace per task is Part 3's job; this module
-computes the metric GIVEN an actual and an optimal trace.
+computes the coarser Part 2 metric GIVEN an actual and an optimal trace, where
+``selection_excess`` is measured against the optimal operation SET. Part 3
+refines the reference to the floor cost-to-go ``F_C`` and re-measures selection
+against the floor-optimal path (``reference.decompose``); Part 4 aggregates the
+per-task result into one headline (``weighting.suite_total`` and
+``weighting.geomean_ratio``). See the paper's Part 3, Section 4, for the
+disclosed selection-construct shift.
 """
 from __future__ import annotations
 

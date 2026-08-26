@@ -26,9 +26,31 @@ def main(argv=None) -> int:
     c = sub.add_parser("critical-path", help="print the critical path and owner split")
     c.add_argument("trace")
 
-    args = p.parse_args(argv)
-    spans = load_trace(args.trace)
+    s = sub.add_parser("sessions",
+                       help="redact credentials from agent transcripts into an auditable bundle")
+    s.add_argument("--in", dest="in_dir", required=True, help="directory of session transcripts")
+    s.add_argument("--out", dest="out_dir", required=True, help="output directory for the redacted bundle")
+    s.add_argument("--pattern", default="*.jsonl", help="glob for transcripts (default *.jsonl)")
+    s.add_argument("--keep-substrate", action="store_true",
+                   help="do NOT scrub infrastructure (tech names, control-plane hosts, internal IPs)")
 
+    args = p.parse_args(argv)
+
+    if args.cmd == "sessions":
+        from .sessions import bundle
+        try:
+            report = bundle(args.in_dir, args.out_dir, args.pattern, substrate=not args.keep_substrate)
+        except RuntimeError as e:
+            print("REDACTION FAILED: %s" % e)
+            return 1
+        print(json.dumps({"inputs": report["inputs"], "written": report["written"],
+                          "total_redactions": report["total_redactions_count"],
+                          "by_category": report["total_redactions"],
+                          "residue": len(report["files_with_residue"]),
+                          "out": args.out_dir}, indent=2))
+        return 0
+
+    spans = load_trace(args.trace)
     if args.cmd == "agent-time":
         print(json.dumps(decompose(spans), indent=2))
     elif args.cmd == "critical-path":
