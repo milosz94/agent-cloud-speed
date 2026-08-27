@@ -711,34 +711,61 @@ def measure_capability(prof: dict, url: str) -> dict | None:
     """OFF-CLOCK capability C (C12/C14) on the deployment's OWN VM: resolve its SSH endpoint (thin
     adapter), SSH in with the harness-held keypair, run the deterministic probe battery, normalize vs
     the frozen reference. NO agent, NO MCP for the shell. Non-fatal by construction: any failure is a
-    recorded result, never an exception that could disturb the (already-finished) timed operation."""
-    if prof["cloud"] != "redu":
-        return {"ok": False, "error": f"no capability adapter for cloud={prof['cloud']}"}
+    recorded result, never an exception that could disturb the (already-finished) timed operation.
+    Dispatched per cloud: redu resolves the VM via its MCP; aws is best-effort over the served URL (works
+    when the deploy is a raw shell-reachable EC2 VM, disclosed N/A for Lightsail-container / App Runner /
+    behind an ALB, where no shell is reachable)."""
+    cloud = prof["cloud"]
     try:
-        from acspeed.adapters.redu_capability import ReduCapabilityAdapter, resolve_deployment_id_by_url
         from acspeed import capability_probe as cp
         ref = json.load(open(CAP_REFERENCE)) if os.path.exists(CAP_REFERENCE) else {}
         ref_scalars = {k: v for k, v in (ref.get("scalars") or {}).items() if v is not None}
         stream_src = open(CAP_STREAM).read() if os.path.exists(CAP_STREAM) else None
-        dep_id = resolve_deployment_id_by_url(url) or url
-        handle = ReduCapabilityAdapter().ssh_handle(dep_id)          # endpoint (host/port/user) + resolved key
-        if not handle:
-            return {"ok": False, "error": f"could not resolve SSH endpoint for {dep_id}"}
-        # candidate keys: the resolved -i, then keys recovered from the microVM (redu-*), then acspeed-cap.
-        # A deploy may name its key file differently from the keypair, so try them until one authenticates.
-        ssh_dir = os.path.expanduser("~/.ssh")
-        cands = [handle.private_key_path] if handle.private_key_path else []
-        if os.path.isdir(ssh_dir):
-            for name in sorted(os.listdir(ssh_dir)):
-                if name.endswith(".pub") or not os.path.isfile(os.path.join(ssh_dir, name)):
-                    continue
-                if name.startswith("redu-") or name == "acspeed-cap":
-                    p = os.path.join(ssh_dir, name)
-                    if p not in cands:
-                        cands.append(p)
-        return cp.run_capability_try_keys(handle.host, handle.user, handle.port, cands,
-                                          reference_scalars=ref_scalars, stream_c_source=stream_src,
-                                          do_install=True, sudo="sudo ", residency="app-resident")
+
+        if cloud == "redu":
+            from acspeed.adapters.redu_capability import ReduCapabilityAdapter, resolve_deployment_id_by_url
+            dep_id = resolve_deployment_id_by_url(url) or url
+            handle = ReduCapabilityAdapter().ssh_handle(dep_id)          # endpoint (host/port/user) + resolved key
+            if not handle:
+                return {"ok": False, "error": f"could not resolve SSH endpoint for {dep_id}"}
+            # candidate keys: the resolved -i, then keys recovered from the microVM (redu-*), then acspeed-cap.
+            ssh_dir = os.path.expanduser("~/.ssh")
+            cands = [handle.private_key_path] if handle.private_key_path else []
+            if os.path.isdir(ssh_dir):
+                for name in sorted(os.listdir(ssh_dir)):
+                    if name.endswith(".pub") or not os.path.isfile(os.path.join(ssh_dir, name)):
+                        continue
+                    if name.startswith("redu-") or name == "acspeed-cap":
+                        p = os.path.join(ssh_dir, name)
+                        if p not in cands:
+                            cands.append(p)
+            return cp.run_capability_try_keys(handle.host, handle.user, handle.port, cands,
+                                              reference_scalars=ref_scalars, stream_c_source=stream_src,
+                                              do_install=True, sudo="sudo ", residency="app-resident")
+
+        if cloud == "aws":
+            from acspeed.adapters.aws_capability import (resolve_aws_ssh_endpoint, aws_key_candidates,
+                                                         AWS_SSH_USERS)
+            ep = resolve_aws_ssh_endpoint(url)
+            if not ep:
+                return {"ok": False, "na": True,
+                        "error": "capability N/A: the AWS deploy is not a shell-reachable VM (Lightsail "
+                                 "container / App Runner / behind an ALB or CloudFront); C disclosed N/A"}
+            host, port = ep
+            cands = aws_key_candidates()
+            if not cands:
+                return {"ok": False, "error": f"capability: no recovered SSH keys to try for the EC2 VM {host}"}
+            last = None                                     # SSH user is AMI-dependent: try each until one works
+            for user in AWS_SSH_USERS:
+                res = cp.run_capability_try_keys(host, user, port, cands,
+                                                 reference_scalars=ref_scalars, stream_c_source=stream_src,
+                                                 do_install=True, sudo="sudo ", residency="app-resident")
+                if res and res.get("ok"):
+                    return res
+                last = res
+            return last or {"ok": False, "error": f"no AWS SSH user in {AWS_SSH_USERS} authenticated at {host}"}
+
+        return {"ok": False, "error": f"no capability adapter for cloud={cloud}"}
     except Exception as e:  # noqa: BLE001 - capability is off-clock; it must never break a run
         return {"ok": False, "error": repr(e)[:300]}
 
@@ -746,17 +773,26 @@ def measure_capability(prof: dict, url: str) -> dict | None:
 def measure_cost(prof: dict, url: str, capture_date: str) -> dict | None:
     """OFF-CLOCK standing hourly RUN-RATE (C19) of the deployment's provisioned bundle: resolve its
     resources + PUBLIC LIST prices via the thin per-cloud adapter, compose the all-in $/hr (egress held
-    separate), dated to `capture_date`. NO agent, non-fatal. Only redu has an adapter today; other clouds
-    -> disclosed N/A. A bundle it cannot price returns ok:false (disclosed, never faked)."""
-    if prof["cloud"] != "redu":
-        return {"ok": False, "error": f"no run-rate adapter for cloud={prof['cloud']}"}
+    separate), dated to `capture_date`. NO agent, non-fatal. Dispatched per cloud: redu (MCP list_deployments),
+    aws (the aws MCP, service-aware: Lightsail priced from live list prices). A bundle it cannot price returns
+    ok:false (disclosed, never faked); an unsupported cloud/service is disclosed the same way."""
+    cloud = prof["cloud"]
     try:
-        from acspeed.adapters.redu_capability import resolve_deployment_id_by_url
-        from acspeed.adapters.redu_cost import ReduRunRateAdapter
-        dep_id = resolve_deployment_id_by_url(url) or url
-        rr = ReduRunRateAdapter().run_rate(dep_id, capture_date=capture_date)
+        if cloud == "redu":
+            from acspeed.adapters.redu_capability import resolve_deployment_id_by_url
+            from acspeed.adapters.redu_cost import ReduRunRateAdapter
+            dep_id = resolve_deployment_id_by_url(url) or url
+            rr = ReduRunRateAdapter().run_rate(dep_id, capture_date=capture_date)
+        elif cloud == "aws":
+            # host-side via the SAME aws MCP the agent used: uniform-inventory enumerate + Price-List
+            # dimension pricing (no per-service price code); Lightsail is the one live-priced exception.
+            from acspeed.adapters.aws_runrate import AwsRunRateAdapter as AwsMcpAdapter
+            rr = AwsMcpAdapter(profile=prof.get("aws_profile")).run_rate(url, capture_date=capture_date)
+        else:
+            return {"ok": False, "error": f"no run-rate adapter for cloud={cloud}"}
         if not rr:
-            return {"ok": False, "error": f"could not price the bundle for {dep_id} (public list prices unavailable)"}
+            return {"ok": False, "error": f"could not price the {cloud} bundle for {url} "
+                                          "(unsupported service or public list prices unavailable)"}
         d = rr.to_dict()
         d["ok"] = True
         return d
@@ -962,6 +998,15 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
         if td_tx else {}
     verify = curl_dead(url) if url else {"dead": None}
     _log(f"read-verify: url dead={verify.get('dead')} (http {verify.get('http_code')})")
+    # ORPHAN SAFETY: a teardown was attempted (not --keep, not skipped) but the URL is STILL serving ->
+    # the deployment was NOT removed and is BILLING. Loud, and recorded, so a long batch does not silently
+    # accrue orphans (the 2026-08-25 AWS run left a live Lightsail service after its creds expired).
+    orphaned = bool(url) and not prof.get("keep") and not td.get("skipped") and verify.get("dead") is False
+    if orphaned:
+        _log(f"!! ORPHAN WARNING (run {i}): {url} is STILL SERVING after deprovision "
+             f"(http {verify.get('http_code')}). The teardown did NOT remove it and it is BILLING. "
+             f"Delete it manually in the {prof['cloud']} console (aws: the Lightsail container service / EC2 "
+             f"instance for this URL). Common cause: cloud credentials expired by teardown time.")
 
     rec = {
         "run": i, "cloud": prof["cloud"], "task": prof["task"], "model": model,
@@ -988,8 +1033,10 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
         "prompts_used": len(rounds), "rounds": rounds,
         "deploy": {"session": sid, "transcript": tx, **m},     # PROVISION operation (session A)
         "deprovision": {"session": td.get("session"), "transcript": td_tx,      # DEPROVISION operation
-                        "cost": td.get("cost"), "skipped": td.get("skipped", False), **td_measure},
+                        "cost": td.get("cost"), "skipped": td.get("skipped", False),
+                        "orphaned": orphaned, **td_measure},
         "read_verify": verify,
+        "orphan_warning": orphaned,             # top-level flag: this run left a live, billing deployment
     }
     with open(os.path.join(out_dir, f"run{i:02d}.json"), "w") as fh:
         json.dump(rec, fh, indent=2, default=str)
@@ -1032,14 +1079,15 @@ def main() -> None:
                     help="run agent turns on the HOST instead of a fresh microVM (default: microVM "
                          "when the sandbox is built and KVM+tap are present). The microVM is the "
                          "hermetic per-cloud substrate; --no-sandbox is for debugging only.")
-    ap.add_argument("--capability", action="store_true",
-                    help="optional, off-clock: after the app is live, measure the delivered-capability "
-                         "vector C (sysbench/STREAM/fio) on the deployment's own VM over SSH and "
-                         "normalize vs the frozen reference (redu only for now; never affects timing)")
-    ap.add_argument("--cost", action="store_true",
-                    help="optional, off-clock: price the deployment's standing hourly RUN-RATE (C19) from "
-                         "dated PUBLIC LIST prices (compute+storage+IP+ancillary, egress separate), the "
-                         "Part-4 cost input (redu only for now; never affects timing)")
+    ap.add_argument("--capability", action=argparse.BooleanOptionalAction, default=True,
+                    help="off-clock (DEFAULT ON; --no-capability to skip): after the app is live, measure the "
+                         "delivered-capability vector C (sysbench/STREAM/fio) on the deployment's own VM over "
+                         "SSH and normalize vs the frozen reference (redu + aws EC2 VMs; disclosed N/A for a "
+                         "shell-less target; never affects timing)")
+    ap.add_argument("--cost", action=argparse.BooleanOptionalAction, default=True,
+                    help="off-clock (DEFAULT ON; --no-cost to skip): price the deployment's standing hourly "
+                         "RUN-RATE (C19) from dated PUBLIC LIST prices, the Part-4 cost input (redu + aws "
+                         "Lightsail; disclosed N/A for an unsupported service; never affects timing)")
     a = ap.parse_args()
 
     adapter = ADAPTERS[a.adapter]
