@@ -13,9 +13,14 @@ all excess over the floor is execution excess -- honest for a linear op sequence
 add alternative edges (flavor / order / overlap choices) where selection excess becomes non-trivial;
 they instantiate the SAME builder with a richer graph, not a different one.
 
-What this reports (paper Part 3 headline): the two-sided bracket F_C <= optimum <= best-achieved as a
-first-class result (the floor is loose, so the bracket width, not the floor ratio alone, is the honest
-number), plus each run's floor ratio and its exact selection/execution split.
+What this reports, in the paper's two-layer split (Part 3, "The observed primary and the admitted
+counterfactual references"): the OBSERVED PRIMARY is counterfactual-free -- each run's realized makespan
+and its ratio to the observed best-achieved frontier (``best_ratio``), plus per-op execution excess against
+its own observed floor. The ADMITTED COUNTERFACTUAL references are labelled as such and never asserted exact
+-- the floor ``F_C`` (``floor_ratio``) and the selection excess (``selection_excess_s``, regret against a
+schedule the agent did not run) are reported only on the designed suite and revised down when an observed
+trace undercuts the floor. The two-sided bracket F_C <= optimum <= best-achieved is the honest headline (the
+floor is loose, so the bracket WIDTH, not the floor ratio alone, is the first-class number).
 """
 from __future__ import annotations
 
@@ -112,5 +117,12 @@ def part3_provision(records: Sequence[dict]) -> Optional[dict]:
                  "floor, loose by construction, so the bracket width is the first-class result). "
                  "First-poll-flagged (possible leftover-deployment) runs are excluded from the floor "
                  "and frontier. Selection excess is 0 for this on-suite degenerate single-operation "
-                 "task (one edge, no alternatives); the multi-VM suites add it."),
+                 "task (one edge, no alternatives); the multi-VM suites add it. Two-layer disclosure "
+                 "(Part 3): best_ratio and execution excess are the OBSERVED primary (counterfactual-"
+                 "free); floor_ratio and selection excess are the ADMITTED counterfactual (vs F_C, a "
+                 "schedule the agent did not run; bounded and refutable, on-suite only)."),
+        "layers": {
+            "observed_primary": ["makespan_s", "best_ratio", "execution_excess_s"],
+            "admitted_counterfactual": ["F_C_s", "floor_ratio", "selection_excess_s"],
+        },
     }

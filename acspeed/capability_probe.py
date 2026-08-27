@@ -52,8 +52,22 @@ _IPERF_SECONDS = 10
 _IPERF_PORT = 5201
 _PING_COUNT = 20
 
+# A bare $(nproc) reads the HOST core count inside a cpu-limited container / gVisor sandbox and overstates
+# all-core compute; derive the EFFECTIVE core count from the cgroup CPU quota (v2 cpu.max, else v1
+# cfs_quota/period), floored at 1, falling back to nproc when unconstrained ("max"/-1) or unreadable.
+_EFFECTIVE_CORES = (
+    "$(q=''; p=''; "
+    "if [ -r /sys/fs/cgroup/cpu.max ]; then read q p < /sys/fs/cgroup/cpu.max; "
+    "elif [ -r /sys/fs/cgroup/cpu/cpu.cfs_quota_us ]; then "
+    "q=$(cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us); p=$(cat /sys/fs/cgroup/cpu/cpu.cfs_period_us); fi; "
+    "if [ -n \"$q\" ] && [ -n \"$p\" ] && [ \"$q\" != max ] && "
+    "[ \"$q\" -gt 0 ] 2>/dev/null && [ \"$p\" -gt 0 ] 2>/dev/null; "
+    "then c=$(( (q + p - 1) / p )); [ \"$c\" -lt 1 ] && c=1; echo \"$c\"; "
+    "else nproc; fi)"
+)
+
 SYSBENCH_SINGLE = f"sysbench cpu --cpu-max-prime={_MAX_PRIME} --threads=1 run"
-SYSBENCH_ALLCORE = f"sysbench cpu --cpu-max-prime={_MAX_PRIME} --threads=$(nproc) run"
+SYSBENCH_ALLCORE = f"sysbench cpu --cpu-max-prime={_MAX_PRIME} --threads={_EFFECTIVE_CORES} run"
 
 
 def _fio_cmd(name: str, rw: str, bs: str, iodepth: int) -> str:

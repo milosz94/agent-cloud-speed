@@ -14,7 +14,10 @@ the decomposed billing units (compute/storage/network) follow Sochat & Milroy (2
 line follows Armbrust (CACM 2010); the run-rate-not-cost-to-complete choice mirrors SPECpower's ongoing
 watt denominator. No cross-cloud cost normalization is applied: an absolute $/hr is already a common
 currency unit, and comparability comes from pricing the SAME task on each cloud and the (wall-clock, $/hr)
-Pareto frontier, never from dividing cost by a per-provider baseline.
+Pareto frontier, never from dividing cost by a per-provider baseline. USD is the single reporting currency;
+a provider that lists in another currency (redu prices in GBP) is converted to USD ONCE at a dated PUBLIC
+FX rate (``FxConversion``, disclosed), which is a units conversion applied identically to all of that
+provider's lines, NOT a per-provider baseline division, so the common-unit argument still holds.
 """
 from __future__ import annotations
 
@@ -60,6 +63,24 @@ class EgressRate:
 
 
 @dataclass(frozen=True)
+class FxConversion:
+    """Disclosed dated FX conversion, present when a provider lists in a non-USD currency (redu prices in
+    GBP). USD stays the single reporting currency; the provider's native figures are converted at ONE
+    dated PUBLIC rate applied identically to all of that provider's lines. This is a units conversion, not
+    a per-provider baseline division, so an absolute $/hr remains the common cross-cloud unit; the rate,
+    the date it applies to, and its public source are disclosed so the number stays reproducible (C19)."""
+    native_currency: str          # the provider's listing currency, e.g. "GBP"
+    reporting_currency: str       # always "USD" here
+    rate: float                   # native -> USD multiplier (1 native currency unit = ``rate`` USD)
+    rate_date: str                # the date the published rate applies to (may differ from capture_date)
+    source: str                   # dated public source, e.g. "ECB via frankfurter.app"
+
+    def __post_init__(self) -> None:
+        if self.rate <= 0:
+            raise ValueError(f"fx rate must be positive, got {self.rate}")
+
+
+@dataclass(frozen=True)
 class RunRate:
     """The provisioned bundle's standing hourly run-rate (CR C19). ``all_in_hourly_usd`` is the sum of
     the always-on components ONLY; ``egress`` is carried separately and is never folded in."""
@@ -73,6 +94,7 @@ class RunRate:
     exclusions: Tuple[str, ...] = DEFAULT_EXCLUSIONS
     price_source: str = "public on-demand list"
     price_urls: Tuple[str, ...] = ()         # dated pricing-page sources, for the disclosed artifact
+    fx: Optional[FxConversion] = None        # disclosed dated FX when the provider lists in non-USD
 
     def monthly_usd(self) -> float:
         """The standing monthly bill = the hourly run-rate x 730 (the paper's month convention)."""
@@ -92,6 +114,10 @@ class RunRate:
             "provider": self.provider, "region": self.region, "flavor": self.flavor,
             "capture_date": self.capture_date, "price_source": self.price_source,
             "price_urls": list(self.price_urls), "exclusions": list(self.exclusions),
+            "fx": (None if self.fx is None else
+                   {"native_currency": self.fx.native_currency,
+                    "reporting_currency": self.fx.reporting_currency,
+                    "rate": self.fx.rate, "rate_date": self.fx.rate_date, "source": self.fx.source}),
         }
 
 
@@ -109,16 +135,18 @@ def compose_run_rate(components: Sequence[RateComponent], *, provider: str, regi
                      capture_date: str, egress: Optional[EgressRate] = None,
                      exclusions: Tuple[str, ...] = DEFAULT_EXCLUSIONS,
                      price_source: str = "public on-demand list",
-                     price_urls: Tuple[str, ...] = ()) -> RunRate:
+                     price_urls: Tuple[str, ...] = (),
+                     fx: Optional[FxConversion] = None) -> RunRate:
     """Compose the all-in standing hourly run-rate = sum of the always-on components' $/hour. Egress is
-    passed through as a SEPARATE field and is deliberately NOT added to the sum (C19)."""
+    passed through as a SEPARATE field and is deliberately NOT added to the sum (C19). ``fx`` discloses the
+    dated FX conversion when the provider lists in a non-USD currency (components must ALREADY be $/hour)."""
     all_in = sum(c.hourly_usd for c in components)
     return RunRate(
         all_in_hourly_usd=round(all_in, 6),
         components=tuple(components),
         provider=provider, region=region, flavor=flavor, capture_date=capture_date,
         egress=egress, exclusions=tuple(exclusions), price_source=price_source,
-        price_urls=tuple(price_urls),
+        price_urls=tuple(price_urls), fx=fx,
     )
 
 

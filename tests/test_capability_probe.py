@@ -93,7 +93,12 @@ class TestCommandConstruction(unittest.TestCase):
 
     def test_sysbench_split(self):
         self.assertIn("--threads=1", cp.SYSBENCH_SINGLE)         # SPECspeed
-        self.assertIn("--threads=$(nproc)", cp.SYSBENCH_ALLCORE)  # SPECrate
+        # SPECrate all-core uses the EFFECTIVE (cgroup-limited) core count, not a bare host $(nproc),
+        # which over-counts inside a cpu-limited container / gVisor; nproc is only the unconstrained fallback.
+        self.assertNotIn("--threads=$(nproc) ", cp.SYSBENCH_ALLCORE)   # not the raw host count
+        self.assertIn("cpu.max", cp.SYSBENCH_ALLCORE)                   # reads the cgroup v2 quota
+        self.assertIn("cpu.cfs_quota_us", cp.SYSBENCH_ALLCORE)          # and the v1 quota
+        self.assertIn("nproc", cp.SYSBENCH_ALLCORE)                     # falls back when unconstrained
 
     def test_network_commands_are_vm_to_vm_private(self):
         # C17/C18: the network axis is measured VM-to-VM over the peer's PRIVATE IP, never to a

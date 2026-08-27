@@ -150,6 +150,9 @@ def text_render(rows, recs, task) -> str:
                  f"{eff['bracket_high_s']}]s = x{eff['bracket_ratio']}; selection-excess 0, 1-op suite)")
     else:
         L.append("  efficiency (Part 3)     DEFERRED (no run carries an acspeed split yet)")
+    L.append("  (reading)               efficiency + capability are WORKLOAD-RELATIVE (Part 4): an axis "
+             "ceiling lowers measured efficiency only for workloads bound by that axis; each figure carries "
+             "its axis set, never a bare cross-workload verdict")
     L.append("  cold/warm               POOLED above; per-run warmth shown below (real stratification = C8)")
     L.append("")
     L.append("TABLE A  (per run, seconds; t-serve = t1 - t0 by EXTERNAL poll; agt_end = agent's own finish)")
@@ -203,6 +206,12 @@ def text_render(rows, recs, task) -> str:
         L.append(f"  Part 4 cost frontier    run-rate $/hr {[round(c, 4) for _f, _t, c, _m in cpts]} "
                  f"(monthly {[round(m, 2) if m else None for _f, _t, _c, m in cpts]}); "
                  f"(wall,$/hr) Pareto-efficient {eff_flavors}  (dated public list, egress separate)")
+        fxs = [_g(rec, "cost_run_rate", "fx") for rec in recs if _g(rec, "cost_run_rate", "fx")]
+        if fxs:
+            fx = fxs[0]
+            L.append(f"    (FX: $/hr converted from the native {fx['native_currency']} list price at "
+                     f"{fx['native_currency']}->{fx['reporting_currency']} {fx['rate']} on {fx['rate_date']}, "
+                     f"{fx['source']})")
     else:
         L.append(f"  Part 4 cost frontier    DEFERRED (run --cost: standing hourly run-rate, dated public list)")
     L.append(f"  Part 5 speed+liveness   time-to-serving {[r['tts_s'] for r in rows]} s; "

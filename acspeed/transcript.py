@@ -34,6 +34,15 @@ not only the identity):
   (``origin.kind == "task-notification"`` or ``promptSource == "system"``).
 * ``AskUserQuestion`` is a tool whose result arrives when a person answers, so
   its result row looks like the platform. It is HUMAN.
+* A retry is charged to whoever performed it (the agent), UNLESS the platform
+  returned a definitively broken response (a hard error status or a malformed
+  result, a decidable codebook), when the wasted platform work is platform-owned.
+  This broken-response criterion is the ONE knob that moves blame between owners;
+  the paper defends it empirically (Part 1, "Defending the owner split
+  empirically") with inter-annotator agreement on the codebook (two annotators,
+  Cohen's kappa) and a sensitivity analysis of the split as the threshold moves.
+  acspeed applies the criterion in the trace it is given; the annotator study and
+  the threshold sweep are the Part-5 method, not yet wired here.
 
 The method is cloud-agnostic: owner attribution depends on transcript structure,
 not on any cloud's tool names. The one tool-name rule (``AskUserQuestion``) names

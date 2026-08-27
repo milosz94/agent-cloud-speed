@@ -1,7 +1,11 @@
 """Part 3: the reference-optimal trace and the exact decomposition of excess over the floor.
 
 A session's efficiency is a COMPETITIVE RATIO to a reference-optimal makespan, bracketed between a
-provable-given-its-weights floor ``F_C`` and an achievable best-observed frontier. The EXACT additive,
+provable-given-its-weights floor ``F_C`` and an achievable best-observed frontier. Every quantity here is
+SET-RELATIVE (Part 3, "Efficiency is set-relative"): it is defined over the goal-reaching graph the task's
+goal fixes, the universe both the agent and the optimum range over. A choice efficient under a narrow goal
+can be inefficient under a wider one that chains a dependent later operation onto it; the graph passed in
+IS the goal, so a run is scored against its own goal, never a rigged one. The EXACT additive,
 per-decision decomposition is of the excess OVER THE FLOOR (not over the true optimum, whose own
 above-floor execution cannot be charged to the agent), computed with the floor cost-to-go ``V_F`` of an
 operation-state graph::
