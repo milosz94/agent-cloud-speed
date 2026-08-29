@@ -1,12 +1,18 @@
 """General AWS standing hourly RUN-RATE (C19), reached through the same aws MCP the agent deployed with.
 
 NO per-service price code. Two service-agnostic steps (the aws_cost.py generalization, now MCP-backed):
-  1. ENUMERATE the deployment's resources via the cloud's UNIFORM inventory (Resource Groups Tagging API,
-     `get-resources`), one call for all services, matched to THIS deploy by the app name in the ARN/tags.
+  1. ENUMERATE the deployment's resources via AWS's OWN COMPLETE inventory. The default is AWS Resource
+     Explorer 2 (`resource-explorer-2 search`), whose index spans ALL services and is NOT tag-gated, so a
+     resource the agent never tagged is still found; it is scoped to THIS deploy by the harness run-token (then
+     app name) as the free-text query. The Resource Groups Tagging API (`get-resources`) is kept as a fallback,
+     and AWS Config as a last-ditch fallback. WHY the change: RGT is tag-gated, so any untagged or untaggable
+     resource (public IPv4, inline root EBS) is silently missed and the run-rate is biased LOW; redu avoids
+     this because its billing enumerates every resource, and Resource Explorer is AWS's equivalent.
   2. PRICE each via the AWS Price List (`pricing get-products`) by BILLING DIMENSION -- 250 services collapse
      to the ~8-row `aws_cost._DIMENSIONS` table (shared across services; adding one is a DATA row, not code).
-A resource type not in the dimension table, or a service the Price List does not cover, is DISCLOSED
-(`unpriced_resources`), never faked -- exactly like the redu adapter.
+A resource type not in the dimension table, or a service the Price List does not cover, is DISCLOSED by type
+(`unpriced_resources`), never faked -- exactly like the redu adapter. Discovery is exhaustive; pricing is
+best-effort-with-disclosure: every discovered resource is priced OR disclosed, never a silent $0.
 
 The ONE unavoidable exception is AWS's own doing: Lightsail is NOT in the Resource Groups Tagging API, so it
 is enumerated by its own list call and priced from its own LIVE price API (`get-container-service-powers`).
@@ -274,56 +280,151 @@ def _completeness_note(resources: List[dict], url: str) -> str:
     return ""
 
 
-def _enumerate(mcp_call: McpCall, url: str, region: str) -> List[dict]:
-    """Uniform enumeration of THIS deployment's billed resources via the Resource Groups Tagging API, matched
-    by the run token / app name in an ARN or tag value. Attributes are normalized from Cloud Control props to
-    the price-list filter fields; an ECS service is resolved to its Fargate task (cpu/mem); auto-assigned
-    public IPv4 (Fargate/ALB) and inline root EBS volumes are synthesized from the enumerated resources."""
+# --- GAP 12: UNIVERSAL discovery. AWS's own COMPLETE inventory, then price EACH via the dimension engine. --
+#
+# The Resource Groups Tagging API is TAG-GATED: a resource the agent did not tag (it tags inconsistently, and
+# public IPv4 / inline root EBS are untaggable) is silently missed, biasing the run-rate LOW. AWS's equivalent
+# of redu's "enumerate every resource we provisioned" is Resource Explorer 2, whose index spans ALL services
+# and is NOT tag-gated. So a resource TYPE never anticipated here is still DISCOVERED (from the complete
+# inventory) and then priced-or-disclosed by the shared dimension engine -- with NO new code per type. The
+# per-resource resolution (Cloud Control describe -> normalize -> ECS->Fargate hop -> synthesize the
+# untaggable public-IPv4 / root-EBS lines) is factored out so it is identical for EVERY discovery source.
+
+
+def _resource_from_arn(mcp_call: McpCall, arn: str, region: str):
+    """One discovered ARN -> its priced resource dict(s) + any public-IPv4 hints, via Cloud Control describe
+    + attribute normalize, the ECS->Fargate task hop, and inline root-EBS synthesis. SAME resolution for every
+    discovery source (Resource Explorer / tags / Config): the enumerator that FINDS a resource is decoupled
+    from how it is priced. Returns (resources, ipv4_hints); ([], []) for an ARN that yields no billed line."""
+    service, reg, restype = aws_cost._parse_arn(arn)
+    if not service:
+        return [], []
+    reg = reg or region
+    if (service, restype) == ("ecs", "service"):        # Fargate app compute: price via the task definition
+        fr = _fargate_resource(mcp_call, arn, reg)
+        if not fr:
+            return [], []
+        hint = fr.pop("_ipv4", None)                     # keep the priced dict clean; hint drives synthesis
+        return [fr], ([hint] if hint else [])
+    ident = arn.split("/")[-1].split(":")[-1]
+    props = _describe_attrs(mcp_call, service, restype, ident, reg)
+    attrs, quantity = _normalize_attrs(service, restype, props)
+    resources = [{"arn": arn, "service": service, "resource_type": restype,
+                  "region": reg, "attrs": attrs, "quantity": quantity, "count": 1}]
+    hints: List[dict] = []
+    if (service, restype) == ("ec2", "instance"):                    # GAP 9: its untagged root EBS volume
+        resources.extend(_ebs_from_instance(props, reg, arn))
+    elif (service, restype) == ("elasticloadbalancing", "loadbalancer"):  # GAP 8(b): per-AZ public IPv4
+        hint = _alb_ipv4_hint(props, reg, arn)
+        if hint:
+            hints.append(hint)
+    return resources, hints
+
+
+def _resources_from_arns(mcp_call: McpCall, arns: List[str], region: str) -> List[dict]:
+    """Resolve a de-duplicated list of discovered ARNs to priced resource dicts, then append the synthesized
+    public-IPv4 lines (GAP 8) for the auto-assigned addresses that NO inventory ever lists as a resource, so
+    completeness never depends on which discovery source produced the ARNs."""
+    out: List[dict] = []
+    ipv4_hints: List[dict] = []
+    seen = set()
+    for arn in arns:
+        if not arn or arn in seen:
+            continue
+        seen.add(arn)
+        resources, hints = _resource_from_arn(mcp_call, arn, region)
+        out.extend(resources)
+        ipv4_hints.extend(hints)
+    out.extend(_synthesize_public_ipv4(ipv4_hints))              # GAP 8: auto-assigned public IPv4 lines
+    return out
+
+
+def _enumerate_via_resource_explorer(mcp_call: McpCall, url: str, region: str) -> List[dict]:
+    """DEFAULT complete enumeration: AWS Resource Explorer 2 (`resource-explorer-2 search`), whose index spans
+    ALL services and is NOT tag-gated, scoped to THIS deploy by the harness run-token (then app name) as the
+    free-text query. A resource the tag inventory would miss (untagged, or a type never anticipated here) is
+    found here. Returns [] if Resource Explorer is not enabled / errors, so the caller falls back to tags."""
+    for anchor in _match_anchors(url):
+        try:
+            r = mcp_call(f'aws resource-explorer-2 search --query-string "{anchor}" --region {region}')
+        except Exception:  # noqa: BLE001 - no RE index in the account: disclosed by falling back, never faked
+            continue
+        arns = [item.get("Arn") or item.get("arn") for item in (r.get("Resources") or [])]
+        arns = [a for a in arns if a]
+        if arns:                                          # the run-token anchor is exact; the first hit wins
+            return _resources_from_arns(mcp_call, arns, region)
+    return []
+
+
+def _enumerate_via_tags(mcp_call: McpCall, url: str, region: str) -> List[dict]:
+    """FALLBACK enumeration via the Resource Groups Tagging API (`get-resources`), matched to THIS deploy by
+    the run token / app name in an ARN or tag value. TAG-GATED -- only tagged resources are returned, which is
+    exactly why Resource Explorer is the default; kept for an account with no Resource Explorer index."""
     anchors = _match_anchors(url)
     try:
         r = mcp_call(f"aws resourcegroupstaggingapi get-resources --region {region}")
     except Exception:  # noqa: BLE001 - enumeration failure is disclosed by an empty bundle, never faked
         return []
-    out: List[dict] = []
-    ipv4_hints: List[dict] = []
+    arns: List[str] = []
     for m in (r.get("ResourceTagMappingList") or []):
         arn = m.get("ResourceARN", "")
         tagvals = " ".join(str(t.get("Value", "")) for t in (m.get("Tags") or []))
         if anchors and not any(a in arn or a in tagvals for a in anchors):
             continue                                     # not this deployment's resource
-        service, reg, restype = aws_cost._parse_arn(arn)
-        if not service:
+        arns.append(arn)
+    return _resources_from_arns(mcp_call, arns, region)
+
+
+def _enumerate_via_config(mcp_call: McpCall, url: str, region: str) -> List[dict]:
+    """LAST-DITCH complete enumeration via AWS Config, for an account with neither a Resource Explorer index
+    nor consistent tags. Config records every supported resource type continuously (NOT tag-gated). We ask its
+    advanced-query API for the ARNs whose name/ARN carries this deploy's anchor (`select-resource-config`,
+    which returns ARNs directly; the per-type `list-discovered-resources` is the alternative primitive).
+    Best-effort; returns [] when Config is not recording, so nothing is faked."""
+    for anchor in _match_anchors(url):
+        expr = ("SELECT arn, resourceType, resourceName "
+                f"WHERE resourceName LIKE '%{anchor}%' OR arn LIKE '%{anchor}%'")
+        try:
+            r = mcp_call(f'aws configservice select-resource-config --expression "{expr}" --region {region}')
+        except Exception:  # noqa: BLE001 - Config not recording: disclosed by falling through, never faked
             continue
-        if (service, restype) == ("ecs", "service"):    # Fargate app compute: price via the task definition
-            fr = _fargate_resource(mcp_call, arn, reg or region)
-            if fr:
-                hint = fr.pop("_ipv4", None)             # keep the priced dict clean; hint drives synthesis
-                out.append(fr)
-                if hint:
-                    ipv4_hints.append(hint)
-            continue
-        ident = arn.split("/")[-1].split(":")[-1]
-        props = _describe_attrs(mcp_call, service, restype, ident, reg or region)
-        attrs, quantity = _normalize_attrs(service, restype, props)
-        out.append({"arn": arn, "service": service, "resource_type": restype,
-                    "region": reg or region, "attrs": attrs, "quantity": quantity, "count": 1})
-        if (service, restype) == ("ec2", "instance"):            # GAP 9: its untagged root EBS volume
-            out.extend(_ebs_from_instance(props, reg or region, arn))
-        elif (service, restype) == ("elasticloadbalancing", "loadbalancer"):  # GAP 8(b): per-AZ public IPv4
-            hint = _alb_ipv4_hint(props, reg or region, arn)
-            if hint:
-                ipv4_hints.append(hint)
-    out.extend(_synthesize_public_ipv4(ipv4_hints))              # GAP 8: auto-assigned public IPv4 lines
-    return out
+        arns: List[str] = []
+        for row in (r.get("Results") or []):
+            item = json.loads(row) if isinstance(row, str) else row
+            a = (item or {}).get("arn") or (item or {}).get("Arn")
+            if a:
+                arns.append(a)
+        if arns:
+            return _resources_from_arns(mcp_call, arns, region)
+    return []
+
+
+def _enumerate(mcp_call: McpCall, url: str, region: str) -> List[dict]:
+    """THE universal enumerator: AWS's own COMPLETE inventory first (Resource Explorer 2, not tag-gated), then
+    the tag inventory, then AWS Config. The first source that returns anything wins; every discovered resource
+    (of ANY service/type) is then priced-or-disclosed by the shared dimension engine. The untaggable
+    auto-assigned public IPv4 and inline root EBS -- which NO inventory lists -- are synthesized from their
+    parent inside _resources_from_arns, so discovery stays complete regardless of the source."""
+    for source in (_enumerate_via_resource_explorer, _enumerate_via_tags, _enumerate_via_config):
+        resources = source(mcp_call, url, region)
+        if resources:
+            return resources
+    return []
 
 
 def _general_run_rate(mcp_call: McpCall, url: str, region: str, capture_date: str,
-                      disclosures: Optional[List[str]] = None) -> Optional[RunRate]:
-    """Price the RGT-enumerated resources via the shared Price List / dimension engine (aws_cost.py). A
-    tag-gated enumeration gap (GAP 10) is disclosed: appended to ``price_source`` when a RunRate is priced,
-    and pushed to ``disclosures`` (so the empty case, which prices to None rather than a faked $0, still
-    surfaces the note) when a list is provided."""
-    resources = _enumerate(mcp_call, url, region)
+                      disclosures: Optional[List[str]] = None,
+                      unpriced_out: Optional[List[str]] = None,
+                      enumerate_resources: Optional[Callable[[McpCall, str, str], List[dict]]] = None
+                      ) -> Optional[RunRate]:
+    """Price the COMPLETELY-enumerated resources via the shared Price List / dimension engine (aws_cost.py).
+    Discovery is universal (Resource Explorer 2 -> tags -> Config); pricing is best-effort-with-disclosure.
+    A tag-gated / empty-enumeration gap (GAP 10) is disclosed via ``disclosures`` and ``price_source``; every
+    discovered-but-unpriced resource (an unknown (service,type), or a usage-priced one) is pushed BY TYPE to
+    ``unpriced_out`` when a list is given, so a brand-new type is surfaced, never silently dropped. An
+    ``enumerate_resources`` override injects a complete resource list directly (offline tests)."""
+    enum = enumerate_resources or _enumerate
+    resources = enum(mcp_call, url, region)
     note = _completeness_note(resources, url)
     if note and disclosures is not None:
         disclosures.append(note)
@@ -336,6 +437,8 @@ def _general_run_rate(mcp_call: McpCall, url: str, region: str, capture_date: st
         enumerate_resources=lambda _ref: resources,
         get_products=get_products)
     rr = adapter.run_rate(url, capture_date=capture_date)
+    if unpriced_out is not None:                                  # disclosed by type, never silently dropped
+        unpriced_out.extend(adapter.unpriced_resources)
     if rr is not None and note:
         rr = dataclasses.replace(rr, price_source=f"{rr.price_source} | NOTE: {note}")
     return rr
@@ -507,18 +610,25 @@ def _usage_rate(mcp_call: McpCall, url: str, region: str, capture_date: str, ser
 
 
 class AwsRunRateAdapter:
-    """General AWS run-rate via the aws MCP: uniform-inventory enumerate + Price-List dimension pricing, with
-    Lightsail as the single live-priced enumeration exception, and usage-metered fronts (CloudFront/App
-    Runner/Lambda/API Gateway) priced as a per-usage SCHEDULE. Injectable ``mcp_call`` for offline tests."""
+    """General AWS run-rate via the aws MCP: COMPLETE-inventory enumerate (Resource Explorer 2, not tag-gated;
+    tags then Config as fallbacks) + Price-List dimension pricing, with Lightsail as the single live-priced
+    enumeration exception, and usage-metered fronts (CloudFront/App Runner/Lambda/API Gateway) priced as a
+    per-usage SCHEDULE. Injectable ``mcp_call`` for offline tests; an ``enumerate_resources`` override injects
+    a complete resource list directly. After run_rate, ``disclosures`` holds enumeration-gap notes and
+    ``unpriced_resources`` lists every discovered-but-unpriced resource BY TYPE (never a silent $0)."""
 
-    def __init__(self, mcp_call: Optional[McpCall] = None, profile: Optional[str] = None):
+    def __init__(self, mcp_call: Optional[McpCall] = None, profile: Optional[str] = None,
+                 enumerate_resources: Optional[Callable[[McpCall, str, str], List[dict]]] = None):
         self._mcp_call = mcp_call
         self._profile = profile
-        self.disclosures: List[str] = []   # tag-gated enumeration gaps (GAP 10), readable after run_rate
+        self._enumerate = enumerate_resources   # inject a COMPLETE resource list directly (offline tests)
+        self.disclosures: List[str] = []        # enumeration gaps (GAP 10), readable after run_rate
+        self.unpriced_resources: List[str] = [] # discovered-but-unpriced, disclosed by type, after run_rate
 
     def run_rate(self, deployment_ref: object, *, capture_date: str,
                  region: Optional[str] = None) -> Optional[RunRate]:
         self.disclosures = []
+        self.unpriced_resources = []
         url = str(deployment_ref)
         reg = region or _region_from_url(url)
         call = self._mcp_call or _default_mcp_call(self._profile)
@@ -528,4 +638,5 @@ class AwsRunRateAdapter:
         code, name = _usage_front(host)                  # CloudFront/App Runner/Lambda/API Gateway
         if code:                                         # usage-metered -> a per-usage SCHEDULE, not $/hr
             return _usage_rate(call, url, reg, capture_date, code, name)
-        return _general_run_rate(call, url, reg, capture_date, disclosures=self.disclosures)
+        return _general_run_rate(call, url, reg, capture_date, disclosures=self.disclosures,
+                                 unpriced_out=self.unpriced_resources, enumerate_resources=self._enumerate)

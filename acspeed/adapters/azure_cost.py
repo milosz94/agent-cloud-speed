@@ -20,11 +20,13 @@ Only PUBLIC on-demand list prices are used; discounts / spot / reserved / low-pr
 """
 from __future__ import annotations
 
+import dataclasses
 import json
+import re
 import time
 import urllib.parse
 import urllib.request
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from ..cost import (RateComponent, RunRate, RunRateAdapter, EgressRate, UsageComponent, UsageRate,
@@ -269,7 +271,6 @@ def container_apps_usage_rate(capture_date: str, *, region: str = "westeurope",
                             price_urls=(_RETAIL_ENDPOINT,))
     all_notes = tuple(idle_notes) + tuple(extra_notes)
     if all_notes:
-        import dataclasses
         ur = dataclasses.replace(ur, assumptions=tuple(ur.assumptions) + all_notes)
     return ur
 
@@ -394,10 +395,253 @@ def _az_vm_resolver(run_cmd=None) -> BundleResolver:
     return resolve
 
 
+# =====================================================================================================
+# UNIVERSAL resource-group sweep (completeness): discover EVERY resource this run provisioned from
+# Azure's OWN complete inventory, then price each BY ITS ARM TYPE, so a resource TYPE we never
+# anticipated (a Storage account, a Redis cache, a Log Analytics workspace, a public IP, an ACR, or a
+# brand-new type) is STILL caught with NO new code. This is the Azure counterpart of the AWS uniform
+# tag-inventory sweep (aws_runrate._enumerate): discovery is EXHAUSTIVE, pricing is
+# best-effort-with-disclosure. Nothing a run created is ever a silent $0: every discovered resource is
+# either priced or DISCLOSED by name.
+#
+# The anchor is that EACH acspeed run creates its OWN resource group named ``rg-<run_token>`` (the run
+# token is ``acs<hex>``, carried into the deployment's public hostname by autorun's NAMING_INSTRUCTION),
+# and ``az resource list -g <rg> -o json`` (equivalently ``az graph query -q "Resources | where
+# resourceGroup =~ '<rg>'"``) returns EVERY ARM resource in it, of ANY type. Retail Prices has a meter
+# for each. The enumerator is INJECTABLE (``run_cmd``) so the whole path is tested offline with a canned
+# inventory; ``az`` may be unauthenticated here, so the offline injected path is the tested deliverable.
+
+# a resource-list resolver returns the raw ARM resource dicts (``az resource list -o json`` shape) for a
+# deployment; injectable so tests feed a canned inventory with no cloud.
+RgResourcesResolver = Callable[[object], List[dict]]
+
+# the two ARM types the serverless path already prices, skipped by the sweep so they are never
+# double-counted: Container Apps (priced as the usage schedule) and Postgres Flexible Server (priced by
+# the injected postgres fold).
+_TYPE_CONTAINERAPPS = "Microsoft.App/containerApps"
+_TYPE_POSTGRES_FLEX = "Microsoft.DBforPostgreSQL/flexibleServers"
+
+_RUN_TOKEN_RE = re.compile(r"acs[0-9a-f]{6,}")
+
+
+def run_token_from_ref(deployment_ref: object) -> Optional[str]:
+    """The harness run token (``acs<hex>``) carried in the deployment's hostname, or None. This token is
+    the run's identity: its resource group and every resource it created carry it (NAMING_INSTRUCTION)."""
+    ref = str(deployment_ref)
+    host = (urlparse(ref if "://" in ref else f"https://{ref}").hostname or "").lower()
+    m = _RUN_TOKEN_RE.search(host) or _RUN_TOKEN_RE.search(ref.lower())
+    return m.group(0) if m else None
+
+
+def resource_group_from_url(deployment_ref: object) -> Optional[str]:
+    """Derive this run's resource group ``rg-<run_token>`` (e.g. a Container Apps URL
+    ``umami-acs1a2b3c4d.<envid>.westeurope.azurecontainerapps.io`` -> ``rg-acs1a2b3c4d``) from the
+    deploy's URL / run token. None when no token is present (disclosed upstream, never faked into a
+    wrong RG that would sweep another run's resources)."""
+    tok = run_token_from_ref(deployment_ref)
+    return f"rg-{tok}" if tok else None
+
+
+def azure_rg_resources(resource_group: str, run_cmd=None) -> List[dict]:
+    """COMPLETE enumerator: list EVERY resource of ANY type in ``resource_group`` via
+    ``az resource list -g <rg> -o json`` (the ARM inventory returns all types uniformly:
+    Microsoft.App/containerApps, Microsoft.DBforPostgreSQL/flexibleServers,
+    Microsoft.Storage/storageAccounts, Microsoft.Cache/Redis, Microsoft.Network/publicIPAddresses,
+    Microsoft.ContainerRegistry/registries, Microsoft.OperationalInsights/workspaces, ...). The
+    equivalent Resource Graph form is ``az graph query -q "Resources | where resourceGroup =~
+    '<rg>'"``. ``run_cmd`` is INJECTABLE so tests run offline with a canned inventory; returns [] on any
+    failure or an empty/absent RG (disclosed upstream, never faked)."""
+    if not resource_group:
+        return []
+    data = _az_json(["resource", "list", "-g", resource_group], run_cmd)
+    return data if isinstance(data, list) else []
+
+
+# --- per-type pricers (best-effort; each returns a standing RateComponent or None -> disclosed) --------
+
+def _arm_sku(res: dict) -> dict:
+    """The ARM ``sku`` object as a dict (``az resource list`` gives {name, tier, family, capacity, ...}
+    or, occasionally, a bare string). Empty dict when absent."""
+    sku = res.get("sku")
+    if isinstance(sku, dict):
+        return sku
+    return {"name": str(sku)} if sku else {}
+
+
+def _pg_storage_gb(res: dict) -> float:
+    """Provisioned Postgres storage GB from the resource's properties, if present (``az resource list``
+    is often shallow, so this is best-effort: 0.0 when absent, which just omits the storage line)."""
+    st = (res.get("properties") or {}).get("storage") or {}
+    for k in ("storageSizeGB", "storageSizeGb", "storageSizeInGB"):
+        v = st.get(k)
+        if v:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                pass
+    v = res.get("storage_gb")
+    try:
+        return float(v) if v else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _price_postgres_flex(res: dict, region: str, *, fetch=None) -> Optional[RateComponent]:
+    """Standing $/hr for a Postgres Flexible Server, via the existing ``postgres_flexible_hourly``."""
+    sku = _arm_sku(res).get("name") or ""
+    if not sku:
+        return None
+    h = postgres_flexible_hourly(res.get("location") or region, str(sku), _pg_storage_gb(res), fetch=fetch)
+    if h is None:
+        return None
+    return RateComponent(name="compute:postgres-flexible", hourly_usd=h, raw_unit_price=h,
+                         native_unit="instance-hour", quantity=1.0)
+
+
+def _price_redis(res: dict, region: str, *, fetch=None) -> Optional[RateComponent]:
+    """Standing $/hr for an Azure Cache for Redis node, from the public Retail Prices per-hour cache
+    meter (sku family+capacity -> size, e.g. C0 / C1 / P1). Disclosed (None) if the meter cannot be
+    matched."""
+    sku = _arm_sku(res)
+    tier = str(sku.get("name") or "")
+    fam = str(sku.get("family") or "")
+    cap = sku.get("capacity")
+    size = f"{fam}{cap}" if fam and cap is not None else ""
+    price = retail_hourly_usd("Redis Cache", res.get("location") or region,
+                              product_contains=(tier or None), meter_contains=(size or None),
+                              unit="1 Hour", fetch=fetch)
+    if price is None:
+        return None
+    return RateComponent(name="compute:redis", hourly_usd=float(price), raw_unit_price=float(price),
+                         native_unit="instance-hour", quantity=1.0)
+
+
+def _price_public_ip(res: dict, region: str, *, fetch=None) -> Optional[RateComponent]:
+    """Standing $/hr for a public IPv4 address (a Standard static address bills per hour). Disclosed
+    (None) if the meter cannot be matched (e.g. a dynamic address with no standing charge is disclosed,
+    not faked to $0)."""
+    tier = str(_arm_sku(res).get("name") or "Standard")
+    price = retail_hourly_usd("Virtual Network", res.get("location") or region,
+                              product_contains="IP Addresses",
+                              meter_contains=("Standard" if "standard" in tier.lower() else None),
+                              unit="1 Hour", fetch=fetch)
+    if price is None:
+        return None
+    return RateComponent(name="public_ip", hourly_usd=float(price), raw_unit_price=float(price),
+                         native_unit="hour", quantity=1.0)
+
+
+def _price_acr(res: dict, region: str, *, fetch=None) -> Optional[RateComponent]:
+    """Standing $/hr for an Azure Container Registry: a per-day fixed charge by SKU tier
+    (Basic/Standard/Premium), converted to hourly (/24). Disclosed (None) if the tier meter cannot be
+    matched."""
+    sku = _arm_sku(res)
+    tier = str(sku.get("name") or sku.get("tier") or "")
+    if not tier:
+        return None
+    per_day = retail_hourly_usd("Container Registry", res.get("location") or region,
+                                meter_contains=f"{tier} Registry", unit="1/Day", fetch=fetch)
+    if per_day is None:
+        return None
+    return RateComponent(name="container_registry", hourly_usd=float(per_day) / 24.0,
+                         raw_unit_price=float(per_day), native_unit="registry-day", quantity=1.0)
+
+
+# The DISPATCH table: ARM resource type (lowercased) -> a pricer callable, or a sentinel. Per-type
+# knowledge is DATA (a table row), NOT a code branch, exactly like aws_cost._DIMENSIONS:
+#   _SERVERLESS : priced by the Container Apps usage schedule (not a standing line; never double-counted)
+#   _USAGE      : usage-priced (pay per GB stored / per operation / per ingested GB); $0 standing,
+#                 DISCLOSED by name, consistent with run-rate-not-cost-to-complete
+#   _FREE       : this resource TYPE carries no standing charge; DISCLOSED (a disclosed $0, never silent)
+#   <callable>  : a best-effort standing pricer (returns a RateComponent or None -> disclosed)
+# A type ABSENT from this table is NOT dropped: it goes to ``unpriced_resources`` WITH its type string,
+# so an UNANTICIPATED resource type is always surfaced. Discovery is exhaustive; pricing is best-effort.
+_SERVERLESS = object()
+_USAGE = object()
+_FREE = object()
+
+_RG_DISPATCH = {
+    "microsoft.app/containerapps": _SERVERLESS,
+    "microsoft.dbforpostgresql/flexibleservers": _price_postgres_flex,
+    "microsoft.cache/redis": _price_redis,
+    "microsoft.network/publicipaddresses": _price_public_ip,
+    "microsoft.containerregistry/registries": _price_acr,
+    # usage-priced: no standing hourly rate accrues on the idle allocation (billed per GB stored / per
+    # operation / per ingested GB); $0 standing, DISCLOSED by name.
+    "microsoft.storage/storageaccounts": _USAGE,
+    "microsoft.operationalinsights/workspaces": _USAGE,
+    "microsoft.insights/components": _USAGE,
+    "microsoft.keyvault/vaults": _USAGE,
+    "microsoft.servicebus/namespaces": _USAGE,
+    "microsoft.eventhub/namespaces": _USAGE,
+    # no standing charge for the resource type itself (the workload it fronts bills elsewhere), DISCLOSED
+    "microsoft.app/managedenvironments": _FREE,
+    "microsoft.network/virtualnetworks": _FREE,
+    "microsoft.network/networksecuritygroups": _FREE,
+    "microsoft.managedidentity/userassignedidentities": _FREE,
+}
+
+
+@dataclasses.dataclass(frozen=True)
+class RgSweep:
+    """Result of the universal resource-group sweep. ``components`` are priced standing hourly lines;
+    ``unpriced_resources`` DISCLOSES, by ARM type + name, EVERY discovered resource that is not a priced
+    standing line (usage-priced, free, unrecognized, or recognized-but-unpriceable), never a silent
+    drop. ``serverless_types`` are the Container Apps handled by the usage schedule; ``priced_types``
+    are the ARM types that produced a standing line."""
+    components: Tuple[RateComponent, ...] = ()
+    unpriced_resources: Tuple[str, ...] = ()
+    priced_types: Tuple[str, ...] = ()
+    serverless_types: Tuple[str, ...] = ()
+
+
+def price_rg_resources(resources, *, region: str, fetch=None, skip_types=()) -> RgSweep:
+    """UNIVERSAL dispatcher: for EACH discovered resource, route by its ARM ``type`` to a pricer, and
+    put anything with no pricer (or that cannot be priced) into ``unpriced_resources`` WITH its type
+    string. Discovery is EXHAUSTIVE (every resource is visited and accounted for); pricing is
+    best-effort-with-disclosure (nothing is a silent $0, and an unknown type never fails the whole
+    cost). ``skip_types`` are types priced elsewhere (Container Apps + Postgres on the serverless path)
+    so the sweep never double-counts them."""
+    skip = {str(t).lower() for t in skip_types}
+    comps: List[RateComponent] = []
+    unpriced: List[str] = []
+    priced_types: List[str] = []
+    serverless: List[str] = []
+    for res in resources or []:
+        rtype = str(res.get("type", "")).strip()
+        name = str(res.get("name", "")) or "(unnamed)"
+        label = f"{rtype} '{name}'" if rtype else f"(untyped) '{name}'"
+        key = rtype.lower()
+        if key in skip:
+            continue
+        handler = _RG_DISPATCH.get(key)
+        if handler is _SERVERLESS:
+            serverless.append(label)
+            continue
+        if handler is _USAGE:
+            unpriced.append(f"{label}: usage-priced (billed per usage; $0 standing, disclosed)")
+            continue
+        if handler is _FREE:
+            unpriced.append(f"{label}: no standing charge for this resource type (disclosed)")
+            continue
+        if handler is None:
+            unpriced.append(f"{label}: unrecognized ARM resource type, no pricer (disclosed, not dropped)")
+            continue
+        comp = handler(res, region, fetch=fetch)
+        if comp is None:
+            unpriced.append(f"{label}: recognized but not priceable "
+                            "(pricing attributes unavailable, disclosed)")
+        else:
+            comps.append(comp)
+            priced_types.append(rtype)
+    return RgSweep(tuple(comps), tuple(unpriced), tuple(priced_types), tuple(serverless))
+
+
 class AzureRunRateAdapter(RunRateAdapter):
     def __init__(self, resolve_bundle: Optional[BundleResolver] = None, call_tool=None,
                  postgres_resolver: Optional[PostgresResolver] = None,
-                 scale_resolver: Optional[ScaleResolver] = None):
+                 scale_resolver: Optional[ScaleResolver] = None,
+                 rg_resources_resolver: Optional[RgResourcesResolver] = None):
         # default: resolve a standing VM deploy via `az vm list` (serverless URLs never reach the resolver;
         # they take the usage-schedule branch in run_rate). Injectable for offline tests.
         self._resolve = resolve_bundle or _az_vm_resolver()
@@ -406,6 +650,13 @@ class AzureRunRateAdapter(RunRateAdapter):
         #  - the min-replica idle floor's scale (default: live `az containerapp list` + FQDN match)
         self._postgres = postgres_resolver or azure_postgres_extras
         self._scale = scale_resolver or _az_containerapp_scale_resolver()
+        # UNIVERSAL completeness sweep: list EVERY resource in this run's resource group (rg-<run_token>)
+        # and price/disclose each, so a type OUTSIDE {Container Apps, Postgres} is never silently missed.
+        # Injectable so tests feed a canned inventory; the default derives the RG from the URL and runs
+        # `az resource list` (which returns [] offline, keeping the tool non-fatal without credentials).
+        self._rg_resources = rg_resources_resolver or (
+            lambda ref: azure_rg_resources(resource_group_from_url(ref) or "", None))
+        self.rg_unpriced: List[str] = []   # disclosed non-priced resources, readable after run_rate
 
     def run_rate(self, deployment_ref: object, *, capture_date: str):
         """Price the deployment. A serverless Container Apps URL (``*.azurecontainerapps.io``) is priced as
@@ -433,6 +684,20 @@ class AzureRunRateAdapter(RunRateAdapter):
                     # rather than return a plausible-but-incomplete number.
                     return None
                 floor += h
+            # UNIVERSAL sweep: price every OTHER resource this run created (a Storage account, a Redis
+            # cache, a public IP, an ACR, a Log Analytics workspace, or a type we have never seen) from
+            # the run's resource group, or DISCLOSE it by name. Skip the two types already priced above
+            # (Container Apps by the schedule, Postgres by the fold) so nothing is double-counted.
+            # Best-effort-with-disclosure: an unpriceable/unknown resource is disclosed, never a silent
+            # $0, and never fails the whole cost (unlike the strict Container Apps completeness guard).
+            sweep = price_rg_resources(self._rg_resources(deployment_ref) or [], region=reg,
+                                       skip_types=(_TYPE_CONTAINERAPPS, _TYPE_POSTGRES_FLEX))
+            self.rg_unpriced = list(sweep.unpriced_resources)
+            for c in sweep.components:
+                floor += c.hourly_usd
+                notes.append(f"resource-group sweep priced {c.name}: ${c.hourly_usd:.4f}/hr "
+                             "(folded into the standing floor)")
+            notes.extend(sweep.unpriced_resources)
             scale = self._scale(deployment_ref)
             return container_apps_usage_rate(capture_date, region=reg, standing_floor_hourly=floor,
                                              scale=scale, extra_notes=tuple(notes))

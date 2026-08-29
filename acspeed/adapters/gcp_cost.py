@@ -25,7 +25,8 @@ import re
 import subprocess
 import urllib.parse
 import urllib.request
-from typing import Callable, List, Optional
+from dataclasses import dataclass
+from typing import Callable, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from ..cost import (RateComponent, RunRate, RunRateAdapter, EgressRate, UsageComponent, UsageRate,
@@ -607,7 +608,10 @@ def _gcloud_json(args: List[str], run_cmd=None):
     if run_cmd is not None:
         return run_cmd(args)
     try:
-        r = subprocess.run(["gcloud", *args, "--format=json"], capture_output=True, text=True, timeout=45)
+        # stdin=DEVNULL so a gcloud that would otherwise prompt (e.g. "enable this API? (y/N)") can never
+        # block the off-clock cost pass; it declines non-interactively, returns non-zero, and we disclose.
+        r = subprocess.run(["gcloud", *args, "--format=json"], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=45)
         return json.loads(r.stdout) if r.returncode == 0 and (r.stdout or "").strip() else None
     except Exception:  # noqa: BLE001 - cost is best-effort; a failure is disclosed, never faked
         return None
@@ -712,14 +716,384 @@ def _gce_resolver(run_cmd=None) -> BundleResolver:
     return resolve
 
 
+# ============================================================================================
+# UNIVERSAL asset-inventory sweep: discover EVERY resource this deploy created, of ANY type, from
+# GCP's own complete inventory (Cloud Asset Inventory), then dispatch each to a pricer by its
+# assetType. This is the GCP counterpart of redu's single complete pricing table: discovery is
+# EXHAUSTIVE (the inventory lists every asset, so a type we never anticipated -- a GCS bucket, a
+# Memorystore instance, a Pub/Sub topic, a load balancer, a brand-new service -- is still SEEN);
+# pricing is best-effort-WITH-DISCLOSURE (an asset whose type has no pricer, or whose pricer cannot
+# resolve a needed dimension offline, is added to unpriced_resources WITH its assetType and NEVER
+# silently dropped or faked as $0). Adding a pricer for a new type is a one-line registry entry; a
+# type with no pricer is caught and disclosed with NO new code, which is the whole point.
+# ============================================================================================
+
+CLOUD_RUN_ASSET_TYPE = "run.googleapis.com/Service"
+CLOUD_SQL_ASSET_TYPE = "sqladmin.googleapis.com/Instance"
+# In the run_rate sweep these two are already priced by the URL/enumeration FAST PATH above, so the
+# sweep RECOGNIZES them (never re-sums, never discloses them as unpriced) and prices everything else.
+_DEFAULT_FASTPATH_TYPES = (CLOUD_RUN_ASSET_TYPE, CLOUD_SQL_ASSET_TYPE)
+
+# The env flag that activates the sweep on the default (non-injected) adapter, once the Cloud Asset
+# API is enabled on the caller project (`gcloud services enable cloudasset.googleapis.com`). It is
+# OFF by default so the standing test suite stays hermetic (no gcloud spawn) and so a project without
+# the API pays no failed-call tax; the injectable ``resolve_assets`` seam activates it in tests.
+_ASSET_SWEEP_ENV = "ACSPEED_GCP_ASSET_SWEEP"
+
+AssetResolver = Callable[[object], Optional[List[dict]]]
+
+
+def gcp_project_assets(scope: str, query: str, run_cmd=None,
+                       asset_types: Optional[List[str]] = None) -> List[dict]:
+    """The COMPLETE enumerator: list ALL resources in ``scope`` matching ``query``, of ANY type, via
+    Cloud Asset Inventory. Default (run_cmd=None) runs, host-side and off-clock::
+
+        gcloud asset search-all-resources --scope=projects/<project> --query="name:<run-token>" --format=json
+
+    (optionally ``--asset-types=<a,b,...>`` when ``asset_types`` is given). Each result carries at least
+    ``assetType`` (e.g. ``run.googleapis.com/Service``, ``compute.googleapis.com/Disk``,
+    ``storage.googleapis.com/Bucket``), ``name`` (full resource name), ``location`` and
+    ``additionalAttributes`` -- the fields the dispatcher routes and prices on. ``run_cmd`` is injectable
+    so tests run OFFLINE with a canned asset list. The Cloud Asset API must be enabled on the caller
+    project (`gcloud services enable cloudasset.googleapis.com`); when it is not, gcloud returns non-zero
+    and this yields [] (disclosed by the caller as an empty sweep, never faked)."""
+    args = ["asset", "search-all-resources", f"--scope={scope}"]
+    if query:
+        args.append(f"--query={query}")
+    if asset_types:
+        args.append("--asset-types=" + ",".join(asset_types))
+    data = _gcloud_json(args, run_cmd)
+    return [a for a in data if isinstance(a, dict)] if isinstance(data, list) else []
+
+
+def _asset_query_anchor(deployment_ref: object) -> str:
+    """The strongest substring that identifies THIS deploy's resources in a full resource name: the
+    harness run-token (``acs<hex>``, carried into resource names by construction) if present, else the
+    Cloud Run service / first host label. Used to build the default ``name:<anchor>`` inventory query so
+    the sweep scopes to this deploy, not the whole project."""
+    ref = str(deployment_ref or "")
+    host = (urlparse(ref if "://" in ref else f"https://{ref}").hostname or "").lower()
+    m = re.search(r"acs[0-9a-f]{6,}", host) or re.search(r"acs[0-9a-f]{6,}", ref.lower())
+    if m:
+        return m.group(0)
+    sr = _cloud_run_service_region_from_url(ref)
+    if sr:
+        return sr[0]
+    label = host.split(".")[0] if host else ""
+    return re.sub(r"-\d+$", "", label)          # strip a trailing -<projnum>/-<hash> enumeration suffix
+
+
+def gcp_assets_for_deployment(deployment_ref: object, *, project: Optional[str] = None,
+                              run_cmd=None) -> List[dict]:
+    """Default ``resolve_assets``: enumerate the deploy's resources from Cloud Asset Inventory, scoped to
+    the ADC project and queried by this deploy's anchor (run-token / service name). Returns [] when no
+    project is resolvable (disclosed as an empty sweep, never faked). ``run_cmd`` injectable for tests."""
+    # The default (live) resolver requires the harness run-token to bound the query to THIS deploy; without
+    # it we cannot scope the inventory safely, so return an empty sweep rather than sweep the whole project
+    # or shell out for a non-deploy ref. This also keeps the default adapter hermetic on test stubs.
+    if not re.search(r"acs[0-9a-f]{6,}", str(deployment_ref or "").lower()):
+        return []
+    project = project or _adc_project()
+    if not project:
+        return []
+    anchor = _asset_query_anchor(deployment_ref)
+    query = f"name:{anchor}" if anchor else ""
+    return gcp_project_assets(f"projects/{project}", query, run_cmd=run_cmd)
+
+
+@dataclass(frozen=True)
+class AssetSweep:
+    """The universal sweep's result. ``floor_hourly_usd`` is the sum of the standing $/hr the sweep could
+    price; ``priced`` and ``unpriced_resources`` list what was priced vs DISCLOSED (each unpriced entry
+    keeps its ``asset_type`` and ``name`` so nothing is silently dropped); ``notes`` are the human-facing
+    disclosure lines to fold into the estimate's assumptions."""
+    floor_hourly_usd: float
+    priced: Tuple[dict, ...] = ()
+    unpriced_resources: Tuple[dict, ...] = ()
+    notes: Tuple[str, ...] = ()
+
+
+class _SweepCtx:
+    """Shared context handed to each per-assetType pricer: the region fallback (from the served URL),
+    Catalog auth, an injectable follow-up ``run_cmd`` (for a describe a pricer may need), and a LAZY
+    Compute-service SKU cache (fetched once, only if a pricer needs it and auth exists)."""
+    def __init__(self, url_region, token, project, run_cmd, fetch, compute_skus):
+        self.url_region = url_region
+        self.token = token
+        self.project = project
+        self.run_cmd = run_cmd
+        self.fetch = fetch
+        self._compute_skus = compute_skus
+        self._compute_fetched = compute_skus is not None
+
+    def compute_skus(self):
+        if not self._compute_fetched:
+            self._compute_skus = (catalog_skus_authed(COMPUTE_SERVICE_ID, token=self.token,
+                                  project=self.project, fetch=self.fetch) if self.token else None)
+            self._compute_fetched = True
+        return self._compute_skus
+
+
+def _short_name(asset: dict) -> str:
+    n = str(asset.get("name") or "")
+    return n.rsplit("/", 1)[-1] if n else str(asset.get("displayName") or "(unnamed)")
+
+
+def _asset_region(asset: dict, ctx: "_SweepCtx") -> str:
+    """The pricing region for an asset. A zonal location (``europe-west1-b``, 2+ dashes) reduces to its
+    region; a regional / global / empty location falls back to the served-URL region."""
+    loc = str(asset.get("location") or "")
+    if loc and loc.count("-") >= 2:
+        return loc.rsplit("-", 1)[0]
+    if loc and loc not in ("global",):
+        return loc
+    return ctx.url_region or loc
+
+
+def _attrs(asset: dict) -> dict:
+    a = asset.get("additionalAttributes")
+    return a if isinstance(a, dict) else {}
+
+
+def _sweep_compute_instance(asset: dict, ctx: "_SweepCtx"):
+    """A standing Compute Engine VM the deploy left running: price it from the SAME componentized
+    Core/Ram SKUs the URL VM path uses (``_gce_core_ram_rates``). vCPU + RAM + machineType come from the
+    inventory's ``additionalAttributes`` when present, else a follow-up ``machine-types describe`` (needs
+    ``run_cmd``); if neither resolves the size, or the family is unmapped, or the Core/Ram SKUs are
+    unavailable, return (None, reason) so the caller DISCLOSES it, never faked."""
+    attrs = _attrs(asset)
+    region = _asset_region(asset, ctx)
+    loc = str(asset.get("location") or "")
+    zone = loc if loc.count("-") >= 2 else ""
+    mt = str(attrs.get("machineType") or "").rsplit("/", 1)[-1]
+    vcpus = attrs.get("guestCpus") or attrs.get("vcpus")
+    mem_mb = attrs.get("memoryMb")
+    if (not mt or not vcpus or not mem_mb) and ctx.run_cmd is not None and zone:
+        if not mt:
+            desc = _gcloud_json(["compute", "instances", "describe", _short_name(asset),
+                                 "--zone", zone], ctx.run_cmd) or {}
+            mt = str(desc.get("machineType") or "").rsplit("/", 1)[-1] or mt
+        if mt and (not vcpus or not mem_mb):
+            mtd = _gcloud_json(["compute", "machine-types", "describe", mt, "--zone", zone],
+                               ctx.run_cmd) or {}
+            vcpus = vcpus or mtd.get("guestCpus")
+            mem_mb = mem_mb or mtd.get("memoryMb")
+    if not mt:
+        return None, "machine type not resolvable from inventory (a compute describe was unavailable)"
+    fam = _gce_family_for(mt)
+    if not fam:
+        return None, f"machine family for '{mt}' is unmapped in the Catalog token table"
+    family, is_custom = fam
+    if not vcpus or not mem_mb:
+        return None, f"vCPU/RAM for '{mt}' not resolvable (a machine-types describe was unavailable)"
+    skus = ctx.compute_skus()
+    if not skus:
+        return None, "Compute Core/Ram SKUs unavailable (no Catalog auth)"
+    rates = _gce_core_ram_rates(skus, region, family, is_custom)
+    if not rates:
+        return None, f"no {family} Core/Ram SKU covers {region}"
+    core, ram, exact = rates
+    ram_gb = float(mem_mb) / 1024.0
+    hourly = float(vcpus) * core + ram_gb * ram
+    note = (f"Compute Engine {mt} ({float(vcpus):g} vCPU + {round(ram_gb, 3):g} GiB) in {region}"
+            + ("" if exact else ", region-approximate"))
+    return hourly, note
+
+
+def _pd_capacity_gb_month(skus: Optional[List[dict]], region: str) -> Optional[float]:
+    """Cheapest per-GB-month Compute persistent-disk / hyperdisk CAPACITY rate for ``region`` (exact then
+    same-continent), from the Storage-family OnDemand SKUs. None if unavailable (caller discloses)."""
+    if not skus:
+        return None
+    continent = region.split("-", 1)[0] if region else ""
+
+    def _cands(region_pred):
+        out = []
+        for s in skus:
+            c = s.get("category", {}) or {}
+            if c.get("usageType") != "OnDemand" or c.get("resourceFamily") != "Storage":
+                continue
+            d = str(s.get("description", ""))
+            if "Capacity" not in d or not any(t in d for t in ("PD", "Persistent Disk", "Hyperdisk")):
+                continue
+            if any(x in d for x in ("Snapshot", "Image", "Commitment", "Committed")):
+                continue
+            if not region_pred(s.get("serviceRegions") or []):
+                continue
+            p = sku_unit_price_usd(s)
+            if p and p > 0:
+                out.append(p)
+        return out
+    exact = _cands(lambda regs: (not region) or region in regs)
+    if exact:
+        return min(exact)
+    cont = _cands(lambda regs: any(str(x).startswith(continent) for x in regs))
+    return min(cont) if cont else None
+
+
+def _sweep_compute_disk(asset: dict, ctx: "_SweepCtx"):
+    """A persistent / regional disk: priced GB x per-GB-month capacity rate / 730. Size comes from the
+    inventory's ``additionalAttributes.sizeGb`` when present, else a ``disks describe`` (needs run_cmd);
+    the rate from the Compute Storage capacity SKUs. If size or rate is unavailable, return (None, reason)
+    so the caller DISCLOSES the disk, never a silent $0."""
+    attrs = _attrs(asset)
+    region = _asset_region(asset, ctx)
+    loc = str(asset.get("location") or "")
+    zone = loc if loc.count("-") >= 2 else ""
+    size = attrs.get("sizeGb") or attrs.get("size_gb")
+    if not size and ctx.run_cmd is not None and zone:
+        desc = _gcloud_json(["compute", "disks", "describe", _short_name(asset), "--zone", zone],
+                            ctx.run_cmd) or {}
+        size = desc.get("sizeGb")
+    try:
+        size_gb = float(size) if size is not None else 0.0
+    except (TypeError, ValueError):
+        size_gb = 0.0
+    if size_gb <= 0:
+        return None, "disk size not resolvable from inventory (a disks describe was unavailable)"
+    rate = _pd_capacity_gb_month(ctx.compute_skus(), region)
+    if rate is None:
+        return None, f"persistent-disk capacity SKU unavailable for {region}"
+    hourly = storage_gb_month_to_hourly(rate, size_gb)
+    return hourly, f"persistent disk {size_gb:g} GB in {region} at ${rate:g}/GB-month"
+
+
+def _sweep_compute_address(asset: dict, ctx: "_SweepCtx"):
+    """A reserved external IP address: priced from the Compute static/external-IP standing hourly SKU when
+    the Catalog carries one for the region; else disclosed. Only external addresses carry a charge (an
+    internal address is free); an INTERNAL address is disclosed as $0-by-rule, not faked."""
+    attrs = _attrs(asset)
+    if str(attrs.get("purpose") or "").upper() in ("GCE_ENDPOINT", "DNS_RESOLVER") or \
+            str(attrs.get("addressType") or "").upper() == "INTERNAL":
+        return 0.0, "internal IP address (no standing charge by GCP rule)"
+    region = _asset_region(asset, ctx)
+    skus = ctx.compute_skus()
+    if not skus:
+        return None, "external-IP SKU unavailable (no Catalog auth)"
+    continent = region.split("-", 1)[0] if region else ""
+
+    def _cands(region_pred):
+        out = []
+        for s in skus:
+            if (s.get("category", {}) or {}).get("usageType") != "OnDemand":
+                continue
+            d = str(s.get("description", ""))
+            if not (("External IP" in d or "Static Ip" in d or "External Ip" in d) and "IP" in d.upper()):
+                continue
+            if "Idle" in d or "Unused" in d:                 # the plain in-use external-IP rate
+                continue
+            if not region_pred(s.get("serviceRegions") or []):
+                continue
+            p = sku_unit_price_usd(s)
+            if p and p > 0:
+                out.append(p)
+        return out
+    exact = _cands(lambda regs: (not region) or region in regs)
+    cont = exact or _cands(lambda regs: any(str(x).startswith(continent) for x in regs))
+    if not cont:
+        return None, f"external-IP standing SKU not found for {region}"
+    return min(cont), f"reserved external IP in {region}"
+
+
+def _sweep_gcs_bucket(asset: dict, ctx: "_SweepCtx"):
+    """A Cloud Storage bucket is USAGE-metered (stored GB-month + operations + egress), with no standing
+    hourly rate and a stored volume the inventory does not expose. It is DISCLOSED (never faked $0): a
+    bucket the deploy created is surfaced with its type and name so a reader knows a usage-metered line
+    exists, even though a fixed $/hr would be meaningless for it."""
+    return None, "Cloud Storage bucket is usage-metered (stored GB-month + operations + egress); the " \
+                 "stored volume is not exposed by the inventory, so no standing $/hr is asserted"
+
+
+# assetType -> pricer. Adding a type is ONE row here; a type absent from this table is still discovered
+# by the sweep and DISCLOSED in unpriced_resources (never dropped), which is the catch-all guarantee.
+_ASSET_PRICERS = {
+    "compute.googleapis.com/Instance": _sweep_compute_instance,
+    "compute.googleapis.com/Disk": _sweep_compute_disk,
+    "compute.googleapis.com/RegionDisk": _sweep_compute_disk,
+    "compute.googleapis.com/Address": _sweep_compute_address,
+    "compute.googleapis.com/GlobalAddress": _sweep_compute_address,
+    "storage.googleapis.com/Bucket": _sweep_gcs_bucket,
+}
+
+
+def price_discovered_assets(assets: List[dict], *, capture_date: str = "", url_region: Optional[str] = None,
+                            token: Optional[str] = None, project: Optional[str] = None,
+                            compute_skus: Optional[List[dict]] = None, run_cmd=None, fetch=None,
+                            fastpath_types: Tuple[str, ...] = _DEFAULT_FASTPATH_TYPES) -> AssetSweep:
+    """The DISPATCHER: for EACH discovered asset, route to a pricer by its ``assetType`` and either price
+    it (folding a standing $/hr into ``floor_hourly_usd``) or DISCLOSE it in ``unpriced_resources`` with
+    its assetType + name -- never silently dropped, never faked $0 (Part-4 completeness). ``fastpath_types``
+    are the types already priced upstream (Cloud Run + Cloud SQL by the URL/enumeration fast path): they
+    are recognized as priced and neither re-summed nor disclosed as unpriced. A type with NO entry in
+    ``_ASSET_PRICERS`` -- a resource type this tool never anticipated -- flows straight to
+    ``unpriced_resources`` with NO new code, which is the whole point of inventory-driven discovery."""
+    ctx = _SweepCtx(url_region, token, project, run_cmd, fetch, compute_skus)
+    floor = 0.0
+    priced: List[dict] = []
+    unpriced: List[dict] = []
+    notes: List[str] = []
+    for a in assets:
+        if not isinstance(a, dict):
+            continue
+        at = str(a.get("assetType") or "")
+        name = str(a.get("name") or a.get("displayName") or "(unnamed)")
+        short = _short_name(a)
+        if at in fastpath_types:
+            priced.append({"asset_type": at, "name": name, "hourly_usd": 0.0,
+                           "note": "recognized; priced by the URL/enumeration fast path (not re-summed)"})
+            continue
+        pricer = _ASSET_PRICERS.get(at)
+        if pricer is None:
+            unpriced.append({"asset_type": at, "name": name,
+                             "reason": "no pricer for this assetType in the adapter"})
+            notes.append(f"universal sweep: discovered {at} '{short}' with no pricer; DISCLOSED unpriced, "
+                         "never silently $0 (a resource type the tool does not yet price)")
+            continue
+        try:
+            hourly, why = pricer(a, ctx)
+        except Exception as e:  # noqa: BLE001 - a pricer failure is disclosed, never faked
+            hourly, why = None, f"pricer raised {type(e).__name__}"
+        if hourly is None:
+            unpriced.append({"asset_type": at, "name": name, "reason": why})
+            notes.append(f"universal sweep: discovered {at} '{short}'; {why}; DISCLOSED unpriced, never "
+                         "silently $0")
+        else:
+            floor += float(hourly)
+            priced.append({"asset_type": at, "name": name, "hourly_usd": float(hourly), "note": why})
+            if float(hourly) > 0:
+                notes.append(f"universal sweep: folded {at} '{short}' as a standing "
+                             f"${round(float(hourly), 4)}/hr ({why})")
+    return AssetSweep(floor_hourly_usd=round(floor, 6), priced=tuple(priced),
+                      unpriced_resources=tuple(unpriced), notes=tuple(notes))
+
+
+def _resolve_assets_for(adapter, deployment_ref) -> Optional[AssetResolver]:
+    """The sweep's enumerator for a run_rate call: the injected ``resolve_assets`` if given, else the
+    default Cloud Asset Inventory resolver ONLY when the activation env flag is set (so the default
+    adapter stays hermetic / cost-free until a project enables the Cloud Asset API)."""
+    if adapter._resolve_assets is not None:
+        return adapter._resolve_assets
+    # Default-on (consistent with the Azure/AWS sweeps): the resolver self-limits to refs carrying the
+    # harness run-token and returns [] otherwise, so a test stub never shells out. An explicit
+    # ACSPEED_GCP_ASSET_SWEEP=0 disables it (e.g. before the Cloud Asset API is enabled on a project).
+    if os.environ.get(_ASSET_SWEEP_ENV, "1") == "0":
+        return None
+    return gcp_assets_for_deployment
+
+
 class GcpRunRateAdapter(RunRateAdapter):
     def __init__(self, resolve_bundle: Optional[BundleResolver] = None, call_tool=None,
-                 resolve_scaling: Optional[ScalingResolver] = None):
+                 resolve_scaling: Optional[ScalingResolver] = None,
+                 resolve_assets: Optional[AssetResolver] = None):
         # default: resolve a standing GCE deploy via `gcloud compute instances list` (serverless run.app URLs
         # never reach the resolver; they take the usage-schedule branch in run_rate). Injectable for tests.
         self._resolve = resolve_bundle or _gce_resolver()
         # default: resolve a Cloud Run service's autoscaling config via `gcloud run services describe`.
         self._resolve_scaling = resolve_scaling or _cloud_run_scaling_resolver()
+        # the UNIVERSAL asset-inventory sweep's enumerator. None keeps the default adapter hermetic /
+        # cost-free until the ACSPEED_GCP_ASSET_SWEEP env flag opts in (once the Cloud Asset API is
+        # enabled); tests inject a canned resolver here to exercise discovery + dispatch offline.
+        self._resolve_assets = resolve_assets
 
     def run_rate(self, deployment_ref: object, *, capture_date: str):
         """Price the deployment. A serverless Cloud Run URL (``*.run.app``) is priced as a per-usage
@@ -805,6 +1179,23 @@ class GcpRunRateAdapter(RunRateAdapter):
             notes.append("Artifact Registry image storage is not folded here: a single app image sits within "
                          "the 0.5 GB free tier (storage beyond that lists at $0.10/GB-month), a de-minimis "
                          "line disclosed rather than silently omitted")
+            # -- UNIVERSAL asset-inventory sweep: catch EVERY other resource type the deploy created --
+            # The two fast-path types (Cloud Run + Cloud SQL) are already priced above; this sweep folds
+            # any OTHER standing resource it can price (a Compute disk/instance/IP, ...) and DISCLOSES any
+            # type it cannot (a GCS bucket, a Memorystore, a Pub/Sub topic, a brand-new service) rather
+            # than silently missing it. Best-effort and exception-guarded: a sweep failure is disclosed.
+            assets_resolver = _resolve_assets_for(self, deployment_ref)
+            if assets_resolver is not None:
+                try:
+                    assets = assets_resolver(deployment_ref) or []
+                    sweep = price_discovered_assets(assets, capture_date=capture_date, url_region=region,
+                                                    token=_adc_token(), project=_adc_project(),
+                                                    fastpath_types=_DEFAULT_FASTPATH_TYPES)
+                    floor += sweep.floor_hourly_usd
+                    notes.extend(sweep.notes)
+                except Exception:  # noqa: BLE001 - the sweep is best-effort; a failure is disclosed
+                    notes.append("universal asset-inventory sweep failed (disclosed; Cloud Run + Cloud SQL "
+                                 "are still priced above)")
             return cloud_run_usage_rate(capture_date, region=region, skus=run_skus,
                                         standing_floor_hourly=floor, extra_notes=tuple(notes),
                                         omit_requests=omit_requests)
@@ -856,6 +1247,24 @@ class GcpRunRateAdapter(RunRateAdapter):
         src = ("GCP Cloud Billing Catalog (public list, USD, ADC)" if token else
                ("GCP Cloud Billing Catalog (public list, USD, API key)" if key else
                 "GCP (bundle supplied; no Catalog auth)")) + price_note
+        # -- UNIVERSAL asset-inventory sweep on the standing (VM) path too: the app VM is the fast-path
+        # type here, so it is not double-counted; every OTHER resource (extra disks, a reserved IP, a GCS
+        # bucket, a Memorystore, ...) is priced-or-disclosed. Best-effort, exception-guarded.
+        assets_resolver = _resolve_assets_for(self, deployment_ref)
+        if assets_resolver is not None:
+            try:
+                assets = assets_resolver(deployment_ref) or []
+                sweep = price_discovered_assets(assets, capture_date=capture_date, url_region=region,
+                                                token=token, project=_adc_project(),
+                                                fastpath_types=("compute.googleapis.com/Instance",))
+                if sweep.floor_hourly_usd:
+                    comps.append(RateComponent(name="asset-sweep", hourly_usd=sweep.floor_hourly_usd,
+                                               raw_unit_price=sweep.floor_hourly_usd, native_unit="hour"))
+                if sweep.unpriced_resources:
+                    src += (" (asset-sweep DISCLOSED unpriced: "
+                            + ", ".join(u["asset_type"] for u in sweep.unpriced_resources) + ")")
+            except Exception:  # noqa: BLE001 - the sweep is best-effort; a failure is disclosed
+                src += " (asset-sweep failed; disclosed)"
         return compose_run_rate(comps, provider="gcp", region=region,
                                 flavor=str(b.get("machine_type", b.get("family", b.get("flavor", "")))),
                                 capture_date=capture_date, egress=egress, price_source=src,

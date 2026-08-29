@@ -149,6 +149,9 @@ def _parse_arn(arn: str):
     if len(parts) < 6:
         return None, None, None
     service, region, tail = parts[2], parts[3], parts[5]
+    if service == "s3":
+        # S3 ARNs are arn:aws:s3:::bucket[/key] -- no type/region/account segment; the resource IS a bucket
+        return service, region, "bucket"
     restype = tail.split("/", 1)[0].split(":", 1)[0]
     return service, region, restype
 
@@ -242,6 +245,10 @@ class AwsRunRateAdapter(RunRateAdapter):
                  get_products: Optional[ProductsClient] = None):
         self._enumerate = enumerate_resources or _default_enumerator
         self._get_products = get_products or _default_products_client
+        # every discovered resource that could not be priced, DISCLOSED by type (usage-priced or unclassified)
+        # or by arn+dimension -- readable after run_rate so the universal-discovery path can surface it and
+        # prove completeness: a discovered resource is priced OR listed here, never a silent $0.
+        self.unpriced_resources: list = []
 
     def run_rate(self, deployment_ref: object, *, capture_date: str) -> Optional[RunRate]:
         resources = self._enumerate(deployment_ref) or []
@@ -277,6 +284,10 @@ class AwsRunRateAdapter(RunRateAdapter):
                     raw_unit_price=hourly / qty if qty else hourly,
                     native_unit=("instance-hour" if dim["unit"] == _HRS else dim["unit"]),
                     quantity=qty))
+        # completeness: after the loop every discovered resource is either a priced component or recorded in
+        # ``unpriced`` by its type. Expose it (even on the None path below) so the caller never has to infer a
+        # silent $0 from an empty RunRate.
+        self.unpriced_resources = list(unpriced)
         if not comps:
             return None                                    # nothing priceable -> disclosed, not faked
         price_source = "AWS public on-demand list (Price List Query API)"
