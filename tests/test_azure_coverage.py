@@ -207,44 +207,52 @@ class TestAppServicePath(unittest.TestCase):
          "unitOfMeasure": "1 GB/Month", "retailPrice": 0.1369, "type": "Consumption"},
     ]
 
-    def test_url_and_plan_pricing(self):
-        self.assertTrue(azure_cost.is_app_service_url("https://umami-acs2aafcf1f.azurewebsites.net"))
-        self.assertFalse(azure_cost.is_app_service_url("https://x.eastus2.azurecontainerapps.io"))
-        # the Windows meter that shares sku B1 is dropped; the Linux plan price wins
-        self.assertAlmostEqual(azure_cost.app_service_hourly("westus2", "B1", fetch=lambda u: {"Items": self._RETAIL}),
-                               0.017, places=4)
-        self.assertIsNone(azure_cost.app_service_hourly("westus2", "P3v9", fetch=lambda u: {"Items": self._RETAIL}))
+    # az resource list entries for an App Service deploy (plan + web app + postgres), in ANY resource group
+    _RES = [
+        {"name": "asp-umami-acs1a2b", "type": "Microsoft.Web/serverfarms", "location": "westus2",
+         "sku": {"name": "B1"}, "resourceGroup": "rg-umami-acs1a2b"},
+        {"name": "umami-acs1a2b", "type": "Microsoft.Web/sites", "location": "westus2",
+         "resourceGroup": "rg-umami-acs1a2b"},
+        {"name": "umami-db-acs1a2b", "type": "Microsoft.DBforPostgreSQL/flexibleServers", "location": "westus2",
+         "sku": {"name": "Standard_B1ms"}, "properties": {"storage": {"storageSizeGb": 32}},
+         "resourceGroup": "rg-umami-acs1a2b"},
+    ]
 
-    def test_resolver_parses_plan_from_az(self):
+    def test_plan_pricer_is_a_data_table_row(self):
+        # App Service is priced by the sweep's _RG_DISPATCH data table, NOT a per-type run_rate branch
+        self.assertIs(azure_cost._RG_DISPATCH["microsoft.web/serverfarms"], azure_cost._price_app_service_plan)
+        comp = azure_cost._price_app_service_plan(self._RES[0], "westus2", fetch=lambda u: {"Items": self._RETAIL})
+        self.assertIsNotNone(comp)
+        self.assertAlmostEqual(comp.hourly_usd, 0.017, places=4)        # Linux B1; the Windows meter is dropped
+        self.assertIsNone(azure_cost._price_app_service_plan({"sku": {"name": "P3v9"}}, "westus2",
+                                                             fetch=lambda u: {"Items": self._RETAIL}))
+
+    def test_token_discovery_finds_resources_in_any_rg(self):
+        # rg is rg-umami-acs1a2b (NOT rg-acs1a2b) - token discovery must still find it by name/RG match
         def run_cmd(args):
-            if args[:2] == ["webapp", "list"]:
-                return [{"name": "umami-acs2aafcf1f", "defaultHostName": "umami-acs2aafcf1f.azurewebsites.net",
-                         "location": "West US 2", "appServicePlanId": "/subscriptions/x/.../asp-1"}]
-            if args[:3] == ["appservice", "plan", "show"]:
-                return {"sku": {"name": "B1"}}
-            return None
-        r = azure_cost._az_appservice_plan_resolver(run_cmd)("https://umami-acs2aafcf1f.azurewebsites.net")
-        self.assertEqual(r, {"region": "westus2", "sku": "B1", "os": "linux"})
+            return self._RES if args[:2] == ["resource", "list"] else None
+        got = azure_cost.azure_resources_for_token("acs1a2b", run_cmd)
+        self.assertEqual(len(got), 3)
 
-    def test_run_rate_prices_plan_plus_db(self):
+    def test_run_rate_sums_the_swept_standing_lines(self):
         from unittest import mock
-        ad = azure_cost.AzureRunRateAdapter(
-            appservice_resolver=lambda ref: {"region": "westus2", "sku": "B1", "os": "linux"},
-            postgres_resolver=lambda: [{"region": "westus2", "sku": "Standard_B1ms", "storage_gb": 32}],
-            rg_resources_resolver=lambda ref: [])
+        # the universal path: inject the discovered resources; the sweep prices App Service + Postgres
+        ad = azure_cost.AzureRunRateAdapter(rg_resources_resolver=lambda ref: self._RES)
         with mock.patch.object(azure_cost, "_retail_query", return_value=self._RETAIL):
-            rr = ad.run_rate("https://umami-acs2aafcf1f.azurewebsites.net", capture_date="2026-08-29")
-        self.assertIsNotNone(rr)                                  # NOT ok=False / UNPRICED anymore
+            rr = ad.run_rate("https://umami-acs1a2b.azurewebsites.net", capture_date="2026-08-29")
+        self.assertIsNotNone(rr)                                        # NOT ok=False / UNPRICED anymore
         d = rr.to_dict()
         self.assertEqual(d["kind"], "standing")
         names = [c["name"] for c in d["components"]]
         self.assertTrue(any("app-service-plan" in n for n in names))
         self.assertTrue(any("postgres" in n for n in names))
-        self.assertGreater(d["monthly_usd"], 25.0)               # plan ~12.4 + DB ~16 = ~28.5/mo
+        self.assertGreater(d["monthly_usd"], 25.0)                     # plan ~12.4 + DB ~19 = ~31/mo
+        self.assertTrue(any("Microsoft.Web/sites" in u for u in ad.rg_unpriced))   # web app disclosed, not dropped
 
-    def test_unresolvable_plan_is_unpriced_not_faked(self):
-        ad = azure_cost.AzureRunRateAdapter(appservice_resolver=lambda ref: None,
-                                            postgres_resolver=lambda: [], rg_resources_resolver=lambda ref: [])
+    def test_no_resources_falls_back_and_discloses(self):
+        # empty sweep + no VM bundle -> UNPRICED (None), never a faked number
+        ad = azure_cost.AzureRunRateAdapter(rg_resources_resolver=lambda ref: [],
+                                            resolve_bundle=lambda ref: None)
         self.assertIsNone(ad.run_rate("https://x.azurewebsites.net", capture_date="2026-08-29"))
 
 
