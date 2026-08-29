@@ -30,7 +30,7 @@ from typing import Callable, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from ..cost import (RateComponent, RunRate, RunRateAdapter, EgressRate, UsageComponent, UsageRate,
-                    compose_run_rate, compose_usage_rate, storage_gb_month_to_hourly)
+                    compose_run_rate, compose_usage_rate, storage_gb_month_to_hourly, HOURS_PER_MONTH)
 
 _RETAIL_ENDPOINT = "https://prices.azure.com/api/retail/prices"
 # meter-name substrings that mark a NON on-demand-Linux line sharing the same SKU (the API has no OS field)
@@ -810,6 +810,12 @@ class AzureRunRateAdapter(RunRateAdapter):
                     # rather than return a plausible-but-incomplete number.
                     return None
                 floor += h
+                # DISCLOSE the DB line: it is the DOMINANT always-on cost folded into the floor, so name it
+                # (SKU + $/mo) instead of leaving the reader to wonder where the floor comes from (buyer-safety:
+                # every folded charge is itemized, never a silent number).
+                notes.append(f"managed Postgres Flexible Server '{pg.get('sku', '')}' "
+                             f"({pg.get('storage_gb', 0):g} GB) folded into the standing floor: "
+                             f"${h:.4f}/hr = ${h * HOURS_PER_MONTH:.2f}/mo")
             # UNIVERSAL sweep: price every OTHER resource this run created (a Storage account, a Redis
             # cache, a public IP, an ACR, a Log Analytics workspace, or a type we have never seen) from
             # the run's resource group, or DISCLOSE it by name. Skip the two types already priced above

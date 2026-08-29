@@ -132,7 +132,7 @@ class TestGap7PostgresDisclosure(unittest.TestCase):
         self.assertTrue(any("db standing floor unavailable" in a.lower() for a in d["assumptions"]),
                         d["assumptions"])
 
-    def test_found_db_folds_into_floor_no_disclosure_note(self):
+    def test_found_db_folds_into_floor_and_is_disclosed(self):
         servers = [{"region": "westeurope", "sku": "Standard_B1ms", "storage_gb": 32.0}]
         ur = self._run(servers=servers)
         self.assertIsNotNone(ur)
@@ -142,6 +142,9 @@ class TestGap7PostgresDisclosure(unittest.TestCase):
         # the DB floor (~0.0259/hr x 730 ~= $18.9/mo) is now inside the 10k-tier monthly cost
         at_10k = ur.monthly_at(10_000)
         self.assertGreater(at_10k, 15.0)
+        # buyer-safety: the folded DB is ITEMIZED in the disclosure (SKU + $/mo), not a silent number
+        self.assertTrue(any("managed postgres" in a.lower() and "Standard_B1ms" in a and "/mo" in a
+                            for a in d["assumptions"]), d["assumptions"])
 
     def test_found_but_unpriceable_db_returns_none(self):
         # a DB the deploy provisioned but we cannot price -> UNPRICED (completeness guard preserved)
