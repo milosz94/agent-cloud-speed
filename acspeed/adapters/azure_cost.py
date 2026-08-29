@@ -46,7 +46,7 @@ ScaleResolver = Callable[[object], Optional[dict]]
 
 # a Postgres resolver returns [{region, sku, storage_gb}] for the managed Postgres the serverless app uses,
 # or [] if none is found - which run_rate DISCLOSES rather than silently treating as a complete $0 floor.
-PostgresResolver = Callable[[], List[dict]]
+PostgresResolver = Callable[[object], List[dict]]   # ref -> [{region, sku, storage_gb}], scoped to the run
 
 
 _RETAIL_CACHE: dict = {}
@@ -161,30 +161,80 @@ def container_apps_region_from_url(url: str) -> Optional[str]:
     return left.rsplit(".", 1)[1] if "." in left else None
 
 
-def azure_postgres_extras(run_cmd=None):
-    """Enumerate the subscription's Azure Database for PostgreSQL Flexible Servers so a Container Apps deploy
-    with a managed DB is fully priced, not silently under-counted (the serverless app's persistent state
-    lives here). Returns [{region, sku, storage_gb}]. ``run_cmd`` injectable for offline tests."""
+def _arm_region(loc: str) -> str:
+    """Normalize an Azure region to its ARM short name (what the Retail Prices ``armRegionName`` filter and
+    every other API expect). `az postgres flexible-server list` returns the DISPLAY name ('East US 2'), but
+    the Retail API only knows 'eastus2'; passing the display name silently returns zero rows -> UNPRICED. The
+    ARM name is the display name lowercased with spaces removed ('East US 2' -> 'eastus2', 'West Europe' ->
+    'westeurope'); it is idempotent on names that are already ARM-short."""
+    return str(loc or "").strip().lower().replace(" ", "")
+
+
+def azure_postgres_extras(token: str = "", run_cmd=None):
+    """Enumerate THIS run's Azure Database for PostgreSQL Flexible Servers, SCOPED by the run ``token`` (the
+    server's name / resourceGroup / id carries it, e.g. rg-<token> or umami-<token>). Scoping matters twice:
+    `az postgres flexible-server list` is SUBSCRIPTION-WIDE, so without it (a) another account's / another
+    run's server gets folded into THIS run's standing floor (over-billing a resource this deploy never
+    created), and (b) a single unpriceable foreign SKU fails the WHOLE run's cost via the completeness guard
+    -- which is exactly how run01 (a priced B-series deploy) returned UNPRICED. ``token`` empty = no scope
+    (returns all; the container-apps branch discloses the DB floor's provenance). ``run_cmd`` injectable for
+    offline tests. Returns [{region, sku, storage_gb}]."""
     servers = _az_json(["postgres", "flexible-server", "list"], run_cmd) or []
+    tok = (token or "").strip().lower()
     out = []
     for s in servers:
+        ident = " ".join(str(s.get(k, "")) for k in ("name", "resourceGroup", "id")).lower()
+        if tok and tok not in ident:
+            continue                                   # not this run's DB -> never price it against this run
         sku = ((s.get("sku") or {}).get("name")) or s.get("skuName") or ""
         gb = float(((s.get("storage") or {}).get("storageSizeGb")) or s.get("storageSizeGb") or 0) or 0.0
-        out.append({"region": s.get("location", ""), "sku": sku, "storage_gb": gb})
+        out.append({"region": _arm_region(s.get("location", "")), "sku": sku, "storage_gb": gb})
     return out
 
 
 def postgres_flexible_hourly(region: str, sku: str, storage_gb: float, *, fetch=None) -> Optional[float]:
-    """Best-effort standing $/hr for an Azure Database for PostgreSQL Flexible Server: the compute meter for
-    the SKU's size (e.g. Standard_B1ms -> 'B1ms') from public Retail Prices, plus per-GB-month storage.
-    Returns None if the compute meter cannot be matched (the caller then DISCLOSES it, never omits silently).
-    NOTE: the Retail Prices serviceName is 'Azure Database for PostgreSQL' (NOT '... Flexible Server'); the
-    Flexible Server rows are distinguished by a 'Flexible Server' productName, which also excludes the
-    Cosmos-DB-for-PostgreSQL burstable meters that share the vCore name."""
+    """Best-effort standing $/hr for an Azure Database for PostgreSQL Flexible Server compute SKU, from the
+    PUBLIC Retail Prices API, plus per-GB-month storage. Azure prices the two flexible-server families with
+    DIFFERENT meter shapes, so a single name-substring match (the old `meter_contains=sku.split('_')[-1]`,
+    which turned 'Standard_D2ds_v5' into 'v5') is wrong for General Purpose / Memory Optimized:
+      - Burstable (B1ms / B2s / B2ms / ... / B16ms): a PER-SKU meter -- meterName / skuName is the size
+        itself ('B1MS', 'B2S', 'B2ms vCore'), matched by the size token (exact, case-insensitive).
+      - General Purpose / Memory Optimized (Standard_D*/E*/M* v-series): ALL share one GENERIC 'vCore' meter
+        whose skuName is only the vCore COUNT ('2 vCore'), so several different-priced generations collide on
+        the same skuName; the specific SKU is carried ONLY on ``armSkuName`` (e.g. 'Standard_D2ds_v5'). So
+        GP/MO is matched by EXACT ``armSkuName`` -- the one field that disambiguates them.
+    Returns None if the compute meter cannot be matched (the caller then DISCLOSES it, never a silent $0).
+    NOTE: serviceName is 'Azure Database for PostgreSQL' (NOT '... Flexible Server'); the Flexible Server rows
+    are distinguished by a 'Flexible Server' productName, which also excludes the Cosmos-DB-for-PostgreSQL
+    meters that share the vCore name."""
     svc = "Azure Database for PostgreSQL"
-    size = str(sku or "").split("_")[-1]                  # Standard_B1ms -> B1ms
-    compute = (retail_hourly_usd(svc, region, product_contains="Flexible Server",
-                                 meter_contains=size, fetch=fetch) if size else None)
+    region = _arm_region(region)                          # 'East US 2' -> 'eastus2' (Retail needs ARM short name)
+    skun = str(sku or "").strip()
+    if not skun:
+        return None
+    rows = [it for it in _retail_query(f"serviceName eq '{svc}' and armRegionName eq '{region}' "
+                                       "and priceType eq 'Consumption'", fetch=fetch)
+            if "flexible server" in str(it.get("productName", "")).lower()
+            and str(it.get("unitOfMeasure", "")).strip().lower() in ("1 hour", "1hour")]
+
+    def _min_price(pred) -> Optional[float]:
+        cands = []
+        for it in rows:
+            if not pred(it):
+                continue
+            p = it.get("retailPrice", it.get("unitPrice"))
+            if isinstance(p, (int, float)) and p > 0:    # p>0 drops the 'Compute - Free vCore' 0.0 row
+                cands.append(float(p))
+        return min(cands) if cands else None
+
+    # 1) GP/MO: exact armSkuName match (the ONLY field separating same-vCore-count generations)
+    compute = _min_price(lambda it: str(it.get("armSkuName", "")).strip().lower() == skun.lower())
+    # 2) Burstable: the per-SKU meter, matched by the size token exactly (never a substring, so B1ms != B16ms)
+    if compute is None:
+        size = re.sub(r"(?i)^standard_", "", skun).lower()   # Standard_B1ms -> b1ms
+        compute = _min_price(lambda it: size in (str(it.get("skuName", "")).strip().lower(),
+                                                 str(it.get("meterName", "")).strip().lower())
+                             or str(it.get("meterName", "")).strip().lower() == f"{size} vcore")
     if compute is None:
         return None
     hourly = compute
@@ -723,7 +773,8 @@ class AzureRunRateAdapter(RunRateAdapter):
         # serverless (Container Apps) seams, both injectable so the fold is tested offline (GAP 6 + GAP 7):
         #  - the managed-Postgres standing floor (default: live `az postgres flexible-server list`)
         #  - the min-replica idle floor's scale (default: live `az containerapp list` + FQDN match)
-        self._postgres = postgres_resolver or azure_postgres_extras
+        self._postgres = postgres_resolver or (
+            lambda ref: azure_postgres_extras(run_token_from_ref(ref) or "", None))
         self._scale = scale_resolver or _az_containerapp_scale_resolver()
         # UNIVERSAL completeness sweep: list EVERY resource in this run's resource group (rg-<run_token>)
         # and price/disclose each, so a type OUTSIDE {Container Apps, Postgres} is never silently missed.
@@ -747,7 +798,7 @@ class AzureRunRateAdapter(RunRateAdapter):
             # with no note). The min-replica idle floor (GAP 6) is folded inside container_apps_usage_rate
             # from the injected scale resolver.
             floor, notes = 0.0, []
-            servers = self._postgres() or []
+            servers = self._postgres(deployment_ref) or []
             if not servers:
                 notes.append("DB standing floor unavailable: deployment not enumerable "
                              "(no managed Postgres returned by the resolver; a real DB would be under-counted)")

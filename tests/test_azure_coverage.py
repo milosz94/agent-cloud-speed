@@ -109,10 +109,10 @@ class TestGap7PostgresDisclosure(unittest.TestCase):
     note instead of silently using floor 0."""
 
     def _adapter(self, servers, scale=None):
-        # inject the postgres resolver (0-arg, like the default azure_postgres_extras() call) and a scale
-        # resolver so no cloud is touched. Scale None -> no idle floor, keeping this test focused on the DB.
+        # inject the postgres resolver (ref -> servers, run-token-scoped like azure_postgres_extras) and a
+        # scale resolver so no cloud is touched. Scale None -> no idle floor, keeping this test on the DB.
         return azure_cost.AzureRunRateAdapter(
-            postgres_resolver=lambda: servers,
+            postgres_resolver=lambda ref: servers,
             scale_resolver=lambda ref: scale)
 
     def _run(self, servers, scale=None):

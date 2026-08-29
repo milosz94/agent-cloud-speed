@@ -224,7 +224,7 @@ class TestAdapterIntegration(unittest.TestCase):
              "location": "westeurope"},
         ]
         adapter = AzureRunRateAdapter(
-            postgres_resolver=lambda: [],                       # no managed DB in this deploy
+            postgres_resolver=lambda ref: [],                   # no managed DB in this deploy
             scale_resolver=lambda ref: None,                    # scale not enumerable (kept focused)
             rg_resources_resolver=lambda ref: rg)               # the INJECTED complete inventory
         orig = azure_cost._http_get_json
