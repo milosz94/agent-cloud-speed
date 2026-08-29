@@ -1115,6 +1115,21 @@ def measure_cost(prof: dict, url: str, capture_date: str) -> dict | None:
         return {"ok": False, "error": repr(e)[:300]}
 
 
+def _next_run_index(out_dir: str) -> int:
+    """The run index a fresh ``--n`` batch APPENDS at: one past the highest existing ``runNN.json`` in
+    ``out_dir`` (1 when the folder has none). Matching the RESULT json (not the bootlog) means an incomplete
+    run that never produced a result -- e.g. a stale leftover from a prior, differently-sized batch -- has its
+    slot REUSED and overwritten, rather than surviving forever as contamination. So repeated ``acspeed-run``
+    invocations accumulate clean runs; ``--start N`` overrides this (``--start 1`` restarts a batch)."""
+    import glob
+    hi = 0
+    for p in glob.glob(os.path.join(out_dir, "run*.json")):
+        m = re.match(r"run(\d+)\.json$", os.path.basename(p))
+        if m:
+            hi = max(hi, int(m.group(1)))
+    return hi + 1
+
+
 def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
     cwd, out_dir = prof["run_cwd"], prof["out_dir"]
     os.makedirs(out_dir, exist_ok=True)
@@ -1525,7 +1540,10 @@ def main() -> None:
     ap.add_argument("--out", default=None,
                     help="results dir (default: <app-dir>/acspeed-results/<adapter>, grouped by cloud)")
     ap.add_argument("--n", type=int, default=1, help="number of runs (default 1)")
-    ap.add_argument("--start", type=int, default=1)
+    ap.add_argument("--start", type=int, default=None,
+                    help="run index to start at. DEFAULT: APPEND after the highest existing runNN.json in the "
+                         "output folder (1 if none), so repeated invocations accumulate instead of overwriting "
+                         "from run01. Pass --start 1 to force a fresh batch from the top.")
     ap.add_argument("--model", default=None, help="pin the agent model (e.g. claude-opus-5)")
     ap.add_argument("--max-rounds", type=int, default=4)
     ap.add_argument("--keep", action="store_true",
@@ -1632,7 +1650,11 @@ def main() -> None:
              "rootfs rebuild picks up the generalized vm-runner (see README); until then run "
              f"--no-sandbox for {prof['cloud']} (agent turns on the host, using the host's creds directly).")
 
-    for i in range(a.start, a.start + a.n):
+    start = a.start if a.start is not None else _next_run_index(prof["out_dir"])
+    if a.start is None and start > 1:
+        _log(f"append mode: {start - 1} existing run(s) in {prof['out_dir']}; starting at run{start:02d} "
+             "(pass --start 1 to overwrite from run01)")
+    for i in range(start, start + a.n):
         try:
             run_once(i, prof, a.model, a.max_rounds)
         except KeyboardInterrupt:            # backstop; the signal handler normally hard-exits first
