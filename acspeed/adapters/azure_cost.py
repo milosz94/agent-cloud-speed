@@ -37,6 +37,15 @@ _EXCLUDE_MARKERS = ("windows", "spot", "low priority")
 # a resolver returns a priced-bundle dict (see _mcp_resolver's shape) or None if it cannot price it
 BundleResolver = Callable[[object], Optional[dict]]
 
+# a Container Apps scale resolver returns {min_replicas:int, cpu:float, memory_gib:float} for the deployed
+# app, or None if the app's scale cannot be enumerated (disclosed, never faked). minReplicas >= 1 means one
+# replica is pinned on 24/7 (idle meters bill), minReplicas == 0 means scale-to-zero (no idle floor).
+ScaleResolver = Callable[[object], Optional[dict]]
+
+# a Postgres resolver returns [{region, sku, storage_gb}] for the managed Postgres the serverless app uses,
+# or [] if none is found - which run_rate DISCLOSES rather than silently treating as a complete $0 floor.
+PostgresResolver = Callable[[], List[dict]]
+
 
 def _retail_query(filter_str: str, *, api_version: str = "2023-01-01-preview",
                   fetch=None, retries: int = 3) -> List[dict]:
@@ -175,15 +184,23 @@ def postgres_flexible_hourly(region: str, sku: str, storage_gb: float, *, fetch=
 
 
 def container_apps_usage_rate(capture_date: str, *, region: str = "westeurope",
-                              standing_floor_hourly: float = 0.0, extra_notes: tuple = (),
-                              fetch=None) -> Optional[UsageRate]:
+                              standing_floor_hourly: float = 0.0, scale: Optional[dict] = None,
+                              extra_notes: tuple = (), fetch=None) -> Optional[UsageRate]:
     """Azure Container Apps priced as a per-usage SCHEDULE (C21) from the PUBLIC Retail Prices API (no
     credentials), the serverless counterpart of the standing run-rate. Uses the Consumption plan's Standard
     meters: Requests (per request), vCPU Active per second and Memory Active per GiB-second (driver 'other'),
     all THREE required -- ``compose_usage_rate`` folds the per-second vCPU/Memory rates into the per-request
     cost using the disclosed request profile, so the schedule includes active compute; without all three the
     bill is incomplete and this returns None (UNPRICED), never a partial. Region defaults to westeurope (the
-    meters are near-uniform across regions; the region is disclosed)."""
+    meters are near-uniform across regions; the region is disclosed).
+
+    ``scale`` (GAP 6) is the resolved {min_replicas, cpu, memory_gib}. When minReplicas >= 1 the app keeps one
+    replica ALWAYS ON (not scale-to-zero), so Azure bills the DISTINCT idle meters (Standard vCPU/Memory Idle
+    Usage) around the clock on top of the active per-request usage: this adds
+    minReplicas x (cpu x idleVcpu + memGiB x idleMem) x 3600 to the standing floor. minReplicas == 0 is
+    scale-to-zero (idle floor $0, disclosed). If the idle meters cannot be priced while a replica is pinned on
+    this returns None (UNPRICED) rather than a silent understatement. ``scale is None`` (scale not enumerable)
+    is disclosed as a note and the idle floor is left out (active per-request usage is still priced)."""
     items = _retail_query(f"serviceName eq 'Azure Container Apps' and armRegionName eq '{region}' "
                           "and priceType eq 'Consumption'", fetch=fetch)
 
@@ -217,13 +234,43 @@ def container_apps_usage_rate(capture_date: str, *, region: str = "westeurope",
     # a partial (C21 completeness): report UNPRICED, never a plausible-but-incomplete number.
     if req_1m is None or vcpu_s is None or mem_s is None:
         return None
+
+    # GAP 6: an always-on min replica (minReplicas >= 1) is NOT scale-to-zero. Azure bills the DISTINCT idle
+    # meters (Standard vCPU/Memory Idle Usage, priced separately from the active meters above) for that pinned
+    # replica 24/7. Add minReplicas x (cpu x idleVcpu + memGiB x idleMem) x 3600 to the standing floor. Never
+    # price only the active meters when a replica is held on: the idle floor is the dominant always-on cost.
+    idle_floor_hourly, idle_notes = 0.0, []
+    if scale is not None:
+        idle_vcpu_s = _price("standard vcpu idle", "second")     # $ per idle vCPU-second (distinct meter)
+        idle_mem_s = _price("standard memory idle", "gib second")  # $ per idle GiB-second (distinct meter)
+        mr = int(scale.get("min_replicas", 0) or 0)
+        cpu = float(scale.get("cpu", 0) or 0)
+        mem_gib = float(scale.get("memory_gib", 0) or 0)
+        if mr >= 1:
+            if idle_vcpu_s is None or idle_mem_s is None:
+                return None       # a real always-on charge we cannot price -> UNPRICED, never a silent $0
+            idle_floor_hourly = mr * (cpu * idle_vcpu_s + mem_gib * idle_mem_s) * 3600.0
+            idle_notes.append(
+                f"Container Apps always-on idle floor: minReplicas={mr} x ({cpu:g} vCPU x "
+                f"${idle_vcpu_s:g}/vCPU-s + {mem_gib:g} GiB x ${idle_mem_s:g}/GiB-s) x 3600 = "
+                f"${idle_floor_hourly:.4f}/hr (idle meters, billed on top of active per-request usage)")
+        else:
+            idle_notes.append(
+                "Container Apps minReplicas=0: scale-to-zero, no always-on idle replica floor (idle $0)")
+    else:
+        idle_notes.append(
+            "Container Apps min-replica idle floor unavailable: app scale not enumerable "
+            "(idle replica cost not folded; active per-request usage still priced)")
+
     ur = compose_usage_rate(comps, provider="azure", region=region, service="Azure Container Apps",
-                            capture_date=capture_date, standing_floor_hourly_usd=standing_floor_hourly,
+                            capture_date=capture_date,
+                            standing_floor_hourly_usd=float(standing_floor_hourly) + idle_floor_hourly,
                             price_source="Azure Retail Prices API (Consumption plan, public list, USD)",
                             price_urls=(_RETAIL_ENDPOINT,))
-    if extra_notes:
+    all_notes = tuple(idle_notes) + tuple(extra_notes)
+    if all_notes:
         import dataclasses
-        ur = dataclasses.replace(ur, assumptions=tuple(ur.assumptions) + tuple(extra_notes))
+        ur = dataclasses.replace(ur, assumptions=tuple(ur.assumptions) + all_notes)
     return ur
 
 
@@ -254,6 +301,67 @@ def _managed_disk_per_gb_month(region: str, sku: str, *, fetch=None) -> Optional
             if isinstance(p, (int, float)) and p > 0:
                 return float(p)
     return None
+
+
+def _mem_to_gib(mem) -> float:
+    """Normalize a Container Apps memory string to GiB. Accepts Kubernetes-style quantities ('2Gi',
+    '0.5Gi', '512Mi', '2G', '512M') and bare numbers (assumed GiB). Returns 0.0 on anything unparseable."""
+    if mem is None:
+        return 0.0
+    s = str(mem).strip().lower()
+    try:
+        if s.endswith("gi"):
+            return float(s[:-2])
+        if s.endswith("mi"):
+            return float(s[:-2]) / 1024.0
+        if s.endswith("g"):
+            return float(s[:-1])
+        if s.endswith("m"):
+            return float(s[:-1]) / 1024.0
+        return float(s)                                    # bare number: assume GiB
+    except ValueError:
+        return 0.0
+
+
+def _az_containerapp_scale_resolver(run_cmd=None) -> ScaleResolver:
+    """Resolve the deployed Container App's scale + per-replica resources so the always-on min-replica idle
+    floor (GAP 6) can be priced. Lists the subscription's container apps (`az containerapp list`), matches the
+    one whose ingress FQDN serves the deployed URL (falling back to a first-segment name match), and reads
+    ``minReplicas`` (.properties.template.scale.minReplicas) plus the summed per-replica cpu + memory
+    (.properties.template.containers[].resources.cpu / .memory). Returns
+    {min_replicas, cpu, memory_gib} or None if the app cannot be enumerated (disclosed, never faked).
+    ``run_cmd`` injectable so tests need no cloud."""
+    def _props(app: dict) -> dict:
+        p = app.get("properties")
+        return p if isinstance(p, dict) else app
+
+    def resolve(deployment_ref: object) -> Optional[dict]:
+        host = (urlparse(str(deployment_ref) if "://" in str(deployment_ref)
+                         else f"https://{deployment_ref}").hostname or "").lower()
+        apps = _az_json(["containerapp", "list"], run_cmd) or []
+
+        def _fqdn(a: dict) -> str:
+            ing = (((_props(a).get("configuration") or {}).get("ingress")) or {})
+            return str(ing.get("fqdn") or "").lower()
+
+        app = next((a for a in apps if _fqdn(a) and _fqdn(a) == host), None)
+        if app is None and host:
+            seg = host.split(".")[0]
+            app = next((a for a in apps if str(a.get("name", "")).lower() == seg), None)
+        if app is None:
+            return None
+        tmpl = (_props(app).get("template") or {})
+        scale = tmpl.get("scale") or {}
+        min_replicas = scale.get("minReplicas")
+        if min_replicas is None:
+            return None                                    # scale unknown -> disclosed upstream, not faked
+        cpu, mem_gib = 0.0, 0.0
+        for c in (tmpl.get("containers") or []):
+            res = c.get("resources") or {}
+            cpu += float(res.get("cpu") or 0)
+            mem_gib += _mem_to_gib(res.get("memory"))
+        return {"min_replicas": int(min_replicas), "cpu": cpu, "memory_gib": mem_gib}
+    return resolve
 
 
 def _az_vm_resolver(run_cmd=None) -> BundleResolver:
@@ -287,10 +395,17 @@ def _az_vm_resolver(run_cmd=None) -> BundleResolver:
 
 
 class AzureRunRateAdapter(RunRateAdapter):
-    def __init__(self, resolve_bundle: Optional[BundleResolver] = None, call_tool=None):
+    def __init__(self, resolve_bundle: Optional[BundleResolver] = None, call_tool=None,
+                 postgres_resolver: Optional[PostgresResolver] = None,
+                 scale_resolver: Optional[ScaleResolver] = None):
         # default: resolve a standing VM deploy via `az vm list` (serverless URLs never reach the resolver;
         # they take the usage-schedule branch in run_rate). Injectable for offline tests.
         self._resolve = resolve_bundle or _az_vm_resolver()
+        # serverless (Container Apps) seams, both injectable so the fold is tested offline (GAP 6 + GAP 7):
+        #  - the managed-Postgres standing floor (default: live `az postgres flexible-server list`)
+        #  - the min-replica idle floor's scale (default: live `az containerapp list` + FQDN match)
+        self._postgres = postgres_resolver or azure_postgres_extras
+        self._scale = scale_resolver or _az_containerapp_scale_resolver()
 
     def run_rate(self, deployment_ref: object, *, capture_date: str):
         """Price the deployment. A serverless Container Apps URL (``*.azurecontainerapps.io``) is priced as
@@ -300,10 +415,17 @@ class AzureRunRateAdapter(RunRateAdapter):
         so no FX. Returns a UsageRate, a RunRate, or None (disclosed, never faked)."""
         if isinstance(deployment_ref, str) and is_container_apps_url(deployment_ref):
             reg = container_apps_region_from_url(deployment_ref) or "westeurope"
-            # the serverless app's persistent state lives in a managed Postgres (always-on); enumerate and
-            # fold it as a standing floor, or DISCLOSE it -- never silently omit (the pre-fix bug).
+            # the serverless app's persistent state lives in a managed Postgres (always-on); enumerate it via
+            # the INJECTABLE resolver and fold it as a standing floor, or DISCLOSE its absence -- never
+            # silently emit a DB-less number as if complete (GAP 7, the pre-fix bug: the [] case set floor 0
+            # with no note). The min-replica idle floor (GAP 6) is folded inside container_apps_usage_rate
+            # from the injected scale resolver.
             floor, notes = 0.0, []
-            for pg in (azure_postgres_extras() or []):
+            servers = self._postgres() or []
+            if not servers:
+                notes.append("DB standing floor unavailable: deployment not enumerable "
+                             "(no managed Postgres returned by the resolver; a real DB would be under-counted)")
+            for pg in servers:
                 h = postgres_flexible_hourly(pg.get("region") or reg, pg.get("sku", ""), pg.get("storage_gb", 0))
                 if h is None:
                     # A database the deploy provisioned but we cannot price would make the schedule omit a real
@@ -311,8 +433,9 @@ class AzureRunRateAdapter(RunRateAdapter):
                     # rather than return a plausible-but-incomplete number.
                     return None
                 floor += h
-            return container_apps_usage_rate(capture_date, region=reg,
-                                             standing_floor_hourly=floor, extra_notes=tuple(notes))
+            scale = self._scale(deployment_ref)
+            return container_apps_usage_rate(capture_date, region=reg, standing_floor_hourly=floor,
+                                             scale=scale, extra_notes=tuple(notes))
         b = self._resolve(deployment_ref)
         if not b:
             return None

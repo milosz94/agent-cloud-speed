@@ -135,6 +135,10 @@ _DIMENSIONS = {
     ("s3", "bucket"): {"kind": "usage"},
     ("dynamodb", "table"): {"kind": "usage"},          # on-demand mode; provisioned mode would be a dim
     ("sqs", "queue"): {"kind": "usage"},
+    # CloudWatch Logs bills on ingest + stored GB + optional queries; it has NO standing per-hour rate on an
+    # existing empty log group, so it is usage-priced ($0 standing), DISCLOSED. Classifying it here keeps an
+    # /ecs/... log group from being dumped as an "(unclassified)" wart. (GAP 11)
+    ("logs", "log-group"): {"kind": "usage"},
 }
 
 

@@ -18,6 +18,7 @@ Billing Catalog; Resource Graph + Retail Prices) -- never per-service logic.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 from typing import Callable, List, Optional
@@ -167,22 +168,124 @@ def _fargate_resource(mcp_call: McpCall, arn: str, region: str) -> Optional[dict
         gb = float(td.get("memory", 0) or 0) / 1024.0        # 1024 -> 1 GB
         if vcpus <= 0 or gb <= 0:
             return None
-        return {"arn": arn, "service": "ecs-fargate", "resource_type": "task", "region": region,
-                "attrs": {}, "quantity": {"vcpus": vcpus * desired, "gb": gb * desired}, "count": 1}
+        fr = {"arn": arn, "service": "ecs-fargate", "resource_type": "task", "region": region,
+              "attrs": {}, "quantity": {"vcpus": vcpus * desired, "gb": gb * desired}, "count": 1}
+        # GAP 8(a): a task launched with assignPublicIp=ENABLED gets ONE auto-assigned public IPv4 per task.
+        # It is not an Elastic IP and is not taggable, so RGT never returns it -- carry a hint to synthesize
+        # its $0.005/hr line after enumeration (see _synthesize_public_ipv4).
+        awsvpc = ((svc.get("networkConfiguration") or {}).get("awsvpcConfiguration")) or {}
+        if str(awsvpc.get("assignPublicIp", "")).upper() == "ENABLED":
+            fr["_ipv4"] = {"count": int(desired), "region": region,
+                           "source": "Fargate task assignPublicIp=ENABLED (one public IPv4 per task)"}
+        return fr
     except Exception:  # noqa: BLE001
         return None
+
+
+# --- GAP 8/9: charges that RGT never returns, SYNTHESIZED from resources already enumerated ---------------
+#
+# Two real standing charges are invisible to the tag inventory:
+#   8. an AUTO-ASSIGNED public IPv4 (a Fargate task with assignPublicIp=ENABLED, or an internet-facing ALB's
+#      per-AZ address) is NOT an Elastic IP and is NOT taggable, so get-resources never lists it, yet since
+#      2024-02-01 every in-use public IPv4 bills $0.005/hr (AmazonVPC "PublicIPv4:InUseAddress");
+#   9. an EC2 instance's ROOT EBS volume, created inline by RunInstances BlockDeviceMappings, is usually
+#      untagged, so it too is omitted, yet a 20 GB gp3 root is a real ~$0.08/GB-mo standing charge.
+# Both are synthesized from the resource that DOES enumerate (the ECS service / ALB / EC2 instance), then
+# priced through the SAME dimension engine (the elastic-ip and ec2-volume dimensions already in aws_cost),
+# so this adds NO new pricing code -- only synthetic resource rows.
+
+def _alb_az_count(props: dict) -> int:
+    """Number of AZs an ALB is mapped into -- one auto-assigned public IPv4 each when internet-facing. Read
+    from whichever of Subnets / SubnetMappings / AvailabilityZones the Cloud Control props expose."""
+    for key in ("Subnets", "SubnetMappings", "AvailabilityZones"):
+        v = (props or {}).get(key)
+        if isinstance(v, list) and v:
+            return len(v)
+    return 0
+
+
+def _alb_ipv4_hint(props: dict, region: str, arn: str) -> Optional[dict]:
+    """GAP 8(b): an INTERNET-FACING ALB consumes one public IPv4 per mapped AZ. An internal ALB has none."""
+    if "internet-facing" not in str((props or {}).get("Scheme", "")).lower():
+        return None
+    azs = _alb_az_count(props)
+    if azs <= 0:
+        return None
+    return {"count": azs, "region": region, "arn": arn,
+            "source": "internet-facing ALB (one public IPv4 per mapped AZ)"}
+
+
+def _synthesize_public_ipv4(hints: List[dict]) -> List[dict]:
+    """Turn public-IPv4 hints into synthetic resources priced by the existing ('ec2','elastic-ip') dimension
+    (the billing dimension is identical -- AmazonVPC PublicIPv4:InUseAddress -- for auto-assigned and Elastic
+    addresses alike). ``count`` carries the number of in-use addresses; each bills $0.005/hr."""
+    out = []
+    for h in hints:
+        n = int(h.get("count", 0) or 0)
+        if n <= 0:
+            continue
+        out.append({"arn": f"{h.get('arn', '')}#public-ipv4", "service": "ec2",
+                    "resource_type": "elastic-ip", "region": h.get("region", ""),
+                    "attrs": {}, "quantity": {}, "count": n, "_synthetic": h.get("source", "")})
+    return out
+
+
+def _ebs_from_instance(props: dict, region: str, arn: str) -> List[dict]:
+    """GAP 9: synthesize the root (and any inline) EBS volume from an EC2 instance's RunInstances
+    BlockDeviceMappings, priced by the existing ('ec2','volume') dimension. Synthesized from the instance
+    (not describe-volumes) precisely because the auto-created root volume is usually untagged and so is
+    invisible to the tag inventory -- pricing it here is what closes the gap without a double count."""
+    out = []
+    for bdm in (props or {}).get("BlockDeviceMappings") or []:
+        ebs = bdm.get("Ebs") or {}
+        size = float(ebs.get("VolumeSize", 0) or 0)
+        if size <= 0:
+            continue
+        vtype = str(ebs.get("VolumeType", "gp3") or "gp3")
+        out.append({"arn": f"{arn}#ebs:{bdm.get('DeviceName', 'root')}", "service": "ec2",
+                    "resource_type": "volume", "region": region,
+                    "attrs": {"volumeApiName": vtype},
+                    "quantity": {"gb": size, "iops": float(ebs.get("Iops", 0) or 0),
+                                 "throughput_mbps": float(ebs.get("Throughput", 0) or 0)},
+                    "count": 1, "_synthetic": "EBS root volume from RunInstances BlockDeviceMappings"})
+    return out
+
+
+# --- GAP 10: the tag inventory is TAG-GATED. Disclose an empty/incomplete result, never a confident low $. -
+
+def _completeness_note(resources: List[dict], url: str) -> str:
+    """RGT (get-resources with no TagFilters) returns only TAGGED resources; an inconsistently tagged deploy
+    can enumerate to nothing, or to a partial set that prices LOW. When the URL clearly resolves to a live
+    AWS service, disclose that gap instead of reporting the too-low number as if it were complete."""
+    host = (urlparse(url if "://" in (url or "") else f"https://{url}").hostname or "").lower()
+    live = any(s in host for s in (".elb.amazonaws.com", ".amazonaws.com", "awsapprunner.com",
+                                   "cloudfront.net", "amazonlightsail.com"))
+    if not resources:
+        if live:
+            return ("Resource Groups Tagging API returned NO resources for this deployment, but the URL "
+                    "resolves to a live AWS service; RGT is tag-gated, so an untagged Fargate/RDS/ALB is "
+                    "silently omitted. Cost is NOT priced here (disclosure, not $0).")
+        return ""
+    has_compute = any((r.get("service"), r.get("resource_type")) in
+                      (("ec2", "instance"), ("ecs-fargate", "task")) for r in resources)
+    if live and not has_compute:
+        return ("priced bundle may be INCOMPLETE: an internet-facing endpoint with no enumerated backend "
+                "compute (RGT is tag-gated; untagged compute is omitted). Treat the figure as a LOWER BOUND.")
+    return ""
 
 
 def _enumerate(mcp_call: McpCall, url: str, region: str) -> List[dict]:
     """Uniform enumeration of THIS deployment's billed resources via the Resource Groups Tagging API, matched
     by the run token / app name in an ARN or tag value. Attributes are normalized from Cloud Control props to
-    the price-list filter fields; an ECS service is resolved to its Fargate task (cpu/mem)."""
+    the price-list filter fields; an ECS service is resolved to its Fargate task (cpu/mem); auto-assigned
+    public IPv4 (Fargate/ALB) and inline root EBS volumes are synthesized from the enumerated resources."""
     anchors = _match_anchors(url)
     try:
         r = mcp_call(f"aws resourcegroupstaggingapi get-resources --region {region}")
     except Exception:  # noqa: BLE001 - enumeration failure is disclosed by an empty bundle, never faked
         return []
-    out = []
+    out: List[dict] = []
+    ipv4_hints: List[dict] = []
     for m in (r.get("ResourceTagMappingList") or []):
         arn = m.get("ResourceARN", "")
         tagvals = " ".join(str(t.get("Value", "")) for t in (m.get("Tags") or []))
@@ -194,26 +297,48 @@ def _enumerate(mcp_call: McpCall, url: str, region: str) -> List[dict]:
         if (service, restype) == ("ecs", "service"):    # Fargate app compute: price via the task definition
             fr = _fargate_resource(mcp_call, arn, reg or region)
             if fr:
+                hint = fr.pop("_ipv4", None)             # keep the priced dict clean; hint drives synthesis
                 out.append(fr)
+                if hint:
+                    ipv4_hints.append(hint)
             continue
         ident = arn.split("/")[-1].split(":")[-1]
-        attrs, quantity = _normalize_attrs(service, restype,
-                                           _describe_attrs(mcp_call, service, restype, ident, reg or region))
+        props = _describe_attrs(mcp_call, service, restype, ident, reg or region)
+        attrs, quantity = _normalize_attrs(service, restype, props)
         out.append({"arn": arn, "service": service, "resource_type": restype,
                     "region": reg or region, "attrs": attrs, "quantity": quantity, "count": 1})
+        if (service, restype) == ("ec2", "instance"):            # GAP 9: its untagged root EBS volume
+            out.extend(_ebs_from_instance(props, reg or region, arn))
+        elif (service, restype) == ("elasticloadbalancing", "loadbalancer"):  # GAP 8(b): per-AZ public IPv4
+            hint = _alb_ipv4_hint(props, reg or region, arn)
+            if hint:
+                ipv4_hints.append(hint)
+    out.extend(_synthesize_public_ipv4(ipv4_hints))              # GAP 8: auto-assigned public IPv4 lines
     return out
 
 
-def _general_run_rate(mcp_call: McpCall, url: str, region: str, capture_date: str) -> Optional[RunRate]:
-    """Price the RGT-enumerated resources via the shared Price List / dimension engine (aws_cost.py)."""
+def _general_run_rate(mcp_call: McpCall, url: str, region: str, capture_date: str,
+                      disclosures: Optional[List[str]] = None) -> Optional[RunRate]:
+    """Price the RGT-enumerated resources via the shared Price List / dimension engine (aws_cost.py). A
+    tag-gated enumeration gap (GAP 10) is disclosed: appended to ``price_source`` when a RunRate is priced,
+    and pushed to ``disclosures`` (so the empty case, which prices to None rather than a faked $0, still
+    surfaces the note) when a list is provided."""
+    resources = _enumerate(mcp_call, url, region)
+    note = _completeness_note(resources, url)
+    if note and disclosures is not None:
+        disclosures.append(note)
+
     def get_products(service_code, filters):
         flt = json.dumps(filters).replace("'", "\\'")
         return mcp_call(f"aws pricing get-products --service-code {service_code} "
                         f"--filters '{flt}' --region us-east-1 --output json")
     adapter = aws_cost.AwsRunRateAdapter(
-        enumerate_resources=lambda _ref: _enumerate(mcp_call, url, region),
+        enumerate_resources=lambda _ref: resources,
         get_products=get_products)
-    return adapter.run_rate(url, capture_date=capture_date)
+    rr = adapter.run_rate(url, capture_date=capture_date)
+    if rr is not None and note:
+        rr = dataclasses.replace(rr, price_source=f"{rr.price_source} | NOTE: {note}")
+    return rr
 
 
 # --- the one AWS-forced exception: Lightsail (not in the tag inventory), priced from its LIVE price API ---
@@ -389,9 +514,11 @@ class AwsRunRateAdapter:
     def __init__(self, mcp_call: Optional[McpCall] = None, profile: Optional[str] = None):
         self._mcp_call = mcp_call
         self._profile = profile
+        self.disclosures: List[str] = []   # tag-gated enumeration gaps (GAP 10), readable after run_rate
 
     def run_rate(self, deployment_ref: object, *, capture_date: str,
                  region: Optional[str] = None) -> Optional[RunRate]:
+        self.disclosures = []
         url = str(deployment_ref)
         reg = region or _region_from_url(url)
         call = self._mcp_call or _default_mcp_call(self._profile)
@@ -401,4 +528,4 @@ class AwsRunRateAdapter:
         code, name = _usage_front(host)                  # CloudFront/App Runner/Lambda/API Gateway
         if code:                                         # usage-metered -> a per-usage SCHEDULE, not $/hr
             return _usage_rate(call, url, reg, capture_date, code, name)
-        return _general_run_rate(call, url, reg, capture_date)
+        return _general_run_rate(call, url, reg, capture_date, disclosures=self.disclosures)

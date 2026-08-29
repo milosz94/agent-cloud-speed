@@ -121,64 +121,75 @@ def _first_tier_price(sku: dict) -> Optional[float]:
 def cloud_run_usage_rate(capture_date: str, *, region: Optional[str] = None, token: Optional[str] = None,
                          project: Optional[str] = None, skus: Optional[List[dict]] = None,
                          standing_floor_hourly: float = 0.0,
-                         extra_notes: tuple = ()) -> Optional[UsageRate]:
+                         extra_notes: tuple = (), omit_requests: bool = False) -> Optional[UsageRate]:
     """Cloud Run priced as a per-usage SCHEDULE (C21), the serverless counterpart of the standing run-rate.
-    Uses the DEFAULT request-based billing SKUs: Requests (per request), CPU per vCPU-second and Memory per
-    GiB-second (driver 'other'), all THREE required -- ``compose_usage_rate`` folds the per-second CPU/Memory
-    rates into the per-request cost using the disclosed request profile, so the schedule includes active
-    compute; without all three the bill is incomplete and this returns None (UNPRICED), never a partial.
-    The request-based CPU/Memory rates are region-TIERED (Tier-1 vs Tier-2), so ``region`` (from the URL)
-    selects the correct tier; without it a Tier-1 reference region is used and disclosed. Egress is held
-    separate like every egress line. ``skus`` injectable for offline tests; else fetched live via ADC."""
-    if skus is None:
-        token = token or _adc_token()
-        if not token:
-            return None
-        skus = catalog_skus_authed(CLOUD_RUN_SERVICE_ID, token=token, project=project or _adc_project())
-    if not skus:
-        return None
+    In the DEFAULT request-based mode it uses the request-based billing SKUs: Requests (per request), CPU per
+    vCPU-second and Memory per GiB-second (driver 'other'), all THREE required -- ``compose_usage_rate`` folds
+    the per-second CPU/Memory rates into the per-request cost using the disclosed request profile, so the
+    schedule includes active compute; without all three the bill is incomplete and this returns None
+    (UNPRICED), never a partial. The request-based CPU/Memory rates are region-TIERED (Tier-1 vs Tier-2), so
+    ``region`` (from the URL) selects the correct tier; without it a Tier-1 reference region is used and
+    disclosed. Egress is held separate like every egress line. ``skus`` injectable for offline tests; else
+    fetched live via ADC.
+
+    ``omit_requests=True`` switches to INSTANCE-based billing (a service run with ``--no-cpu-throttling``):
+    compute is billed by instance lifetime, NOT per request, so there is no per-request Requests fee AND no
+    separate per-request active CPU/Memory charge -- all three request-based components are omitted and the
+    schedule is the instance-based standing floor (the always-allocated min-instances baseline), which the
+    caller computes from the instance-based SKUs and passes in ``standing_floor_hourly``. Above that baseline
+    more instances start under load and are billed by instance lifetime; that above-baseline scaling is
+    disclosed by the caller as a note rather than modeled per-request here."""
     pricing_region = region or "us-central1"              # a Tier-1 reference region, disclosed below
-
-    def _find(pred):
-        # collect matches, then PREFER the SKU whose serviceRegions covers the deploy region (correct price
-        # TIER), else a global SKU, else any -- so a Tier-1 deploy is not priced at the Tier-2 rate.
-        matches = [(s, _first_tier_price(s)) for s in skus
-                   if pred(s.get("description", "")) and (_first_tier_price(s) or 0) > 0]
-        if not matches:
+    comps: List[UsageComponent] = []
+    if not omit_requests:
+        if skus is None:
+            token = token or _adc_token()
+            if not token:
+                return None
+            skus = catalog_skus_authed(CLOUD_RUN_SERVICE_ID, token=token, project=project or _adc_project())
+        if not skus:
             return None
 
-        def rank(s):
-            regs = s.get("serviceRegions") or []
-            if pricing_region in regs:
-                return 0
-            if "global" in regs:
-                return 1
-            return 2
-        matches.sort(key=lambda sp: rank(sp[0]))
-        return matches[0][1]
+        def _find(pred):
+            # collect matches, then PREFER the SKU whose serviceRegions covers the deploy region (correct
+            # price TIER), else a global SKU, else any -- so a Tier-1 deploy is not priced at the Tier-2 rate.
+            matches = [(s, _first_tier_price(s)) for s in skus
+                       if pred(s.get("description", "")) and (_first_tier_price(s) or 0) > 0]
+            if not matches:
+                return None
 
-    req = _find(lambda d: d.strip() == "Requests" or d.startswith("Requests"))
-    cpu = _find(lambda d: "CPU" in d and "Request-based" in d and "Min Instance" not in d)
-    mem = _find(lambda d: "Memory" in d and "Request-based" in d and "Min Instance" not in d)
-    comps: List[UsageComponent] = []
-    if req is not None:
-        comps.append(UsageComponent(name="requests", per_unit_usd=req, unit="per request", driver="requests",
-                                    raw_unit_price=req, native_unit="per request"))
-    if cpu is not None:
-        comps.append(UsageComponent(name="compute-active-cpu", per_unit_usd=cpu, unit="vCPU-second",
-                                    driver="other", raw_unit_price=cpu, native_unit="per vCPU-second"))
-    if mem is not None:
-        comps.append(UsageComponent(name="compute-active-mem", per_unit_usd=mem, unit="GiB-second",
-                                    driver="other", raw_unit_price=mem, native_unit="per GiB-second"))
-    # A Cloud Run bill is requests + active CPU + active memory. If ANY of the three is unpriced the
-    # schedule would silently omit a real cost component and understate the bill, so refuse rather than
-    # emit a partial (C21 completeness): report UNPRICED, never a plausible-but-incomplete number.
-    if req is None or cpu is None or mem is None:
-        return None
+            def rank(s):
+                regs = s.get("serviceRegions") or []
+                if pricing_region in regs:
+                    return 0
+                if "global" in regs:
+                    return 1
+                return 2
+            matches.sort(key=lambda sp: rank(sp[0]))
+            return matches[0][1]
+
+        req = _find(lambda d: d.strip() == "Requests" or d.startswith("Requests"))
+        cpu = _find(lambda d: "CPU" in d and "Request-based" in d and "Min Instance" not in d)
+        mem = _find(lambda d: "Memory" in d and "Request-based" in d and "Min Instance" not in d)
+        if req is not None:
+            comps.append(UsageComponent(name="requests", per_unit_usd=req, unit="per request",
+                                        driver="requests", raw_unit_price=req, native_unit="per request"))
+        if cpu is not None:
+            comps.append(UsageComponent(name="compute-active-cpu", per_unit_usd=cpu, unit="vCPU-second",
+                                        driver="other", raw_unit_price=cpu, native_unit="per vCPU-second"))
+        if mem is not None:
+            comps.append(UsageComponent(name="compute-active-mem", per_unit_usd=mem, unit="GiB-second",
+                                        driver="other", raw_unit_price=mem, native_unit="per GiB-second"))
+        # A request-based Cloud Run bill is requests + active CPU + active memory. If ANY of the three is
+        # unpriced the schedule would silently omit a real cost component and understate the bill, so refuse
+        # rather than emit a partial (C21 completeness): report UNPRICED, never plausible-but-incomplete.
+        if req is None or cpu is None or mem is None:
+            return None
     reg_label = pricing_region + ("" if region else " (Tier-1 reference; no region in URL)")
+    billing_label = "instance-based" if omit_requests else "request-based"
     ur = compose_usage_rate(comps, provider="gcp", region=reg_label, service="Cloud Run",
                             capture_date=capture_date, standing_floor_hourly_usd=standing_floor_hourly,
-                            price_source="GCP Cloud Billing Catalog (request-based Cloud Run SKUs, ADC)",
+                            price_source=f"GCP Cloud Billing Catalog ({billing_label} Cloud Run SKUs, ADC)",
                             price_urls=(f"{_CATALOG}/{CLOUD_RUN_SERVICE_ID}/skus",))
     if extra_notes:
         ur = UsageRate(provider=ur.provider, region=ur.region, service=ur.service,
@@ -186,6 +197,144 @@ def cloud_run_usage_rate(capture_date: str, *, region: Optional[str] = None, tok
                        assumptions=tuple(ur.assumptions) + tuple(extra_notes), price_source=ur.price_source,
                        exclusions=ur.exclusions, price_urls=ur.price_urls, fx=ur.fx)
     return ur
+
+
+def _run_sku_rate(skus: List[dict], region: Optional[str], needle_terms: List[str],
+                  exclude_terms: tuple = ()) -> Optional[float]:
+    """Pick the price of a Cloud Run SKU whose description contains every ``needle_terms`` token (and none
+    of ``exclude_terms``), PREFERRING the SKU whose serviceRegions cover ``region`` (correct price TIER),
+    then a global SKU, then any. None if no SKU matches (disclosed by the caller, never faked)."""
+    matches = []
+    for s in skus:
+        d = s.get("description", "")
+        if not all(t in d for t in needle_terms) or any(x in d for x in exclude_terms):
+            continue
+        p = _first_tier_price(s)
+        if p and p > 0:
+            matches.append((s, p))
+    if not matches:
+        return None
+
+    def rank(s):
+        regs = s.get("serviceRegions") or []
+        if region and region in regs:
+            return 0
+        if "global" in regs:
+            return 1
+        return 2
+    matches.sort(key=lambda sp: rank(sp[0]))
+    return matches[0][1]
+
+
+def cloud_run_scaling_floor_hourly(skus: List[dict], region: Optional[str], *, min_scale: float,
+                                   cpu: float, mem_gib: float, instance_based: bool):
+    """The always-on Cloud Run compute floor in $/hr for ``min_scale`` always-allocated instances of
+    ``cpu`` vCPU + ``mem_gib`` GiB. Request-based (default) uses the Min-Instance idle SKUs
+    ("Services Min Instance CPU/Memory (Request-based billing)"); instance-based (--no-cpu-throttling) uses
+    the full-lifetime SKUs ("Services CPU/Memory (Instance-based billing)"). Both are billed per
+    vCPU-second / GiB-second, so hourly = min_scale * (cpu*cpu_rate + mem_gib*mem_rate) * 3600. Returns
+    (hourly, cpu_rate, mem_rate) or None if a rate SKU is unavailable (the caller then DISCLOSES it, never
+    silently omits the floor). These are DELIBERATELY the Min-Instance / Instance-based SKUs the per-request
+    usage path excludes."""
+    pricing_region = region or "us-central1"              # a Tier-1 reference region when the URL has none
+    if instance_based:
+        cpu_rate = _run_sku_rate(skus, pricing_region, ["CPU (Instance-based billing)"])
+        mem_rate = _run_sku_rate(skus, pricing_region, ["Memory (Instance-based billing)"])
+    else:
+        cpu_rate = _run_sku_rate(skus, pricing_region, ["Min Instance CPU", "Request-based"],
+                                 exclude_terms=("Tier 2",) if pricing_region else ())
+        mem_rate = _run_sku_rate(skus, pricing_region, ["Min Instance Memory", "Request-based"],
+                                 exclude_terms=("Tier 2",) if pricing_region else ())
+    if cpu_rate is None or mem_rate is None:
+        return None
+    hourly = float(min_scale) * (float(cpu) * cpu_rate + float(mem_gib) * mem_rate) * 3600.0
+    return hourly, cpu_rate, mem_rate
+
+
+def _parse_run_cpu(v) -> Optional[float]:
+    """Cloud Run cpu limit ("1", "2", "1000m", "500m") -> vCPU count as a float, or None."""
+    s = str(v or "").strip()
+    if not s:
+        return None
+    try:
+        return float(s[:-1]) / 1000.0 if s.endswith("m") else float(s)
+    except ValueError:
+        return None
+
+
+_MEM_FACTOR_GIB = {"Gi": 1.0, "Mi": 1.0 / 1024.0, "Ki": 1.0 / (1024.0 * 1024.0),
+                   "G": 1e9 / 1024.0 ** 3, "M": 1e6 / 1024.0 ** 3, "K": 1e3 / 1024.0 ** 3,
+                   "": 1.0 / 1024.0 ** 3}
+
+
+def _parse_run_mem_gib(v) -> Optional[float]:
+    """Cloud Run memory limit ("1Gi", "512Mi", "2Gi", "536870912") -> GiB as a float, or None."""
+    m = re.match(r"^([0-9.]+)\s*([A-Za-z]*)$", str(v or "").strip())
+    if not m:
+        return None
+    unit = m.group(2)
+    if unit not in _MEM_FACTOR_GIB:
+        return None
+    return float(m.group(1)) * _MEM_FACTOR_GIB[unit]
+
+
+def _cloud_run_service_region_from_url(url: str):
+    """(service_name, region) parsed from a deterministic Cloud Run URL ``<svc>-<projnum>.<region>.run.app``,
+    or None for the hash form (``<hash>.run.app``, no service/region embedded)."""
+    host = urlparse(url if "://" in (url or "") else f"https://{url}").hostname or ""
+    if not host.endswith(".run.app"):
+        return None
+    left = host[: -len(".run.app")]
+    if "." not in left:
+        return None
+    svcpart, region = left.rsplit(".", 1)
+    name, sep, tail = svcpart.rpartition("-")
+    service = name if (sep and tail.isdigit()) else svcpart
+    return service, region
+
+
+ScalingResolver = Callable[[object], Optional[dict]]
+
+
+def _cloud_run_scaling_resolver(run_cmd=None) -> ScalingResolver:
+    """Resolve a Cloud Run URL to its autoscaling config via
+    ``gcloud run services describe <service> --region <region> --format=json``: minScale (annotation
+    ``autoscaling.knative.dev/minScale``), per-container cpu + memory
+    (``spec.template.spec.containers[].resources.limits``), and the billing mode (annotation
+    ``run.googleapis.com/cpu-throttling == "false"`` => instance-based). Returns
+    {min_scale, cpu, mem_gib, instance_based, service, region} or None when the service cannot be described
+    (e.g. a torn-down deploy), in which case the caller assumes a 0 floor AND discloses that the scaling
+    config was unavailable, never a silent omission. ``run_cmd`` injectable so unit tests need no cloud."""
+    def resolve(deployment_ref: object) -> Optional[dict]:
+        sr = _cloud_run_service_region_from_url(str(deployment_ref))
+        if not sr:
+            return None
+        service, region = sr
+        d = _gcloud_json(["run", "services", "describe", service, "--region", region,
+                          "--platform", "managed"], run_cmd)
+        if not isinstance(d, dict) or not d:
+            return None
+        tmpl = ((d.get("spec") or {}).get("template") or {})
+        ann = ((tmpl.get("metadata") or {}).get("annotations") or {})
+        try:
+            min_scale = int(str(ann.get("autoscaling.knative.dev/minScale", "0") or "0"))
+        except ValueError:
+            min_scale = 0
+        instance_based = str(ann.get("run.googleapis.com/cpu-throttling", "true")).lower() == "false"
+        containers = ((tmpl.get("spec") or {}).get("containers") or [])
+        cpu = mem = None
+        if containers:
+            limits = ((containers[0].get("resources") or {}).get("limits") or {})
+            cpu = _parse_run_cpu(limits.get("cpu"))
+            mem = _parse_run_mem_gib(limits.get("memory"))
+        # Cloud Run defaults when a limit is unset, disclosed: 1 vCPU, 512Mi (0.5 GiB).
+        if cpu is None:
+            cpu = 1.0
+        if mem is None:
+            mem = 0.5
+        return {"service": service, "region": region, "min_scale": min_scale,
+                "cpu": float(cpu), "mem_gib": float(mem), "instance_based": instance_based}
+    return resolve
 
 
 def _http_get_json(url: str) -> Optional[dict]:
@@ -276,7 +425,17 @@ def _cloud_sql_zonal_rate(skus: List[dict], region: str, kind: str):
             if c.get("usageType") != "OnDemand":
                 continue
             d = s.get("description", "")
-            if ("PostgreSQL" not in d and "Postgres" not in d) or f"Zonal - {kind}" not in d:
+            if "PostgreSQL" not in d and "Postgres" not in d:
+                continue
+            if kind == "Storage":
+                # the base per-GB CAPACITY line for a Zonal instance (current SKU name is
+                # "Zonal - Enterprise Storage Hyperdisk Balanced Capacity", not "Zonal - Storage").
+                # Exclude the separately-billed IOPS / Throughput / Data-Cache dimensions.
+                if "Zonal" not in d or "Capacity" not in d:
+                    continue
+                if any(x in d for x in ("IOPS", "Throughput", "Data Cache")):
+                    continue
+            elif f"Zonal - {kind}" not in d:
                 continue
             if any(x in d for x in _SQL_EXCLUDE):
                 continue
@@ -346,17 +505,62 @@ def _cloud_sql_shared_rate(skus: List[dict], region: str, label: str):
     return (min(cont), False) if cont else None
 
 
+def _cloud_sql_ip_rate(skus: List[dict], region: str):
+    """Post-2024 GCP bills an in-use external IPv4 on Cloud SQL. The base per-hour "Zonal - IP address
+    reservation" PostgreSQL SKU (category resourceGroup 'IpAddress'), exact region then same-continent
+    fallback, excluding the FDC Trial variant. (rate, exact) or None (the caller then DISCLOSES the
+    unpriced IP, never silently drops a real charge)."""
+    continent = region.split("-", 1)[0] if region else ""
+
+    def _cands(region_pred):
+        out = []
+        for s in skus:
+            c = s.get("category", {}) or {}
+            if c.get("resourceGroup") != "IpAddress":
+                continue
+            d = s.get("description", "")
+            if ("PostgreSQL" not in d and "Postgres" not in d) or "IP address reservation" not in d:
+                continue
+            if "Zonal" not in d or "FDC Trial" in d:      # base Zonal (non-HA) reservation, not the trial
+                continue
+            if not region_pred(s.get("serviceRegions") or []):
+                continue
+            p = _first_tier_price(s)
+            if p:
+                out.append(p)
+        return out
+    exact = _cands(lambda regs: (not region) or region in regs)
+    if exact:
+        return min(exact), True
+    cont = _cands(lambda regs: any(str(x).startswith(continent) for x in regs))
+    return (min(cont), False) if cont else None
+
+
 def cloud_sql_hourly(region: str, tier: str, storage_gb: float, *, token: Optional[str] = None,
-                     project: Optional[str] = None, skus: Optional[List[dict]] = None):
+                     project: Optional[str] = None, skus: Optional[List[dict]] = None,
+                     ipv4_enabled: Optional[bool] = None):
     """Best-effort standing $/hr for a Cloud SQL PostgreSQL instance: db-custom vCPU x base-Zonal-vCPU +
-    RAM x base-Zonal-RAM + storage x base-Zonal-Storage/730. Returns (hourly, exact_region) or None when
-    the tier is shared/predefined or a rate is unavailable (the caller then DISCLOSES it as an unpriced
-    resource, never omits it silently). Edition assumed Enterprise-Zonal (non-HA), disclosed by the caller."""
+    RAM x base-Zonal-RAM + storage x base-Zonal-Storage/730, PLUS the in-use external IPv4 charge when the
+    instance has a public IP (``ipv4_enabled``, post-2024 billing). Returns (hourly, exact_region) or None
+    when the tier is shared/predefined-unpriceable, a rate is unavailable, or a public IP is enabled but its
+    SKU cannot be found (the caller then DISCLOSES it as an unpriced resource, never omits it silently).
+    Edition assumed Enterprise-Zonal (non-HA), disclosed by the caller."""
     if skus is None:
         token = token or _adc_token()
         if not token:
             return None
         skus = catalog_skus_authed(CLOUD_SQL_SERVICE_ID, token=token, project=project or _adc_project())
+
+    def _with_ip(hourly, exact):
+        # A public IPv4 is a real standing charge; if it is enabled but unpriceable, refuse (None) rather
+        # than silently drop it (C21 completeness).
+        if not ipv4_enabled:
+            return hourly, exact
+        ipr = _cloud_sql_ip_rate(skus, region)
+        if ipr is None:
+            return None
+        return hourly + ipr[0], (exact and ipr[1])
+
     if tier in _SHARED_TIER:                              # shared-core: one flat instance SKU + storage
         rate = _cloud_sql_shared_rate(skus, region, _SHARED_TIER[tier])
         if not rate:
@@ -365,7 +569,7 @@ def cloud_sql_hourly(region: str, tier: str, storage_gb: float, *, token: Option
         sto = _cloud_sql_zonal_rate(skus, region, "Storage")
         if sto and storage_gb:
             hourly += float(storage_gb) * sto[0] / 730.0
-        return hourly, rate[1]
+        return _with_ip(hourly, rate[1])
     vr = _parse_cloud_sql_tier(tier)
     if not vr:
         return None
@@ -378,20 +582,22 @@ def cloud_sql_hourly(region: str, tier: str, storage_gb: float, *, token: Option
     sto = _cloud_sql_zonal_rate(skus, region, "Storage")
     if sto and storage_gb:
         hourly += float(storage_gb) * sto[0] / 730.0
-    return hourly, (cpu[1] and ram[1])
+    return _with_ip(hourly, (cpu[1] and ram[1]))
 
 
 def gcp_serverless_extras(run_cmd=None):
     """Enumerate the project's Cloud SQL instances and Cloud Run services so a multi-service serverless
-    deploy is fully priced, not silently under-counted. Returns ([{region, tier, storage_gb}], n_run_services).
-    ``run_cmd`` injectable for offline tests."""
+    deploy is fully priced, not silently under-counted. Returns
+    ([{region, tier, storage_gb, ipv4_enabled}], n_run_services). ``run_cmd`` injectable for offline tests."""
     sqls = _gcloud_json(["sql", "instances", "list"], run_cmd) or []
     runs = _gcloud_json(["run", "services", "list"], run_cmd) or []
     dbs = []
     for i in sqls:
         s = i.get("settings", {}) or {}
+        ipcfg = s.get("ipConfiguration", {}) or {}
         dbs.append({"region": i.get("region"), "tier": s.get("tier"),
-                    "storage_gb": float(s.get("dataDiskSizeGb") or 0)})
+                    "storage_gb": float(s.get("dataDiskSizeGb") or 0),
+                    "ipv4_enabled": bool(ipcfg.get("ipv4Enabled"))})
     return dbs, (len(runs) if isinstance(runs, list) else 0)
 
 
@@ -507,45 +713,101 @@ def _gce_resolver(run_cmd=None) -> BundleResolver:
 
 
 class GcpRunRateAdapter(RunRateAdapter):
-    def __init__(self, resolve_bundle: Optional[BundleResolver] = None, call_tool=None):
+    def __init__(self, resolve_bundle: Optional[BundleResolver] = None, call_tool=None,
+                 resolve_scaling: Optional[ScalingResolver] = None):
         # default: resolve a standing GCE deploy via `gcloud compute instances list` (serverless run.app URLs
         # never reach the resolver; they take the usage-schedule branch in run_rate). Injectable for tests.
         self._resolve = resolve_bundle or _gce_resolver()
+        # default: resolve a Cloud Run service's autoscaling config via `gcloud run services describe`.
+        self._resolve_scaling = resolve_scaling or _cloud_run_scaling_resolver()
 
     def run_rate(self, deployment_ref: object, *, capture_date: str):
         """Price the deployment. A serverless Cloud Run URL (``*.run.app``) is priced as a per-usage
-        SCHEDULE from the request-based Cloud Run SKUs (no bundle resolution needed: the URL is the whole
-        input); anything else is priced as a standing hourly run-rate from its resolved bundle (the VM
-        path, which still needs the injected resolver + a Catalog key/ADC). Returns a UsageRate, a RunRate,
-        or None (disclosed, never faked)."""
+        SCHEDULE from the Cloud Run SKUs (no bundle resolution needed: the URL is the whole input);
+        anything else is priced as a standing hourly run-rate from its resolved bundle (the VM path, which
+        still needs the injected resolver + a Catalog key/ADC). Returns a UsageRate, a RunRate, or None
+        (disclosed, never faked)."""
         if isinstance(deployment_ref, str) and is_cloud_run_url(deployment_ref):
             # ENUMERATE the deploy's other billable resources so a multi-service serverless deploy is fully
-            # priced, not silently under-counted: fold any Cloud SQL as a standing floor on the schedule
-            # (best-effort, edition disclosed), and disclose an instance whose tier cannot be priced rather
-            # than drop it; note additional Cloud Run services.
-            floor, notes = 0.0, []
+            # priced, not silently under-counted: fold the Cloud Run always-on min-instances / instance-based
+            # compute floor and any Cloud SQL (with its public IPv4) as a standing floor on the schedule
+            # (best-effort, edition disclosed), and disclose a resource we cannot price rather than drop it.
+            region = cloud_run_region_from_url(deployment_ref)
+            floor, notes, omit_requests = 0.0, [], False
+            run_skus = None
+            # -- Cloud Run always-on scaling floor (GAP 1 request-based min-instance, GAP 2 instance-based) --
+            try:
+                run_token = _adc_token()
+                run_skus = (catalog_skus_authed(CLOUD_RUN_SERVICE_ID, token=run_token,
+                                                project=_adc_project()) if run_token else None)
+                scaling = self._resolve_scaling(deployment_ref)
+                if scaling is None:
+                    # A torn-down (or otherwise indescribable) service: assume a 0 floor but DISCLOSE it, never
+                    # silently omit a min-instances cost the deploy may have carried.
+                    notes.append("Cloud Run scaling config was unavailable (service not describable, e.g. a "
+                                 "torn-down deploy); the always-on min-instances floor is assumed $0 and may "
+                                 "understate a deploy that ran with min-instances>=1")
+                else:
+                    omit_requests = bool(scaling.get("instance_based"))
+                    min_scale = float(scaling.get("min_scale") or 0)
+                    cpu = float(scaling.get("cpu") or 0)
+                    mem_gib = float(scaling.get("mem_gib") or 0)
+                    if min_scale >= 1 and run_skus:
+                        fl = cloud_run_scaling_floor_hourly(run_skus, region, min_scale=min_scale, cpu=cpu,
+                                                            mem_gib=mem_gib, instance_based=omit_requests)
+                        if fl is not None:
+                            floor += fl[0]
+                            if omit_requests:
+                                notes.append(f"Cloud Run uses instance-based billing (--no-cpu-throttling): "
+                                             f"{min_scale:g} instance(s) x ({cpu:g} vCPU + {mem_gib:g} GiB) at "
+                                             f"the instance-based SKUs = ${round(fl[0], 4)}/hr, billed by "
+                                             "instance lifetime (no per-request Requests fee); above this "
+                                             "baseline more instances start under load and are billed the "
+                                             "same way (above-baseline scaling not modeled per-request here)")
+                            else:
+                                notes.append(f"folded a Cloud Run min-instances floor: {min_scale:g} min "
+                                             f"instance(s) x ({cpu:g} vCPU + {mem_gib:g} GiB) always allocated "
+                                             f"at the request-based Min-Instance idle SKUs = "
+                                             f"${round(fl[0], 4)}/hr; the per-request usage schedule is on top")
+                        else:
+                            notes.append("Cloud Run min-instances floor could not be priced (Min-Instance / "
+                                         "instance-based SKU absent for the region); disclosed, not silently $0")
+                    elif omit_requests:
+                        notes.append("Cloud Run uses instance-based billing (--no-cpu-throttling) with "
+                                     "min-instances=0: no always-on baseline; instances start under load and "
+                                     "are billed by lifetime (not modeled per-request here)")
+            except Exception:  # noqa: BLE001 - the floor is best-effort; a failure is disclosed
+                notes.append("could not resolve the Cloud Run scaling config (min-instances floor assumed $0)")
+            # -- Cloud SQL (with public IPv4, GAP 4) folded as a standing floor --
             try:
                 dbs, n_run = gcp_serverless_extras()
                 for db in dbs:
+                    ipv4 = bool(db.get("ipv4_enabled"))
                     priced = cloud_sql_hourly(str(db.get("region") or ""), str(db.get("tier") or ""),
-                                              float(db.get("storage_gb") or 0))
+                                              float(db.get("storage_gb") or 0), ipv4_enabled=ipv4)
                     if priced is not None:
                         floor += priced[0]
                         notes.append(f"folded a Cloud SQL instance ({db.get('tier')}) as a standing floor "
                                      f"${round(priced[0], 4)}/hr (Enterprise-Zonal edition assumed"
+                                     f"{'; in-use public IPv4 included' if ipv4 else ''}"
                                      f"{'' if priced[1] else ', region-approximate'})")
                     else:
-                        # A database the deploy provisioned but we cannot price would make the schedule omit a
-                        # real standing cost and understate the bill. Refuse the whole cost (UNPRICED, C21
-                        # completeness) rather than return a plausible-but-incomplete number.
+                        # A database (or its public IP) the deploy provisioned but we cannot price would make
+                        # the schedule omit a real standing cost and understate the bill. Refuse the whole cost
+                        # (UNPRICED, C21 completeness) rather than return a plausible-but-incomplete number.
                         return None
                 if n_run > 1:
                     notes.append(f"{n_run} Cloud Run services exist in the project; only the served URL's "
                                  "service is priced here (additional services not folded)")
             except Exception:  # noqa: BLE001 - enumeration is best-effort; a failure is disclosed
                 notes.append("could not enumerate Cloud SQL / other services (cost is the served service only)")
-            return cloud_run_usage_rate(capture_date, region=cloud_run_region_from_url(deployment_ref),
-                                        standing_floor_hourly=floor, extra_notes=tuple(notes))
+            # -- Artifact Registry image storage (GAP 5): de-minimis, disclosed rather than folded --
+            notes.append("Artifact Registry image storage is not folded here: a single app image sits within "
+                         "the 0.5 GB free tier (storage beyond that lists at $0.10/GB-month), a de-minimis "
+                         "line disclosed rather than silently omitted")
+            return cloud_run_usage_rate(capture_date, region=region, skus=run_skus,
+                                        standing_floor_hourly=floor, extra_notes=tuple(notes),
+                                        omit_requests=omit_requests)
         b = self._resolve(deployment_ref)
         if not b:
             return None
