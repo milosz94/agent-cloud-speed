@@ -5,7 +5,7 @@ import json
 import unittest
 
 from acspeed.cost import (UsageComponent, compose_usage_rate, REFERENCE_REQUEST_GRID,
-                          HOURS_PER_MONTH, _fmt_requests)
+                          HOURS_PER_MONTH, _fmt_requests, DEFAULT_REQUEST_VCPUS, DEFAULT_REQUEST_SECONDS)
 from acspeed.adapters.aws_runrate import (AwsRunRateAdapter, _usage_front, _classify_usage_unit,
                                           _usage_components, _usage_rate)
 
@@ -32,18 +32,21 @@ class TestComposeUsageRate(unittest.TestCase):
         egress_gb = 1_000_000 * 50.0 / (1024.0 * 1024.0)
         self.assertAlmostEqual(ur.monthly_at(1_000_000), round(0.085 * egress_gb, 4))
 
-    def test_standing_floor_is_flat_and_other_not_folded(self):
+    def test_standing_floor_flat_and_active_compute_folded(self):
         comps = [
             UsageComponent("mem", per_unit_usd=0.008, unit="GB-hour", driver="standing"),  # $/hr floor
-            UsageComponent("vcpu", per_unit_usd=0.064, unit="vCPU-second", driver="other"),  # NOT folded
+            UsageComponent("vcpu", per_unit_usd=0.064, unit="vCPU-second", driver="other"),  # folded per request
         ]
         ur = compose_usage_rate(comps, provider="aws", region="us-east-1", service="apprunner",
                                 capture_date="2026-08-27")
-        floor = round(0.008 * HOURS_PER_MONTH, 4)
-        # every grid point equals the flat floor (other/vcpu excluded; no requests/egress)
-        self.assertTrue(all(abs(p.usd_per_month - floor) < 1e-6 for p in ur.schedule))
-        # the vcpu rate is still disclosed as a component
-        self.assertIn("vcpu", [c.name for c in ur.components])
+        floor = 0.008 * HOURS_PER_MONTH
+        # active compute (driver 'other') is now FOLDED into the per-request cost, using the disclosed
+        # profile (1 vCPU held DEFAULT_REQUEST_SECONDS per request), so the schedule is NOT flat.
+        per_req = 0.064 * DEFAULT_REQUEST_VCPUS * DEFAULT_REQUEST_SECONDS
+        for p in ur.schedule:
+            self.assertAlmostEqual(p.usd_per_month, round(floor + per_req * p.requests_per_month, 4), places=3)
+        self.assertGreater(ur.schedule[-1].usd_per_month, ur.schedule[0].usd_per_month)  # high > idle
+        self.assertIn("vcpu", [c.name for c in ur.components])   # still disclosed as a component
 
     def test_negative_rate_rejected(self):
         with self.assertRaises(ValueError):

@@ -33,6 +33,16 @@ HOURS_PER_MONTH = 730.0   # the paper's month convention (storage $/GB-month / 7
 # standing (fixed-resource) deploy is flat across them because a VM has no separate per-request charge.
 TRAFFIC_TIERS = (("low", 10_000), ("medium", 500_000), ("high", 10_000_000))  # name -> requests/month
 
+# Disclosed assumption for folding a usage-metered service's ACTIVE compute (driver='other', priced per
+# vCPU-second / GiB-second) into a per-request cost. The served URL reveals neither per-request duration
+# nor the CPU/memory allocation, so a fixed, stated request profile is used; it scales the serverless
+# usage estimate linearly, so a study can change it. Without this fold, a serverless estimate would omit
+# the dominant variable cost (compute time) and understate the bill -- a fixed-floor comparison would be
+# invalid. Fixed-resource (RunRate) deploys are unaffected: they have no per-request charge.
+DEFAULT_REQUEST_SECONDS = 0.1   # avg wall-time a request occupies the container
+DEFAULT_REQUEST_VCPUS = 1.0     # assumed vCPU allocation while serving one request
+DEFAULT_REQUEST_GIB = 0.5       # assumed memory allocation (GiB) while serving one request
+
 # Stated by default on every RunRate (the objective public baseline; users apply their own discounts
 # off-chart for a strictly better result). Egress is listed here AND carried in its own field.
 DEFAULT_EXCLUSIONS = (
@@ -252,13 +262,27 @@ def compose_usage_rate(components: Sequence[UsageComponent], *, provider: str, r
                        capture_date: str, standing_floor_hourly_usd: float = 0.0,
                        request_grid: Sequence[int] = REFERENCE_REQUEST_GRID,
                        avg_response_kb: float = DEFAULT_AVG_RESPONSE_KB,
+                       assume_request_seconds: float = DEFAULT_REQUEST_SECONDS,
+                       assume_request_vcpus: float = DEFAULT_REQUEST_VCPUS,
+                       assume_request_gib: float = DEFAULT_REQUEST_GIB,
                        price_source: str = "public on-demand list",
                        price_urls: Tuple[str, ...] = (), fx: Optional[FxConversion] = None) -> UsageRate:
     """Build the usage schedule: at each request level in the grid, monthly cost = the always-on floor
     (standing components + ``standing_floor_hourly_usd``) x 730 + per-request charges x requests + per-GB
     egress x the egress derived from the request count. 'other' components (per-second active compute) are
-    reported as rates but NOT folded, because they depend on per-request duration, not count (disclosed)."""
+    FOLDED into the per-request charge using the disclosed request profile (vCPU + GiB held for
+    ``assume_request_seconds`` per request); without that fold a serverless estimate omits its dominant
+    variable cost and a floor-only comparison is invalid."""
     per_req = sum(c.per_unit_usd for c in components if c.driver == "requests")
+    # fold active compute (driver 'other', priced per vCPU-second / GiB-second) into the per-request cost
+    for c in components:
+        if c.driver != "other":
+            continue
+        u = c.unit.lower()
+        if "vcpu" in u:
+            per_req += c.per_unit_usd * assume_request_vcpus * assume_request_seconds
+        elif "gib" in u or "gb" in u:
+            per_req += c.per_unit_usd * assume_request_gib * assume_request_seconds
     per_gb = sum(c.per_unit_usd for c in components if c.driver == "egress")
     floor_hourly = standing_floor_hourly_usd + sum(c.per_unit_usd for c in components if c.driver == "standing")
     floor_month = floor_hourly * HOURS_PER_MONTH
@@ -271,8 +295,9 @@ def compose_usage_rate(components: Sequence[UsageComponent], *, provider: str, r
     assumptions = (
         f"egress GB estimated as requests x {avg_response_kb:g} KB average response size",
         f"request grid (per month): {', '.join(_fmt_requests(r) for r in request_grid)}",
-        "always-on / provisioned components folded as a flat monthly floor; per-second active compute "
-        "(driver='other') is listed as a unit rate but not folded (depends on per-request duration)",
+        f"active compute (driver='other') folded into the per-request cost assuming {assume_request_vcpus:g}"
+        f" vCPU + {assume_request_gib:g} GiB held {assume_request_seconds:g}s per request; always-on / "
+        "provisioned components folded as a flat monthly floor",
     )
     return UsageRate(provider=provider, region=region, service=service, capture_date=capture_date,
                      components=tuple(components), schedule=tuple(schedule), assumptions=assumptions,

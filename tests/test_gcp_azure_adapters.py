@@ -151,9 +151,9 @@ class TestGcpCloudRunUsageCost(unittest.TestCase):
         by = {c["name"]: c for c in ur["components"]}
         self.assertEqual(by["requests"]["driver"], "requests")
         self.assertAlmostEqual(by["requests"]["per_unit_usd"], 4e-7)
-        self.assertEqual(by["compute-active-cpu"]["driver"], "other")   # per-second, not folded
-        # 10k requests fold: 10000 * 4e-7 = $0.004
-        self.assertAlmostEqual(ur["schedule"][0]["usd_per_month"], 0.004, places=4)
+        self.assertEqual(by["compute-active-cpu"]["driver"], "other")   # active compute, now folded per request
+        # 10k requests: $0.004 request fee PLUS the folded active compute (cpu+mem), so above the fee alone
+        self.assertGreater(ur["schedule"][0]["usd_per_month"], 0.004)
 
     def test_region_selects_the_correct_price_tier(self):
         cpu1 = next(c["per_unit_usd"] for c in gcp_cost.cloud_run_usage_rate(
@@ -222,8 +222,10 @@ class TestGcpMultiServiceCost(unittest.TestCase):
         ur = gcp_cost.cloud_run_usage_rate("2026-08-28", region="europe-west1", skus=_RUN_SKUS,
                                            standing_floor_hourly=0.10,
                                            extra_notes=("folded a Cloud SQL instance",)).to_dict()
-        base = 10000 * 4e-7            # requests at 10k
-        self.assertAlmostEqual(ur["schedule"][0]["usd_per_month"], round(0.10 * 730 + base, 4), places=2)
+        base = 10000 * 4e-7            # request fee at 10k
+        # the $73 standing floor folds into every point; the folded active compute adds a little on top at 10k
+        self.assertGreater(ur["schedule"][0]["usd_per_month"], 0.10 * 730 + base)
+        self.assertAlmostEqual(ur["schedule"][0]["usd_per_month"], 73.0, places=0)   # floor dominates at 10k
         self.assertTrue(any("Cloud SQL" in a for a in ur["assumptions"]))
 
 
@@ -242,9 +244,9 @@ class TestAzureContainerAppsUsageCost(unittest.TestCase):
         self.assertEqual(by["requests"]["driver"], "requests")
         self.assertEqual(by["compute-active-cpu"]["driver"], "other")
         self.assertAlmostEqual(by["compute-active-cpu"]["per_unit_usd"], 3.4e-5)
-        # 1M requests fold: 1_000_000 * 5.6e-7 = $0.56
-        self.assertAlmostEqual(ur["monthly_at"] if False else next(
-            p["usd_per_month"] for p in ur["schedule"] if p["requests_per_month"] == 1_000_000), 0.56, places=3)
+        # 1M requests: $0.56 request fee PLUS the folded active compute (cpu+mem), so above the fee alone
+        at_1m = next(p["usd_per_month"] for p in ur["schedule"] if p["requests_per_month"] == 1_000_000)
+        self.assertGreater(at_1m, 0.56)
 
 
 class TestGceResolver(unittest.TestCase):
