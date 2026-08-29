@@ -27,6 +27,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
+import time
 from typing import Callable, List, Optional
 from urllib.parse import urlparse
 
@@ -94,7 +95,20 @@ def _default_mcp_call(profile: Optional[str] = None) -> McpCall:
         args += ["--profile", profile]
     client = MCPClient(StdioTransport(args))
     client.initialize()
-    return lambda cli: _unwrap(client.call_tool("aws___call_aws", {"cli_command": cli}))
+
+    def call(cli: str) -> dict:
+        # Retry a transient MCP/network error a few times with backoff so one blip does not zero the cost.
+        # An auth/permission error just exhausts the retries and raises (same as before) - use a static IAM
+        # key for a batch so aws auth cannot lapse mid-run.
+        last: Optional[Exception] = None
+        for attempt in range(4):
+            try:
+                return _unwrap(client.call_tool("aws___call_aws", {"cli_command": cli}))
+            except Exception as e:  # noqa: BLE001
+                last = e
+                time.sleep(min(2.0 * (attempt + 1), 8.0))
+        raise last if last else RuntimeError("aws mcp call failed")
+    return call
 
 
 # --- the general path: uniform tag inventory -> Price List by dimension (reuses aws_cost.py) -------------

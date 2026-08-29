@@ -23,6 +23,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -64,33 +65,47 @@ def _adc_project() -> Optional[str]:
         return None
 
 
+_SKU_CACHE: dict = {}
+
+
 def catalog_skus_authed(service_id: str, *, token: str, project: Optional[str], fetch=None) -> List[dict]:
-    """All SKUs under a Catalog service using a bearer ADC token + x-goog-user-project (no API key).
-    ``fetch`` injectable for offline tests."""
+    """All SKUs under a Catalog service using a bearer ADC token + x-goog-user-project (no API key). The
+    catalog is large and refetched by every pricing call, so a SUCCESSFUL full result is CACHED per service
+    for the process (prices are dated to the day) and each page fetch RETRIES on a transient error - so one
+    blip does not truncate the catalog, leave a SKU unfound, and zero the cost. A partial (a page that failed
+    after retries) is never cached. Only the live path caches; an injected ``fetch`` (tests) never does."""
+    live = fetch is None
+    if live and service_id in _SKU_CACHE:
+        return _SKU_CACHE[service_id]
     if fetch is None:
         def fetch(url):
             headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
             if project:
                 headers["x-goog-user-project"] = project
-            try:
-                req = urllib.request.Request(url, headers=headers)
-                with urllib.request.urlopen(req, timeout=15) as r:
-                    return json.load(r)
-            except Exception:  # noqa: BLE001
-                return None
+            for attempt in range(5):
+                try:
+                    req = urllib.request.Request(url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=20) as r:
+                        return json.load(r)
+                except Exception:  # noqa: BLE001 - transient; retry with backoff, then give up (None)
+                    time.sleep(min(2.0 * (attempt + 1), 10.0))
+            return None
     out: List[dict] = []
-    tok = ""
+    tok, ok = "", True
     for _ in range(25):
         q = {"pageSize": "500"}
         if tok:
             q["pageToken"] = tok
         data = fetch(f"{_CATALOG}/{service_id}/skus?{urllib.parse.urlencode(q)}")
         if not isinstance(data, dict):
+            ok = False                                     # a page failed after retries: do NOT cache a partial
             break
         out.extend(data.get("skus", []) or [])
         tok = data.get("nextPageToken") or ""
         if not tok:
             break
+    if live and ok and out:
+        _SKU_CACHE[service_id] = out
     return out
 
 
