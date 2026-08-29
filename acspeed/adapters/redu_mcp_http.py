@@ -124,15 +124,28 @@ def _call_once(name: str, arguments: dict, token: str) -> dict:
 
 def call_tool(name: str, arguments: dict, *, token: Optional[str] = None) -> dict:
     """Initialize an MCP session and call one tool; return the parsed result. Refreshes the OAuth token
-    proactively (on expiry) and reactively (retry once on a 401)."""
-    for attempt in range(2):
-        tok = token or _valid_token(force_refresh=(attempt == 1))
+    proactively (on expiry) and reactively (once, on a 401), and retries a few times with backoff on a
+    TRANSIENT server/gateway blip (502/503/504/500/429) or a network error, so one hiccup does not lose a
+    whole off-clock cost pass (measured: a 502 Bad Gateway during pricing zeroed a run's cost)."""
+    saw_401 = False
+    for attempt in range(5):
+        tok = token or _valid_token(force_refresh=saw_401)
         try:
             return _call_once(name, arguments, tok)
         except urllib.error.HTTPError as e:
-            if e.code == 401 and attempt == 0 and token is None:
-                continue                                   # token went stale mid-flight: refresh + retry
+            if e.code == 401 and token is None and not saw_401:
+                saw_401 = True                             # token went stale mid-flight: refresh + retry
+                continue
+            if e.code in (429, 500, 502, 503, 504) and attempt < 4:
+                time.sleep(1.5 * (attempt + 1))            # transient gateway/server blip: backoff + retry
+                continue
             raise
+        except urllib.error.URLError:                      # transient network (conn reset / timeout)
+            if attempt < 4:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            raise
+    raise RuntimeError(f"call_tool({name!r}) exhausted retries")
 
 
 def get_ssh_command(deployment_ref: str, keypair_name: Optional[str] = None) -> Optional[str]:
