@@ -49,13 +49,22 @@ ScaleResolver = Callable[[object], Optional[dict]]
 PostgresResolver = Callable[[], List[dict]]
 
 
+_RETAIL_CACHE: dict = {}
+
+
 def _retail_query(filter_str: str, *, api_version: str = "2023-01-01-preview",
-                  fetch=None, retries: int = 3) -> List[dict]:
-    """Query the public Retail Prices API with an OData $filter, following @nextPageLink, with
-    retry-on-429 backoff (the endpoint rate-limits). Returns the flat list of price Items. ``fetch`` is
-    injectable for offline tests. Never raises on a transport error: returns what it has (a partial or
-    empty list), so cost stays non-fatal."""
-    if fetch is None:
+                  fetch=None, retries: int = 6) -> List[dict]:
+    """Query the public Retail Prices API with an OData $filter, following @nextPageLink, with retry-on-429
+    backoff (the endpoint rate-limits). A cost pass fires the SAME serviceName+region query many times
+    (Postgres compute + storage, Container Apps active + idle, ...), so successful results are CACHED for
+    the process (prices are dated to the day) - this cuts the request burst that trips the rate limit and
+    keeps a transient blip from zeroing a whole run's cost. Only the live path caches; an injected ``fetch``
+    (tests) never does. Never raises: returns what it has, so cost stays non-fatal."""
+    live = fetch is None
+    if live:
+        hit = _RETAIL_CACHE.get((filter_str, api_version))
+        if hit is not None:
+            return hit
         fetch = _http_get_json
     items: List[dict] = []
     url = f"{_RETAIL_ENDPOINT}?api-version={api_version}&$filter={urllib.parse.quote(filter_str)}"
@@ -66,12 +75,14 @@ def _retail_query(filter_str: str, *, api_version: str = "2023-01-01-preview",
             data = fetch(url)
             if data is not None:
                 break
-            time.sleep(1.5 * (attempt + 1))             # 429 backoff
+            time.sleep(min(2.0 * (attempt + 1), 10.0))  # 429 backoff, capped
         if not isinstance(data, dict):
             break
         items.extend(data.get("Items", []) or [])
         url = data.get("NextPageLink") or data.get("nextPageLink")
         seen_pages += 1
+    if live and items:                                  # cache only a non-empty (successful) result
+        _RETAIL_CACHE[(filter_str, api_version)] = items
     return items
 
 
