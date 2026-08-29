@@ -344,6 +344,14 @@ def _claude_vm(prompt: str, *, app_dir: str, mcp: str | None, model: str | None,
         #             err.txt = agent stderr) so the cause is knowable, but still drop the ~4 GB rootfs +
         #             job drive so the disk cannot fill. Deleting these on failure is what left us blind.
         wd = res.get("work_dir")
+        if wd:
+            # Adopt any Claude-login refresh the VM did (it holds the refresh token so a long run can renew
+            # the ~8h token), so the host is not left holding a rotated-out token -> no mid-work re-auth.
+            # Must run BEFORE the rootfs image below is deleted.
+            try:
+                vmjob.sync_claude_login_from_vm(os.path.join(wd, "rootfs.ext4"))
+            except Exception:  # noqa: BLE001 - best-effort; never break the run
+                pass
         if wd and os.path.basename(wd).startswith("acspeed-vm-"):
             r = res.get("result")
             succeeded = isinstance(r, dict) and not r.get("is_error")
