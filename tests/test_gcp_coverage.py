@@ -163,9 +163,24 @@ class TestScalingResolver(unittest.TestCase):
         self.assertEqual(s["mem_gib"], 0.5)
 
     def test_torn_down_service_returns_none(self):
-        # gcloud describe returns nothing (service gone): resolver yields None so the caller discloses a 0 floor
+        # describe returns nothing on EVERY attempt (service truly gone): after retrying, resolver yields None
+        # so the caller discloses a 0 floor rather than inventing one.
         self.assertIsNone(g._cloud_run_scaling_resolver(run_cmd=lambda a: None)(
             "https://umami-1.europe-west1.run.app"))
+
+    def test_transient_describe_blip_is_retried_then_resolves(self):
+        # the gcp run01 defect: a TRANSIENT describe failure (service is live, cost runs before teardown)
+        # dropped the min-instances floor and understated 4/9 runs from ~$29 to ~$16. A blip must be retried,
+        # not read as torn-down.
+        good = self._describe(min_scale="1", throttling="true")
+        calls = {"n": 0}
+        def flaky(args):
+            calls["n"] += 1
+            return None if calls["n"] <= 2 else good(args)   # blip twice, then the real config
+        s = g._cloud_run_scaling_resolver(run_cmd=flaky)("https://umami-123456789.europe-west1.run.app")
+        self.assertIsNotNone(s, "a transient describe blip must be retried, not treated as torn-down")
+        self.assertEqual(s["min_scale"], 1)
+        self.assertGreaterEqual(calls["n"], 3)               # it retried past the two failures
 
     def test_hash_url_has_no_service(self):
         self.assertIsNone(g._cloud_run_service_region_from_url("https://abc123hash.run.app"))

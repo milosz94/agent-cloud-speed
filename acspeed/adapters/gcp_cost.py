@@ -312,6 +312,9 @@ def _cloud_run_service_region_from_url(url: str):
 ScalingResolver = Callable[[object], Optional[dict]]
 
 
+_SCALING_DESCRIBE_ATTEMPTS = 5   # retry the live `gcloud run services describe` (transient-blip resilience)
+
+
 def _cloud_run_scaling_resolver(run_cmd=None) -> ScalingResolver:
     """Resolve a Cloud Run URL to its autoscaling config via
     ``gcloud run services describe <service> --region <region> --format=json``: minScale (annotation
@@ -326,8 +329,19 @@ def _cloud_run_scaling_resolver(run_cmd=None) -> ScalingResolver:
         if not sr:
             return None
         service, region = sr
-        d = _gcloud_json(["run", "services", "describe", service, "--region", region,
-                          "--platform", "managed"], run_cmd)
+        # The service is LIVE when cost runs (measure_cost precedes teardown), so a describe that returns
+        # nothing is almost always a TRANSIENT gcloud/API blip, not a torn-down deploy. Retry before giving
+        # up: dropping the Cloud Run min-instances floor on a transient failure UNDERSTATES the bill (it
+        # silently turns a $29/mo deploy into $16/mo). Only the LIVE path sleeps between attempts; an injected
+        # run_cmd (tests) retries with no sleep, so a transient-then-good sequence is exercisable offline.
+        d = None
+        for attempt in range(_SCALING_DESCRIBE_ATTEMPTS):
+            d = _gcloud_json(["run", "services", "describe", service, "--region", region,
+                              "--platform", "managed"], run_cmd)
+            if isinstance(d, dict) and d:
+                break
+            if run_cmd is None and attempt < _SCALING_DESCRIBE_ATTEMPTS - 1:
+                time.sleep(min(2.0 * (attempt + 1), 10.0))
         if not isinstance(d, dict) or not d:
             return None
         tmpl = ((d.get("spec") or {}).get("template") or {})
