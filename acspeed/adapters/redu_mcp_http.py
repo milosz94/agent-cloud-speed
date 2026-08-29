@@ -30,10 +30,22 @@ def _load_oauth():
 
 
 def _write_oauth(d: dict, key: str, entry: dict) -> None:
-    d["mcpOAuth"][key] = entry
+    # RE-READ the file immediately before writing and update ONLY our own mcpOAuth entry. Writing back a
+    # whole dict captured earlier would clobber claudeAiOauth (the Claude login) or another MCP server's
+    # token that Claude Code / another tool rotated since we last read - and because OAuth refresh tokens
+    # are single-use, restoring a stale claudeAiOauth silently invalidates the login and forces a re-auth.
+    # We own only mcpOAuth[key]; everything else on disk wins.
+    try:
+        with open(CRED_PATH) as fh:
+            cur = json.load(fh)
+        if not isinstance(cur, dict):
+            cur = d
+    except (OSError, ValueError):
+        cur = d
+    cur.setdefault("mcpOAuth", {})[key] = entry
     tmp = CRED_PATH + ".acspeed.tmp"
     with open(tmp, "w") as fh:
-        json.dump(d, fh)
+        json.dump(cur, fh)
     os.chmod(tmp, 0o600)
     os.replace(tmp, CRED_PATH)                              # atomic
 
