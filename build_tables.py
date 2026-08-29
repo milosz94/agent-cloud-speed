@@ -127,6 +127,17 @@ def text_render(rows, recs, task) -> str:
     L.append(f"    (overlap              {est([r['overlap_s'] for r in rows])})")
     L.append(f"  first-attempt LIVENESS  {k_first}/{n} = {fr}% (Wilson 95% CI {flo}-{fhi})")
     L.append(f"  eventual (w/ repair)    {k_reach}/{n} = {rr}% (Wilson 95% CI {rlo}-{rhi})")
+    cvs = [_g(rec, "success_oracle", "content_verified") for rec in recs]
+    n_unver = sum(1 for x in cvs if x is False)
+    n_ver = sum(1 for x in cvs if x is True)
+    if n_unver:
+        bad = sorted({_g(rec, "success_oracle", "note") for rec in recs
+                      if _g(rec, "success_oracle", "content_verified") is False and _g(rec, "success_oracle", "note")})
+        L.append(f"  content-verified        WARN {n_unver}/{n} served <500 but look like an infra/default page "
+                 f"({', '.join(bad)}); FALSE-SUCCESS flag (M1, off-clock oracle separate from t1); {n_ver}/{n} verified app content")
+    elif n_ver:
+        L.append(f"  content-verified        {n_ver}/{n} (served root is real app content, not an infra/default "
+                 "page; off-clock success oracle, separate from the liveness clock t1)")
     L.append(f"  agent session (whole)   {est([r['agent_end_s'] for r in rows])}   "
              f"of which after serving {est([r['after_s'] for r in rows])}")
     L.append(f"  steps (LLM calls)       {est([r['steps'] for r in rows], unit='')}   (whole session)")
@@ -137,7 +148,11 @@ def text_render(rows, recs, task) -> str:
                          if _g(r, "capability", "normalized", "axes")), None)
         L.append(f"  capability C (DCI)      {est(cap_dcis, unit='')}   axes={cap_axes}  "
                  f"(delivered-under-residency vs frozen reference, off-clock geomean; C11/C14)")
-    else:
+        net_rtts = [_g(r, "capability", "disclosure", "network", "rtt_ms_avg") for r in recs]
+        net_rtts = [x for x in net_rtts if isinstance(x, (int, float))]
+        if net_rtts:
+            L.append(f"    network axis (C17)    VM-to-VM private RTT {est(net_rtts, unit='ms')}  "
+                     f"(measured on a multi-VM operation; throughput a disclosed NIC constraint)")
         _ce = next((_g(r, "capability", "error") for r in recs
                     if _g(r, "capability") and not _g(r, "capability", "ok")), None)
         L.append("  capability C            " + (f"attempted, no vector ({_ce}); off-clock, non-fatal"
@@ -145,9 +160,16 @@ def text_render(rows, recs, task) -> str:
     eff = gold.part3_provision(recs)
     if eff:
         fr = est([pr["floor_ratio"] for pr in eff["per_run"]], unit="x")
+        fs = eff.get("floor_sensitivity", {})
         L.append(f"  efficiency (Part 3)     floor-ratio {fr}  "
-                 f"(F_C={eff['F_C_s']}s min-platform floor; bracket [{eff['bracket_low_s']}, "
-                 f"{eff['bracket_high_s']}]s = x{eff['bracket_ratio']}; selection-excess 0, 1-op suite)")
+                 f"(F_C={eff['F_C_s']}s min-platform floor, n={eff.get('floor_estimated_from_n')}; "
+                 f"bracket [{eff['bracket_low_s']}, {eff['bracket_high_s']}]s = x{eff['bracket_ratio']}; "
+                 f"selection-excess 0, 1-op suite; gold {eff.get('gold_version')})")
+        L.append(f"    competitive ratio is an INTERVAL [M/best, M/F_C], not a point; per-run "
+                 f"{[pr.get('competitive_ratio_interval') for pr in eff['per_run']]}")
+        if fs:
+            L.append(f"    floor sensitivity: bracket ratio {fs.get('bracket_ratio_at_F_C_plus')}..{fs.get('bracket_ratio_at_F_C_minus')} "
+                     f"at F_C(1+/-{fs.get('epsilon')}) (denominator leverage; refutable + versioned gold)")
     else:
         L.append("  efficiency (Part 3)     DEFERRED (no run carries an acspeed split yet)")
     L.append("  (reading)               efficiency + capability are WORKLOAD-RELATIVE (Part 4): an axis "
@@ -180,8 +202,12 @@ def text_render(rows, recs, task) -> str:
              f"agent {[r['crit_agent_s'] for r in rows]}  overlap {[r['overlap_s'] for r in rows]}  "
              f"(trace clipped at t1)")
     if cap_dcis:
+        net_rtts_b = [x for x in (_g(r, "capability", "disclosure", "network", "rtt_ms_avg") for r in recs)
+                      if isinstance(x, (int, float))]
+        net_note = (f"VM-to-VM private RTT avg {[round(x, 3) for x in net_rtts_b]}ms (C17, multi-VM)"
+                    if net_rtts_b else "network N/A for single-VM operations (C17/C18)")
         L.append(f"  Part 1 capability C     DCI {[round(d, 3) for d in cap_dcis]} (sysbench/STREAM/fio "
-                 f"off-clock on the deploy's own VM; network N/A for single-VM operations, C17/C18)")
+                 f"off-clock on the deploy's own VM; {net_note})")
     else:
         L.append(f"  Part 1 capability C     DEFERRED (sysbench/STREAM/fio off-clock; network is a "
                  f"VM-to-VM axis, scored only for multi-VM operations, C17/C18)")
@@ -213,7 +239,21 @@ def text_render(rows, recs, task) -> str:
                      f"{fx['native_currency']}->{fx['reporting_currency']} {fx['rate']} on {fx['rate_date']}, "
                      f"{fx['source']})")
     else:
-        L.append(f"  Part 4 cost frontier    DEFERRED (run --cost: standing hourly run-rate, dated public list)")
+        usage = next((_g(rec, "cost_run_rate") for rec in recs
+                      if (_g(rec, "cost_run_rate") or {}).get("kind") == "usage"), None)
+        if usage:
+            svc = usage.get("service", "usage-metered")
+            pts = "  ".join(f"{p['label']}->${p['usd_per_month']}/mo" for p in (usage.get("schedule") or []))
+            L.append(f"  Part 4 cost frontier    USAGE-METERED ({svc}): per-usage schedule (requests/mo): {pts}")
+            for a in (usage.get("assumptions") or [])[:1]:
+                L.append(f"    (assumption: {a}; egress + provisioned floor folded, active per-second compute listed separately)")
+        else:
+            L.append(f"  Part 4 cost frontier    DEFERRED (run --cost: standing hourly run-rate, dated public list)")
+    te = next((_g(rec, "cost_run_rate", "traffic_estimate") for rec in recs
+               if _g(rec, "cost_run_rate", "traffic_estimate")), None)
+    if te:
+        L.append(f"  Part 4 cost by traffic  est total $/mo: low ${te.get('low')} (10k) / "
+                 f"medium ${te.get('medium')} (500k) / high ${te.get('high')} (10M req/mo)")
     L.append(f"  Part 5 speed+liveness   time-to-serving {[r['tts_s'] for r in rows]} s; "
              f"first-attempt {k_first}/{n} = {fr}% (Wilson CI)")
     L.append("=" * W)

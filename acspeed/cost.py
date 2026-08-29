@@ -27,6 +27,12 @@ from typing import Optional, Sequence, Tuple
 
 HOURS_PER_MONTH = 730.0   # the paper's month convention (storage $/GB-month / 730 -> $/GB-hour)
 
+# Standard human-facing cost estimate: the TOTAL monthly bill at a small, a growing, and a busy request
+# volume, so a reader knows what to expect at their scale without reading a schedule. The three volumes
+# are grid points in REFERENCE_REQUEST_GRID below, so a usage schedule already prices them exactly; a
+# standing (fixed-resource) deploy is flat across them because a VM has no separate per-request charge.
+TRAFFIC_TIERS = (("low", 10_000), ("medium", 500_000), ("high", 10_000_000))  # name -> requests/month
+
 # Stated by default on every RunRate (the objective public baseline; users apply their own discounts
 # off-chart for a strictly better result). Egress is listed here AND carried in its own field.
 DEFAULT_EXCLUSIONS = (
@@ -100,10 +106,18 @@ class RunRate:
         """The standing monthly bill = the hourly run-rate x 730 (the paper's month convention)."""
         return self.all_in_hourly_usd * HOURS_PER_MONTH
 
+    def traffic_estimate(self) -> dict:
+        """Total $/mo at the standard low/medium/high request volumes. A fixed-resource deploy has no
+        per-request charge, so the bill is the same standing figure at every tier (round to cents)."""
+        m = round(self.monthly_usd(), 2)
+        return {name: m for name, _ in TRAFFIC_TIERS}
+
     def to_dict(self) -> dict:
         return {
+            "kind": "standing",
             "all_in_hourly_usd": self.all_in_hourly_usd,
             "monthly_usd": round(self.monthly_usd(), 4),
+            "traffic_estimate": self.traffic_estimate(),
             "components": [
                 {"name": c.name, "hourly_usd": c.hourly_usd, "raw_unit_price": c.raw_unit_price,
                  "native_unit": c.native_unit, "quantity": c.quantity} for c in self.components
@@ -119,6 +133,150 @@ class RunRate:
                     "reporting_currency": self.fx.reporting_currency,
                     "rate": self.fx.rate, "rate_date": self.fx.rate_date, "source": self.fx.source}),
         }
+
+
+# --- usage-metered services: report a per-usage SCHEDULE, not a single number (C19 extension) -----
+#
+# A serverless / usage-metered surface (CloudFront, App Runner, Lambda, API Gateway, ...) has NO standing
+# hourly bill: its cost is a function of usage (requests, GB egress, GB-seconds). A single $/hr would be
+# meaningless or fabricated. The honest, comparable report is the price at a FIXED, DISCLOSED grid of
+# usage levels -- "10k requests/mo -> $A, 100k -> $B, 1M -> $C" -- so it sits on the same (wall-clock,
+# cost) frontier as a standing VM: two compute services serving the same app, each priced on its OWN
+# basis, both disclosed. This is the same principle that already holds egress separate (usage has no
+# native hourly unit); here it is generalized from egress to any usage-metered service. Grounding is the
+# same as RunRate (Kondo 2009 line-item composition; Sochat & Milroy 2025 decomposed billing units;
+# Armbrust 2010 usage-metered network); a per-usage price schedule is exactly how the providers list these
+# services, so no basis is invented.
+
+REFERENCE_REQUEST_GRID = (10_000, 50_000, 100_000, 500_000, 1_000_000, 10_000_000)  # requests / month
+DEFAULT_AVG_RESPONSE_KB = 50.0   # disclosed: egress GB derived from request count x this average size
+
+
+def _fmt_requests(n: float) -> str:
+    n = float(n)
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:g}M"
+    if n >= 1_000:
+        return f"{n / 1_000:g}k"
+    return f"{n:g}"
+
+
+@dataclass(frozen=True)
+class UsageComponent:
+    """One usage-metered price line, already normalized to a per-single-unit USD rate. ``driver`` says how
+    it scales so ``compose_usage_rate`` can fold it: 'requests' (per request), 'egress' (per GB out),
+    'standing' (an always-on floor, per hour) or 'other' (e.g. per vCPU-second active compute, which
+    depends on per-request duration and is reported as a rate but NOT folded into the monthly totals)."""
+    name: str                 # "requests" | "egress" | "compute-provisioned" | "compute-active" | ...
+    per_unit_usd: float       # normalized: $/request, $/GB, $/hour (standing), or $/native-unit (other)
+    unit: str                 # human unit, e.g. "per request", "per GB", "GB-hour", "vCPU-second"
+    driver: str               # "requests" | "egress" | "standing" | "other"
+    raw_unit_price: float = 0.0   # the provider's list figure before normalization
+    native_unit: str = ""         # e.g. "per 10k requests", "per GB (first tier)"
+    tier: str = ""
+
+    def __post_init__(self) -> None:
+        if self.per_unit_usd < 0:
+            raise ValueError(f"usage component {self.name!r} has negative per_unit_usd")
+        if self.driver not in ("requests", "egress", "standing", "other"):
+            raise ValueError(f"usage component {self.name!r} has unknown driver {self.driver!r}")
+
+
+@dataclass(frozen=True)
+class UsagePoint:
+    """One row of the schedule: a monthly request volume and the resulting estimated monthly cost."""
+    label: str
+    requests_per_month: float
+    egress_gb: float
+    usd_per_month: float
+
+
+@dataclass(frozen=True)
+class UsageRate:
+    """A usage-metered service's cost as a SCHEDULE over a fixed grid of usage levels, the per-usage
+    counterpart of RunRate (C19). Reports the normalized per-unit rates AND the cost at each grid point,
+    with every assumption disclosed."""
+    provider: str
+    region: str
+    service: str
+    capture_date: str
+    components: Tuple[UsageComponent, ...]
+    schedule: Tuple[UsagePoint, ...]
+    assumptions: Tuple[str, ...] = ()
+    price_source: str = "public on-demand list"
+    exclusions: Tuple[str, ...] = DEFAULT_EXCLUSIONS
+    price_urls: Tuple[str, ...] = ()
+    fx: Optional[FxConversion] = None
+
+    def monthly_at(self, requests_per_month: float) -> Optional[float]:
+        for p in self.schedule:
+            if p.requests_per_month == requests_per_month:
+                return p.usd_per_month
+        return None
+
+    def traffic_estimate(self) -> dict:
+        """Total $/mo at the standard low/medium/high request volumes, read off this rate's priced
+        schedule (each tier is a grid point). A tier is None if it is absent from this rate's grid."""
+        out = {}
+        for name, reqs in TRAFFIC_TIERS:
+            m = self.monthly_at(reqs)
+            out[name] = None if m is None else round(m, 2)
+        return out
+
+    def to_dict(self) -> dict:
+        return {
+            "kind": "usage",
+            "traffic_estimate": self.traffic_estimate(),
+            "provider": self.provider, "region": self.region, "service": self.service,
+            "capture_date": self.capture_date,
+            "components": [
+                {"name": c.name, "per_unit_usd": c.per_unit_usd, "unit": c.unit, "driver": c.driver,
+                 "raw_unit_price": c.raw_unit_price, "native_unit": c.native_unit, "tier": c.tier}
+                for c in self.components
+            ],
+            "schedule": [
+                {"label": p.label, "requests_per_month": p.requests_per_month,
+                 "egress_gb": p.egress_gb, "usd_per_month": p.usd_per_month} for p in self.schedule
+            ],
+            "assumptions": list(self.assumptions),
+            "price_source": self.price_source, "price_urls": list(self.price_urls),
+            "exclusions": list(self.exclusions),
+            "fx": (None if self.fx is None else
+                   {"native_currency": self.fx.native_currency,
+                    "reporting_currency": self.fx.reporting_currency,
+                    "rate": self.fx.rate, "rate_date": self.fx.rate_date, "source": self.fx.source}),
+        }
+
+
+def compose_usage_rate(components: Sequence[UsageComponent], *, provider: str, region: str, service: str,
+                       capture_date: str, standing_floor_hourly_usd: float = 0.0,
+                       request_grid: Sequence[int] = REFERENCE_REQUEST_GRID,
+                       avg_response_kb: float = DEFAULT_AVG_RESPONSE_KB,
+                       price_source: str = "public on-demand list",
+                       price_urls: Tuple[str, ...] = (), fx: Optional[FxConversion] = None) -> UsageRate:
+    """Build the usage schedule: at each request level in the grid, monthly cost = the always-on floor
+    (standing components + ``standing_floor_hourly_usd``) x 730 + per-request charges x requests + per-GB
+    egress x the egress derived from the request count. 'other' components (per-second active compute) are
+    reported as rates but NOT folded, because they depend on per-request duration, not count (disclosed)."""
+    per_req = sum(c.per_unit_usd for c in components if c.driver == "requests")
+    per_gb = sum(c.per_unit_usd for c in components if c.driver == "egress")
+    floor_hourly = standing_floor_hourly_usd + sum(c.per_unit_usd for c in components if c.driver == "standing")
+    floor_month = floor_hourly * HOURS_PER_MONTH
+    schedule = []
+    for r in request_grid:
+        egress_gb = float(r) * avg_response_kb / (1024.0 * 1024.0)   # KB/req x reqs -> KB -> GB
+        usd = floor_month + per_req * float(r) + per_gb * egress_gb
+        schedule.append(UsagePoint(label=_fmt_requests(r), requests_per_month=float(r),
+                                   egress_gb=round(egress_gb, 4), usd_per_month=round(usd, 4)))
+    assumptions = (
+        f"egress GB estimated as requests x {avg_response_kb:g} KB average response size",
+        f"request grid (per month): {', '.join(_fmt_requests(r) for r in request_grid)}",
+        "always-on / provisioned components folded as a flat monthly floor; per-second active compute "
+        "(driver='other') is listed as a unit rate but not folded (depends on per-request duration)",
+    )
+    return UsageRate(provider=provider, region=region, service=service, capture_date=capture_date,
+                     components=tuple(components), schedule=tuple(schedule), assumptions=assumptions,
+                     price_source=price_source, price_urls=tuple(price_urls), fx=fx)
 
 
 # --- unit conversion (every flat component must reach $/hour before summing) -------------------
