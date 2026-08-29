@@ -137,18 +137,25 @@ class TestScalingResolver(unittest.TestCase):
     """The injectable Cloud Run scaling resolver parses minScale, cpu, memory and the cpu-throttling mode."""
 
     @staticmethod
-    def _describe(min_scale="1", throttling="false", cpu="1", memory="1Gi"):
+    def _list(url="https://umami-123456789.europe-west1.run.app", min_scale="1", throttling="false",
+              cpu="1", memory="1Gi", region="europe-west1"):
+        """Mock `gcloud run services list`: one service whose status.url serves `url` (ground-truth match),
+        instead of the old URL-string parse that broke on the .a.run.app form."""
         def run_cmd(args):
-            if args[:3] == ["run", "services", "describe"]:
-                return {"spec": {"template": {
-                    "metadata": {"annotations": {"autoscaling.knative.dev/minScale": min_scale,
-                                                 "run.googleapis.com/cpu-throttling": throttling}},
-                    "spec": {"containers": [{"resources": {"limits": {"cpu": cpu, "memory": memory}}}]}}}}
+            if args[:3] == ["run", "services", "list"]:
+                return [{
+                    "metadata": {"name": "umami-123456789", "labels": {"cloud.googleapis.com/location": region}},
+                    "status": {"url": url},
+                    "spec": {"template": {
+                        "metadata": {"annotations": {"autoscaling.knative.dev/minScale": min_scale,
+                                                     "run.googleapis.com/cpu-throttling": throttling}},
+                        "spec": {"containers": [{"resources": {"limits": {"cpu": cpu, "memory": memory}}}]}}},
+                }]
             return None
         return run_cmd
 
     def test_parses_instance_based(self):
-        s = g._cloud_run_scaling_resolver(run_cmd=self._describe(throttling="false"))(
+        s = g._cloud_run_scaling_resolver(run_cmd=self._list(throttling="false"))(
             "https://umami-123456789.europe-west1.run.app")
         self.assertEqual(s["min_scale"], 1)
         self.assertEqual(s["cpu"], 1.0)
@@ -157,28 +164,77 @@ class TestScalingResolver(unittest.TestCase):
         self.assertEqual(s["region"], "europe-west1")
 
     def test_parses_request_based_default_throttling(self):
-        s = g._cloud_run_scaling_resolver(run_cmd=self._describe(throttling="true", memory="512Mi"))(
+        s = g._cloud_run_scaling_resolver(run_cmd=self._list(throttling="true", memory="512Mi"))(
             "https://umami-123456789.europe-west1.run.app")
         self.assertFalse(s["instance_based"])
         self.assertEqual(s["mem_gib"], 0.5)
 
-    def test_torn_down_service_returns_none(self):
-        # describe returns nothing on EVERY attempt (service truly gone): after retrying, resolver yields None
-        # so the caller discloses a 0 floor rather than inventing one.
+    def test_new_a_run_app_url_matches_by_inventory(self):
+        # run12/14 defect: Cloud Run's newer <svc>-<hash>-<regioncode>.a.run.app URL made the OLD parser read
+        # region 'a' + a wrong service name, so `describe` failed on every attempt and the min-instances floor
+        # was silently dropped ($16 not $29). Matching status.url from the inventory is URL-format-agnostic.
+        url = "https://umami-acs547c2aaa-aggnv775ja-uc.a.run.app"
+        s = g._cloud_run_scaling_resolver(run_cmd=self._list(url=url, min_scale="1", throttling="true",
+                                                             region="us-central1"))(url)
+        self.assertIsNotNone(s, "the .a.run.app URL must resolve via inventory match, not URL parsing")
+        self.assertEqual(s["min_scale"], 1)              # floor applied, not silently 0
+        self.assertEqual(s["region"], "us-central1")
+        self.assertFalse(s["instance_based"])
+
+    def test_matches_when_recorded_url_differs_from_api_status_url(self):
+        # verified LIVE (2026-08-30): a Cloud Run service has MULTIPLE URLs -- the deploy CLI prints the classic
+        # <name>-<projnum>.<region>.run.app while the API's status.url is the new <name>-<hash>-<rc>.a.run.app.
+        # acspeed may have recorded either, so matching must succeed via the shared service NAME, not the host.
+        def run_cmd(args):
+            if args[:3] == ["run", "services", "list"]:
+                return [{
+                    "metadata": {"name": "umami-acs547c2aaa",
+                                 "labels": {"cloud.googleapis.com/location": "us-central1"}},
+                    "status": {"url": "https://umami-acs547c2aaa-aggnv775ja-uc.a.run.app"},   # NEW form
+                    "spec": {"template": {
+                        "metadata": {"annotations": {"autoscaling.knative.dev/minScale": "1",
+                                                     "run.googleapis.com/cpu-throttling": "true"}},
+                        "spec": {"containers": [{"resources": {"limits": {"cpu": "1", "memory": "512Mi"}}}]}}},
+                }]
+            return None
+        s = g._cloud_run_scaling_resolver(run_cmd=run_cmd)(   # query the CLASSIC form (different host)
+            "https://umami-acs547c2aaa-299813327652.us-central1.run.app")
+        self.assertIsNotNone(s, "must match on service name when the recorded URL != the API status.url")
+        self.assertEqual(s["min_scale"], 1)
+        self.assertEqual(s["region"], "us-central1")
+
+    def test_longest_name_prefix_wins(self):
+        # two services share a name prefix; the token-suffixed one must win, not bare 'umami'
+        def base(name, ms):
+            return {"metadata": {"name": name, "labels": {"cloud.googleapis.com/location": "us-central1"}},
+                    "status": {"url": "https://%s-x-uc.a.run.app" % name},
+                    "spec": {"template": {"metadata": {"annotations": {"autoscaling.knative.dev/minScale": ms}},
+                             "spec": {"containers": [{"resources": {"limits": {"cpu": "1", "memory": "512Mi"}}}]}}}}
+        def run_cmd(args):
+            return [base("umami", "0"), base("umami-acs547c2aaa", "1")] if args[:3] == ["run", "services", "list"] else None
+        s = g._cloud_run_scaling_resolver(run_cmd=run_cmd)(
+            "https://umami-acs547c2aaa-299813327652.us-central1.run.app")
+        self.assertEqual(s["service"], "umami-acs547c2aaa")   # not the bare 'umami'
+        self.assertEqual(s["min_scale"], 1)
+
+    def test_no_matching_service_returns_none(self):
+        # the listing has no service serving this URL (truly gone), so after retrying the resolver yields None
+        # and the caller discloses a 0 floor rather than inventing one.
+        self.assertIsNone(g._cloud_run_scaling_resolver(run_cmd=lambda a: [])(
+            "https://umami-1.europe-west1.run.app"))
         self.assertIsNone(g._cloud_run_scaling_resolver(run_cmd=lambda a: None)(
             "https://umami-1.europe-west1.run.app"))
 
-    def test_transient_describe_blip_is_retried_then_resolves(self):
-        # the gcp run01 defect: a TRANSIENT describe failure (service is live, cost runs before teardown)
-        # dropped the min-instances floor and understated 4/9 runs from ~$29 to ~$16. A blip must be retried,
-        # not read as torn-down.
-        good = self._describe(min_scale="1", throttling="true")
+    def test_transient_list_blip_is_retried_then_resolves(self):
+        # the service is live at cost time, so an empty listing is a transient blip; it must be retried, not
+        # read as gone (a dropped floor understates the bill $29 -> $16).
+        good = self._list(min_scale="1", throttling="true")
         calls = {"n": 0}
         def flaky(args):
             calls["n"] += 1
-            return None if calls["n"] <= 2 else good(args)   # blip twice, then the real config
+            return None if calls["n"] <= 2 else good(args)   # blip twice, then the real listing
         s = g._cloud_run_scaling_resolver(run_cmd=flaky)("https://umami-123456789.europe-west1.run.app")
-        self.assertIsNotNone(s, "a transient describe blip must be retried, not treated as torn-down")
+        self.assertIsNotNone(s, "a transient listing blip must be retried, not treated as gone")
         self.assertEqual(s["min_scale"], 1)
         self.assertGreaterEqual(calls["n"], 3)               # it retried past the two failures
 

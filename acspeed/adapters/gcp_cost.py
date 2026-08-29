@@ -315,37 +315,76 @@ ScalingResolver = Callable[[object], Optional[dict]]
 _SCALING_DESCRIBE_ATTEMPTS = 5   # retry the live `gcloud run services describe` (transient-blip resilience)
 
 
+def _run_url_host(ref: object) -> str:
+    """Bare hostname of a Cloud Run URL, for ground-truth equality matching (scheme/slash-insensitive)."""
+    s = str(ref or "")
+    return (urlparse(s if "://" in s else f"https://{s}").hostname or "").lower().rstrip(".")
+
+
 def _cloud_run_scaling_resolver(run_cmd=None) -> ScalingResolver:
-    """Resolve a Cloud Run URL to its autoscaling config via
-    ``gcloud run services describe <service> --region <region> --format=json``: minScale (annotation
-    ``autoscaling.knative.dev/minScale``), per-container cpu + memory
-    (``spec.template.spec.containers[].resources.limits``), and the billing mode (annotation
-    ``run.googleapis.com/cpu-throttling == "false"`` => instance-based). Returns
-    {min_scale, cpu, mem_gib, instance_based, service, region} or None when the service cannot be described
-    (e.g. a torn-down deploy), in which case the caller assumes a 0 floor AND discloses that the scaling
-    config was unavailable, never a silent omission. ``run_cmd`` injectable so unit tests need no cloud."""
+    """Resolve a Cloud Run URL to its autoscaling config by matching the deploy against the project's own
+    Cloud Run inventory ON ITS SERVING URL -- the SAME ground-truth pattern the GCE resolver uses (find the
+    instance whose IP serves the URL), never a fragile parse of the URL into a service name + region.
+
+    Why the parse was wrong: Cloud Run has two URL forms. The classic ``<svc>-<projnum>.<region>.run.app``
+    parses cleanly, but the newer ``<svc>-<hash>-<regioncode>.a.run.app`` makes a string parser read region
+    ``a`` and a wrong service name, so ``describe`` fails on EVERY attempt (retries can't fix a wrong query)
+    and the min-instances floor is silently dropped -- a $29/mo deploy priced as $16/mo. Matching
+    ``gcloud run services list`` by ``status.url`` is URL-format-agnostic (classic, ``.a.run.app``, and custom
+    domains all work) and reads the scaling template straight off the matched service.
+
+    Returns {min_scale, cpu, mem_gib, instance_based, service, region}, or None when no service serves the URL
+    (caller discloses a 0 floor). ``run_cmd`` injectable so unit tests need no cloud."""
     def resolve(deployment_ref: object) -> Optional[dict]:
-        sr = _cloud_run_service_region_from_url(str(deployment_ref))
-        if not sr:
+        host = _run_url_host(deployment_ref)
+        if not host:
             return None
-        service, region = sr
-        # The service is LIVE when cost runs (measure_cost precedes teardown), so a describe that returns
-        # nothing is almost always a TRANSIENT gcloud/API blip, not a torn-down deploy. Retry before giving
-        # up: dropping the Cloud Run min-instances floor on a transient failure UNDERSTATES the bill (it
-        # silently turns a $29/mo deploy into $16/mo). Only the LIVE path sleeps between attempts; an injected
-        # run_cmd (tests) retries with no sleep, so a transient-then-good sequence is exercisable offline.
-        d = None
+        # The service is LIVE when cost runs (measure_cost precedes teardown), so an empty listing is a
+        # TRANSIENT gcloud/API blip; retry before giving up (live path sleeps; injected run_cmd retries with
+        # no sleep, so a transient-then-good sequence is exercisable offline).
+        services = None
         for attempt in range(_SCALING_DESCRIBE_ATTEMPTS):
-            d = _gcloud_json(["run", "services", "describe", service, "--region", region,
-                              "--platform", "managed"], run_cmd)
-            if isinstance(d, dict) and d:
+            services = _gcloud_json(["run", "services", "list", "--platform", "managed"], run_cmd)
+            if isinstance(services, list):
                 break
             if run_cmd is None and attempt < _SCALING_DESCRIBE_ATTEMPTS - 1:
                 time.sleep(min(2.0 * (attempt + 1), 10.0))
-        if not isinstance(d, dict) or not d:
+        # A Cloud Run service has SEVERAL URLs for the same service (the classic
+        # ``<name>-<projnum>.<region>.run.app`` the deploy CLI prints, the new ``<name>-<hash>-<rc>.a.run.app``
+        # the API returns as status.url, plus any tagged-revision URLs) -- and acspeed may have recorded a
+        # DIFFERENT one than status.url. So match on ground truth that survives every form: (1) exact host
+        # against any URL the API reports, else (2) the service NAME, which every URL form leads with as its
+        # first host-label (``<name>-<...>``); longest matching name wins, so a token-suffixed service beats a
+        # bare-prefixed one.
+        label = host.split(".")[0]
+
+        def _svc_urls(s):
+            st = s.get("status") or {}
+            return [st.get("url"), (st.get("address") or {}).get("url"),
+                    *[t.get("url") for t in (st.get("traffic") or [])]]
+
+        def _matches(s):
+            name = ((s.get("metadata") or {}).get("name")) or ""
+            if any(_run_url_host(u) == host for u in _svc_urls(s) if u):
+                return True
+            return bool(name) and (label == name or label.startswith(name + "-"))
+
+        svc = max((s for s in (services or []) if _matches(s)),
+                  key=lambda s: len((s.get("metadata") or {}).get("name") or ""), default=None)
+        if not svc:
             return None
-        tmpl = ((d.get("spec") or {}).get("template") or {})
+        name = ((svc.get("metadata") or {}).get("name")) or ""
+        region = (((svc.get("metadata") or {}).get("labels") or {}).get("cloud.googleapis.com/location")) or ""
+        tmpl = ((svc.get("spec") or {}).get("template") or {})
         ann = ((tmpl.get("metadata") or {}).get("annotations") or {})
+        # `list` can summarize; if the scaling template is absent, describe the MATCHED (correct) name+region
+        # -- the describe now has ground-truth inputs, so it succeeds where the URL-parsed one failed.
+        if not ann and name and region:
+            dd = _gcloud_json(["run", "services", "describe", name, "--region", region,
+                               "--platform", "managed"], run_cmd)
+            if isinstance(dd, dict) and dd:
+                tmpl = ((dd.get("spec") or {}).get("template") or {})
+                ann = ((tmpl.get("metadata") or {}).get("annotations") or {})
         try:
             min_scale = int(str(ann.get("autoscaling.knative.dev/minScale", "0") or "0"))
         except ValueError:
@@ -362,7 +401,7 @@ def _cloud_run_scaling_resolver(run_cmd=None) -> ScalingResolver:
             cpu = 1.0
         if mem is None:
             mem = 0.5
-        return {"service": service, "region": region, "min_scale": min_scale,
+        return {"service": name or host, "region": region, "min_scale": min_scale,
                 "cpu": float(cpu), "mem_gib": float(mem), "instance_based": instance_based}
     return resolve
 
