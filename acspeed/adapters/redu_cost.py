@@ -3,9 +3,15 @@ prices into a provider-independent RunRate. Thin per-provider boundary, like Red
 
 The pricing resolution is injectable (``resolve_bundle``) so the composition is tested offline; the
 default resolver best-effort-fetches from the redu MCP (list_flavors for the per-hour rate) and prices
-ONE line per provisioned billed resource: the app instance PLUS each managed datastore the deployment
-stood up (``db_id`` -> managed Postgres/MySQL, ``redis_id`` -> managed Redis), with HA members counted
-as that many instance-hours. This is the paper's per-resource cost (Part 4): a managed datastore is
+ONE line per provisioned billed resource: the app instance PLUS every managed datastore the deployment
+stood up. The datastores are found by a UNIVERSAL, data-driven sweep (``_sweep_managed_stores`` over the
+``_REDU_STORES`` table), not a per-type ``db_id``/``redis_id`` branch: it enumerates EVERY managed-store
+list tool and attributes a row to the deployment by the deploy's private ``network_id`` (all its VMs share
+it, so a store the deployment row never references - managed ClickHouse, a future type - is still caught)
+or by a referenced id, then prices each by its flavor at the flat ``pricing_rules`` rate (the SAME source
+Stripe bills from, surfaced through ``list_flavors.hourly_rate``), with HA members counted as that many
+instance-hours. Adding a new managed type is ONE row in ``_REDU_STORES``, never a code branch. This is the
+paper's per-resource cost (Part 4): a managed datastore is
 priced as its OWN instance-hours, never folded into the app VM, so a two-VM deploy is not under-counted
 (the docmost app + managed Postgres case). A resource it cannot price is disclosed
 (``unpriced_resources`` + a note in ``price_source``) rather than faked as zero; the resolver returns
@@ -24,7 +30,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.request
-from typing import Callable, Optional, Tuple
+from typing import Callable, NamedTuple, Optional, Tuple
 
 from ..cost import (RateComponent, RunRate, RunRateAdapter, EgressRate, FxConversion,
                     compose_run_rate, storage_gb_month_to_hourly)
@@ -57,16 +63,13 @@ def _price_flavor(flavors, flavor_ref) -> Tuple[Optional[float], str, Optional[s
     return float(native), name, str(_first(fl, "currency", default="GBP"))
 
 
-def _managed_resource(call_tool, list_tool: str, key: str, res_id: object,
-                      flavors: list, role: str) -> Optional[dict]:
-    """Price ONE managed datastore the deployment provisioned. Looks it up in its list tool by id,
-    prices its flavor, and counts HA members as separate instance-hours (an ``ha`` cluster is 3 members,
-    or ``len(member_ips)`` when the row exposes them). Returns {role, flavor, native_price, count} or
-    None if the row or its flavor cannot be resolved (the caller then discloses it, never fakes it)."""
-    rows = (call_tool(list_tool, {}) or {}).get(key, [])
-    row = next((r for r in rows if str(r.get("id")) == str(res_id)), None)
-    if not row:
-        return None
+def _price_store_row(row: dict, flavors: list, role: str) -> Optional[dict]:
+    """Price ONE managed-datastore row the sweep already holds: read its flavor (``flavor_id`` / ``flavor``
+    / ``flavor_name``), price it at the flat ``list_flavors`` hourly_rate (the ``pricing_rules`` rate, the
+    SAME source Stripe bills from), and count HA members as separate instance-hours (an ``ha`` cluster is
+    ``len(member_ips)`` members, or 3 when the row does not enumerate them). Returns
+    {role, flavor, native_price, count}, or None when the row carries no flavor or its flavor is not in
+    ``list_flavors`` (the caller then DISCLOSES it by type+id, never fakes a zero)."""
     native, fname, _ = _price_flavor(flavors, _first(row, "flavor_id", "flavor", "flavor_name"))
     if native is None:
         return None
@@ -74,6 +77,88 @@ def _managed_resource(call_tool, list_tool: str, key: str, res_id: object,
     count = (len(members) if row.get("ha") and isinstance(members, list) and members
              else (3 if row.get("ha") else 1))
     return {"role": role, "flavor": fname, "native_price": native, "count": count}
+
+
+class _StoreKind(NamedTuple):
+    """One redu billable managed-store primitive, as DATA. ``list_tool``/``key`` are the exact MCP list
+    tool + its structuredKey; ``role`` is the compute:<role> component suffix and the disclosure type;
+    ``ref_field`` is the deployment field that points at this store's id (the fallback attribution handle
+    for a store whose list row does not expose network_id), or None for a store the deployment never
+    references (ClickHouse), which is attributed only by shared network_id."""
+    list_tool: str
+    key: str
+    role: str
+    ref_field: Optional[str]
+
+
+# THE DATA TABLE. Adding a future managed type (managed Qdrant, a new list_* tool, anything) is ONE row
+# here, never a code branch - the redu analogue of the AWS adapter's _DIMENSIONS dispatch table. Every
+# name/key was confirmed against redu-mcp buildServer.js (the registerAuthedGetTool definitions) and the
+# backend list controllers: list_databases->'databases' (Postgres, carries flavor_id + ha/member_ips),
+# list_relational_databases->'relational_databases' (MySQL/MariaDB), list_clickhouse_databases->
+# 'clickhouse' (carries flavor_id + engine + ha/member_ips; NOT referenced by the deployment row, so it
+# rides the network_id path), list_redis->'redis', list_media_spaces->'media_spaces' (carries flavor_id +
+# network_id + size_gb; its VM flavor is priced, else the row is disclosed).
+_REDU_STORES = (
+    _StoreKind("list_databases",            "databases",            "postgres",    "db_id"),
+    _StoreKind("list_relational_databases", "relational_databases", "mysql",       "db_id"),
+    _StoreKind("list_clickhouse_databases", "clickhouse",           "clickhouse",  None),
+    _StoreKind("list_redis",                "redis",                "redis",       "redis_id"),
+    _StoreKind("list_media_spaces",         "media_spaces",         "media_space", "media_space_id"),
+)
+
+# How a DANGLING deployment reference (a db_id/redis_id/media_space_id that no enumerated row satisfied) is
+# disclosed. db_id is engine-agnostic on the deployment row, so it discloses as the neutral "database".
+_REF_LABELS = {"db_id": "database", "redis_id": "redis", "media_space_id": "media_space"}
+
+
+def _sweep_managed_stores(call_tool, dep: dict, flavors: list) -> Tuple[list, list]:
+    """Universal, data-driven enumeration of every managed datastore the deployment provisioned, with NO
+    per-type code branch. For each primitive in ``_REDU_STORES`` it lists the resource kind and attributes
+    a row to THIS deployment when the row shares the deployment's private ``network_id`` (PREFERRED: every
+    VM the deploy stood up sits on that one network, so a store the deployment row never references -
+    ClickHouse, a future type - is still caught) OR when the deployment references the row's id through the
+    primitive's ``ref_field`` (the fallback handle for stores whose list row does not carry network_id).
+    Each attributed row is priced by its flavor; a row that is found but cannot be priced is disclosed by
+    type+id, and a referenced id that no row satisfied is disclosed by its label - never a silent omission.
+    Returns (priced_resources, unpriced_labels)."""
+    dep_net = _first(dep, "network_id")
+    priced: list = []
+    unpriced: list = []
+    seen: set = set()                          # (list_tool, id): price a store once even if net AND ref match
+    resolved_refs: set = set()                 # ref_fields the sweep actually satisfied (for dangling detect)
+    for kind in _REDU_STORES:
+        ref_id = _first(dep, kind.ref_field) if kind.ref_field else None
+        rows = (call_tool(kind.list_tool, {}) or {}).get(kind.key, []) or []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            rid = row.get("id")
+            row_net = _first(row, "network_id")
+            by_net = dep_net is not None and row_net is not None and str(row_net) == str(dep_net)
+            # a ref match only counts until that ref is resolved once, so an id that happens to collide
+            # across the two db_id tables (databases vs relational_databases) is not billed twice.
+            by_ref = (ref_id is not None and rid is not None and str(rid) == str(ref_id)
+                      and kind.ref_field not in resolved_refs)
+            if not (by_net or by_ref):
+                continue
+            marker = (kind.list_tool, str(rid))
+            if marker in seen:
+                continue
+            seen.add(marker)
+            if by_ref and kind.ref_field:
+                resolved_refs.add(kind.ref_field)
+            res = _price_store_row(row, flavors, kind.role)
+            if res:
+                priced.append(res)
+            else:
+                unpriced.append(f"{kind.role}:{rid}")      # found but unpriceable -> disclosed by type+id
+    # a deployment reference that no enumerated row satisfied is a DANGLING pointer -> disclose it by label
+    # (a managed store deleted out from under the deployment, or one the current API cannot enumerate yet).
+    for ref_field, label in _REF_LABELS.items():
+        if _first(dep, ref_field) and ref_field not in resolved_refs and label not in unpriced:
+            unpriced.append(label)
+    return priced, unpriced
 
 
 # --- dated public FX (USD is the reporting currency; non-USD list prices are converted once) ----
@@ -147,24 +232,16 @@ def _default_resolver(call_tool=redu_mcp_http.call_tool) -> BundleResolver:
         native_ccy = native_ccy or "GBP"                  # redu lists in GBP
 
         # one priced line per provisioned billed resource: the app instance PLUS every managed datastore
-        # the deployment stood up. The deployment row names exactly what the agent provisioned
-        # (db_id / redis_id / media_space_id), which is the enumeration handle on every cloud, not a
-        # blind list_instances. Each managed store is its OWN instance-hours (Part 4 per-resource cost).
+        # the deployment stood up. The managed stores come from a UNIVERSAL, data-driven sweep
+        # (_sweep_managed_stores over _REDU_STORES) that REPLACES the old db_id/redis_id/media_space_id
+        # branches: it enumerates EVERY managed-store list tool, attributes rows by the deploy's private
+        # network_id (so a store the deployment row never references - ClickHouse, a future type - is still
+        # caught) or by a referenced id, prices each by its flavor, counts HA members, and discloses
+        # anything unpriceable. Each managed store is its OWN instance-hours (Part 4 per-resource cost);
+        # a new managed type is ONE row in _REDU_STORES, no code here.
         resources = [{"role": "app", "flavor": app_name, "native_price": app_native, "count": 1}]
-        unpriced = []
-        db_id = _first(dep, "db_id", "database_id")
-        if db_id:
-            res = _managed_resource(call_tool, "list_databases", "databases", db_id, flavors, "postgres")
-            if res is None:                               # not a Postgres -> try the relational (MySQL) store
-                res = _managed_resource(call_tool, "list_relational_databases", "relational_databases",
-                                        db_id, flavors, "mysql")
-            resources.append(res) if res else unpriced.append("database")
-        redis_id = _first(dep, "redis_id")
-        if redis_id:
-            res = _managed_resource(call_tool, "list_redis", "redis", redis_id, flavors, "redis")
-            resources.append(res) if res else unpriced.append("redis")
-        if _first(dep, "media_space_id"):
-            unpriced.append("media_space")                # NFS VM + volume: no listed flavor rate here
+        managed, unpriced = _sweep_managed_stores(call_tool, dep, flavors)
+        resources.extend(managed)
 
         app_fl = next((f for f in flavors
                        if str(flavor) in (str(f.get("id")), str(f.get("name")))), {}) or {}
