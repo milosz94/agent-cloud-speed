@@ -113,6 +113,22 @@ class TestAwsUsageRate(unittest.TestCase):
                          "AmazonCloudFront", "cloudfront")
         self.assertIsNone(ur)                            # nothing classifiable -> disclosed, not faked
 
+    def test_apprunner_without_compute_is_unpriced_not_partial(self):
+        """Completeness guard: App Runner is a compute service, so a schedule that priced only its request
+        line (compute meter missing) would understate the bill. It must return None (UNPRICED), never a
+        request-fee-only partial. CloudFront, a CDN, has no compute and is unaffected (tested above)."""
+        def prod(pf, unit, usd, desc=""):
+            return json.dumps({"product": {"productFamily": pf, "attributes": {"location": "US East (N. Virginia)"}},
+                "terms": {"OnDemand": {"T": {"priceDimensions": {"R": {
+                    "unit": unit, "description": desc, "pricePerUnit": {"USD": f"{usd:.10f}"}}}}}}})
+        requests_only = {"PriceList": [prod("AWS App Runner", "Requests", 1.0e-6, "requests")]}
+        self.assertIsNone(_usage_rate(lambda cli: requests_only, "https://x.us-east-1.awsapprunner.com",
+                                      "us-east-1", "2026-08-27", "AWSAppRunner", "apprunner"))
+        with_compute = {"PriceList": [prod("AWS App Runner", "Requests", 1.0e-6, "requests"),
+                                      prod("AWS App Runner", "vCPU-Hours", 0.064, "provisioned vCPU")]}
+        self.assertIsNotNone(_usage_rate(lambda cli: with_compute, "https://x.us-east-1.awsapprunner.com",
+                                         "us-east-1", "2026-08-27", "AWSAppRunner", "apprunner"))
+
 
 if __name__ == "__main__":
     unittest.main()

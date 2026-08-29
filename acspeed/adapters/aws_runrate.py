@@ -277,6 +277,18 @@ _REGION_LOCATION = {
 # disclosed as an assumption. 1 vCPU / 2 GB is App Runner's minimum configuration.
 _APPRUNNER_DEFAULT_GB = 2.0
 
+# Per-front completeness: which drivers a valid schedule MUST include, so an unpriced compute meter is
+# reported UNPRICED rather than emitted as a plausible-but-incomplete (cheaper-than-real) number (C21).
+# "compute" is satisfied by an active per-second rate (driver 'other') OR a provisioned instance floor
+# (driver 'standing'). CloudFront (a CDN) and API Gateway have no compute of their own, so they need only
+# the request line; App Runner and Lambda are compute services and must price their compute.
+_USAGE_REQUIRED = {
+    "cloudfront": ("requests",),
+    "apigateway": ("requests",),
+    "apprunner": ("compute",),
+    "lambda": ("requests", "compute"),
+}
+
 
 def _usage_front(host: str):
     for sub, (code, name) in _USAGE_FRONTS.items():
@@ -358,6 +370,11 @@ def _usage_rate(mcp_call: McpCall, url: str, region: str, capture_date: str, ser
     comps = _usage_components(products, region, service_name)
     if not comps:
         return None
+    drivers = {c.driver for c in comps}
+    for need in _USAGE_REQUIRED.get(service_name, ("requests",)):
+        ok = bool(drivers & {"other", "standing"}) if need == "compute" else (need in drivers)
+        if not ok:
+            return None   # a required cost component is unpriced -> UNPRICED, never a partial schedule
     return compose_usage_rate(comps, provider="aws", region=region, service=service_name,
                               capture_date=capture_date,
                               price_source=f"AWS {service_name} public list price (Price List get-products; "

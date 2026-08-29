@@ -169,6 +169,17 @@ class TestGcpCloudRunUsageCost(unittest.TestCase):
         # dispatch path is taken (a run.app URL never hits the None resolver -> not a standing RunRate):
         self.assertTrue(gcp_cost.is_cloud_run_url("https://it-tools-1.europe-west1.run.app"))
 
+    def test_missing_compute_sku_is_unpriced_not_partial(self):
+        """Completeness guard: a Cloud Run schedule with the CPU (or Memory) SKU absent would silently omit
+        active compute and understate the bill, so it must return None (UNPRICED), never a request-fee-only
+        partial. This is the exact defect the overnight batch hit (compute omitted -> $11.67 at 10M)."""
+        no_cpu = [s for s in _RUN_SKUS if "CPU" not in s["description"]]
+        no_mem = [s for s in _RUN_SKUS if "Memory" not in s["description"]]
+        self.assertIsNone(gcp_cost.cloud_run_usage_rate("2026-08-28", region="europe-west1", skus=no_cpu))
+        self.assertIsNone(gcp_cost.cloud_run_usage_rate("2026-08-28", region="europe-west1", skus=no_mem))
+        # sanity: the full SKU set still prices (guard does not over-refuse)
+        self.assertIsNotNone(gcp_cost.cloud_run_usage_rate("2026-08-28", region="europe-west1", skus=_RUN_SKUS))
+
 
 _CA_ITEMS = {"Items": [
     {"meterName": "Standard Requests", "unitOfMeasure": "1M", "retailPrice": 0.56, "type": "Consumption",
@@ -247,6 +258,18 @@ class TestAzureContainerAppsUsageCost(unittest.TestCase):
         # 1M requests: $0.56 request fee PLUS the folded active compute (cpu+mem), so above the fee alone
         at_1m = next(p["usd_per_month"] for p in ur["schedule"] if p["requests_per_month"] == 1_000_000)
         self.assertGreater(at_1m, 0.56)
+
+    def test_missing_compute_meter_is_unpriced_not_partial(self):
+        """Completeness guard: a Container Apps schedule missing the active vCPU (or Memory) meter would
+        silently omit compute and understate the bill, so it returns None (UNPRICED), never a partial."""
+        no_cpu = {"Items": [i for i in _CA_ITEMS["Items"] if "vCPU" not in i["meterName"]]}
+        no_mem = {"Items": [i for i in _CA_ITEMS["Items"] if "Memory" not in i["meterName"]]}
+        self.assertIsNone(azure_cost.container_apps_usage_rate("2026-08-28", region="westeurope",
+                                                               fetch=lambda url: no_cpu))
+        self.assertIsNone(azure_cost.container_apps_usage_rate("2026-08-28", region="westeurope",
+                                                               fetch=lambda url: no_mem))
+        self.assertIsNotNone(azure_cost.container_apps_usage_rate("2026-08-28", region="westeurope",
+                                                                  fetch=lambda url: _CA_ITEMS))
 
 
 class TestGceResolver(unittest.TestCase):

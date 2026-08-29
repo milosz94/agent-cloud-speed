@@ -155,16 +155,22 @@ def azure_postgres_extras(run_cmd=None):
 def postgres_flexible_hourly(region: str, sku: str, storage_gb: float, *, fetch=None) -> Optional[float]:
     """Best-effort standing $/hr for an Azure Database for PostgreSQL Flexible Server: the compute meter for
     the SKU's size (e.g. Standard_B1ms -> 'B1ms') from public Retail Prices, plus per-GB-month storage.
-    Returns None if the compute meter cannot be matched (the caller then DISCLOSES it, never omits silently)."""
-    svc = "Azure Database for PostgreSQL Flexible Server"
+    Returns None if the compute meter cannot be matched (the caller then DISCLOSES it, never omits silently).
+    NOTE: the Retail Prices serviceName is 'Azure Database for PostgreSQL' (NOT '... Flexible Server'); the
+    Flexible Server rows are distinguished by a 'Flexible Server' productName, which also excludes the
+    Cosmos-DB-for-PostgreSQL burstable meters that share the vCore name."""
+    svc = "Azure Database for PostgreSQL"
     size = str(sku or "").split("_")[-1]                  # Standard_B1ms -> B1ms
-    compute = retail_hourly_usd(svc, region, meter_contains=size) if size else None
+    compute = (retail_hourly_usd(svc, region, product_contains="Flexible Server",
+                                 meter_contains=size, fetch=fetch) if size else None)
     if compute is None:
         return None
     hourly = compute
-    sto = retail_hourly_usd(svc, region, meter_contains="storage", unit="1/month")
+    # storage productName is 'Azure Database for PostgreSQL Flex Server Storage', billed per GB/Month
+    sto = retail_hourly_usd(svc, region, product_contains="Flex Server Storage",
+                            unit="1 GB/Month", fetch=fetch)
     if sto and storage_gb:
-        hourly += float(storage_gb) * sto / 730.0
+        hourly += storage_gb_month_to_hourly(sto, float(storage_gb))
     return hourly
 
 
@@ -173,10 +179,11 @@ def container_apps_usage_rate(capture_date: str, *, region: str = "westeurope",
                               fetch=None) -> Optional[UsageRate]:
     """Azure Container Apps priced as a per-usage SCHEDULE (C21) from the PUBLIC Retail Prices API (no
     credentials), the serverless counterpart of the standing run-rate. Uses the Consumption plan's Standard
-    meters: Requests (folds into the schedule), vCPU Active per second and Memory Active per GiB-second
-    (driver 'other': unit rates reported, not folded, since they depend on per-request duration + the app's
-    CPU/memory allocation, which the served URL does not reveal). Region defaults to westeurope (the meters
-    are near-uniform across regions; the region is disclosed)."""
+    meters: Requests (per request), vCPU Active per second and Memory Active per GiB-second (driver 'other'),
+    all THREE required -- ``compose_usage_rate`` folds the per-second vCPU/Memory rates into the per-request
+    cost using the disclosed request profile, so the schedule includes active compute; without all three the
+    bill is incomplete and this returns None (UNPRICED), never a partial. Region defaults to westeurope (the
+    meters are near-uniform across regions; the region is disclosed)."""
     items = _retail_query(f"serviceName eq 'Azure Container Apps' and armRegionName eq '{region}' "
                           "and priceType eq 'Consumption'", fetch=fetch)
 
@@ -205,7 +212,10 @@ def container_apps_usage_rate(capture_date: str, *, region: str = "westeurope",
     if mem_s is not None:
         comps.append(UsageComponent(name="compute-active-mem", per_unit_usd=mem_s, unit="GiB-second",
                                     driver="other", raw_unit_price=mem_s, native_unit="per GiB-second"))
-    if not any(c.driver == "requests" for c in comps):
+    # A Container Apps bill is requests + active vCPU + active memory. If ANY of the three is unpriced the
+    # schedule would silently omit a real cost component and understate the bill, so refuse rather than emit
+    # a partial (C21 completeness): report UNPRICED, never a plausible-but-incomplete number.
+    if req_1m is None or vcpu_s is None or mem_s is None:
         return None
     ur = compose_usage_rate(comps, provider="azure", region=region, service="Azure Container Apps",
                             capture_date=capture_date, standing_floor_hourly_usd=standing_floor_hourly,
@@ -295,11 +305,12 @@ class AzureRunRateAdapter(RunRateAdapter):
             floor, notes = 0.0, []
             for pg in (azure_postgres_extras() or []):
                 h = postgres_flexible_hourly(pg.get("region") or reg, pg.get("sku", ""), pg.get("storage_gb", 0))
-                if h is not None:
-                    floor += h
-                else:
-                    notes.append("cost EXCLUDES an unpriced Azure Database for PostgreSQL "
-                                 f"(sku {pg.get('sku') or 'unknown'}): compute meter unavailable, disclosed not faked")
+                if h is None:
+                    # A database the deploy provisioned but we cannot price would make the schedule omit a real
+                    # standing cost and understate the bill. Refuse the whole cost (UNPRICED, C21 completeness)
+                    # rather than return a plausible-but-incomplete number.
+                    return None
+                floor += h
             return container_apps_usage_rate(capture_date, region=reg,
                                              standing_floor_hourly=floor, extra_notes=tuple(notes))
         b = self._resolve(deployment_ref)

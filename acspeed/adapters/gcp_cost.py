@@ -123,9 +123,10 @@ def cloud_run_usage_rate(capture_date: str, *, region: Optional[str] = None, tok
                          standing_floor_hourly: float = 0.0,
                          extra_notes: tuple = ()) -> Optional[UsageRate]:
     """Cloud Run priced as a per-usage SCHEDULE (C21), the serverless counterpart of the standing run-rate.
-    Uses the DEFAULT request-based billing SKUs: Requests (folds into the schedule), CPU per vCPU-second and
-    Memory per GiB-second (driver 'other': reported as unit rates, not folded, because they depend on
-    per-request duration + the deployment's CPU/memory allocation, which the served URL does not reveal).
+    Uses the DEFAULT request-based billing SKUs: Requests (per request), CPU per vCPU-second and Memory per
+    GiB-second (driver 'other'), all THREE required -- ``compose_usage_rate`` folds the per-second CPU/Memory
+    rates into the per-request cost using the disclosed request profile, so the schedule includes active
+    compute; without all three the bill is incomplete and this returns None (UNPRICED), never a partial.
     The request-based CPU/Memory rates are region-TIERED (Tier-1 vs Tier-2), so ``region`` (from the URL)
     selects the correct tier; without it a Tier-1 reference region is used and disclosed. Egress is held
     separate like every egress line. ``skus`` injectable for offline tests; else fetched live via ADC."""
@@ -169,8 +170,11 @@ def cloud_run_usage_rate(capture_date: str, *, region: Optional[str] = None, tok
     if mem is not None:
         comps.append(UsageComponent(name="compute-active-mem", per_unit_usd=mem, unit="GiB-second",
                                     driver="other", raw_unit_price=mem, native_unit="per GiB-second"))
-    if not any(c.driver == "requests" for c in comps):
-        return None                                   # cannot price the load-bearing request line -> disclose
+    # A Cloud Run bill is requests + active CPU + active memory. If ANY of the three is unpriced the
+    # schedule would silently omit a real cost component and understate the bill, so refuse rather than
+    # emit a partial (C21 completeness): report UNPRICED, never a plausible-but-incomplete number.
+    if req is None or cpu is None or mem is None:
+        return None
     reg_label = pricing_region + ("" if region else " (Tier-1 reference; no region in URL)")
     ur = compose_usage_rate(comps, provider="gcp", region=reg_label, service="Cloud Run",
                             capture_date=capture_date, standing_floor_hourly_usd=standing_floor_hourly,
@@ -520,8 +524,10 @@ class GcpRunRateAdapter(RunRateAdapter):
                                      f"${round(priced[0], 4)}/hr (Enterprise-Zonal edition assumed"
                                      f"{'' if priced[1] else ', region-approximate'})")
                     else:
-                        notes.append(f"cost EXCLUDES an unpriced Cloud SQL instance (tier {db.get('tier')}): "
-                                     "shared/predefined tier or rate unavailable, disclosed not faked")
+                        # A database the deploy provisioned but we cannot price would make the schedule omit a
+                        # real standing cost and understate the bill. Refuse the whole cost (UNPRICED, C21
+                        # completeness) rather than return a plausible-but-incomplete number.
+                        return None
                 if n_run > 1:
                     notes.append(f"{n_run} Cloud Run services exist in the project; only the served URL's "
                                  "service is priced here (additional services not folded)")
