@@ -149,11 +149,29 @@ _SSH_OPTS = [
 ]
 
 
+def _split_jump(spec: str) -> Tuple[str, str, int]:
+    """Parse a 'user@host:port' ProxyJump spec into (user, host, port)."""
+    user, rest = spec.split("@", 1)
+    if ":" in rest:
+        host, port = rest.rsplit(":", 1)
+        return user, host, int(port)
+    return user, rest, 22
+
+
 def _ssh_argv(h: SSHHandle) -> List[str]:
     """The ssh command prefix for one handle, built in the CORE so no provider-specifics leak in."""
     argv = ["ssh", *_SSH_OPTS, "-i", h.private_key_path, "-p", str(h.port)]
     if h.proxy_jump:
-        argv += ["-o", f"ProxyJump={h.proxy_jump}"]
+        # `-o ProxyJump=` does NOT inherit the outer host-key options, so a FRESH jump host prompts
+        # interactively ("authenticity of host ... can't be established") and hangs the whole run.
+        # Use a ProxyCommand that carries the SAME hardening (StrictHostKeyChecking=no + BatchMode=yes),
+        # so neither the jump nor the final target can ever prompt. Same key opens both (redu: every VM
+        # shares the deploy keypair).
+        ju, jh, jp = _split_jump(h.proxy_jump)
+        jopts = " ".join(["-o StrictHostKeyChecking=no", "-o UserKnownHostsFile=/dev/null",
+                          "-o BatchMode=yes", "-o IdentitiesOnly=yes",
+                          "-o ConnectTimeout=15", f"-i {h.private_key_path}", f"-p {jp}"])
+        argv += ["-o", f"ProxyCommand=ssh {jopts} -W %h:%p {ju}@{jh}"]
     argv.append(f"{h.user}@{h.host}")
     return argv
 
@@ -170,7 +188,10 @@ def ssh_exec(handle: SSHHandle, *, ssh_retries: int = 3) -> ExecFn:
         for attempt in range(ssh_retries):
             argv = prefix + ["bash -lc " + shlex.quote(command)]
             try:
-                p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s)
+                # stdin detached: even if some option were missing, ssh gets EOF and fails fast
+                # instead of hanging on an interactive prompt.
+                p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s,
+                                   stdin=subprocess.DEVNULL)
             except subprocess.TimeoutExpired as e:
                 return 124, "", f"timeout after {timeout_s}s: {e}"
             if p.returncode != 255:            # a real command result (0 or the command's own rc)
@@ -188,7 +209,8 @@ def ssh_exec_prefix(ssh_prefix: str) -> ExecFn:
 
     def _fn(command: str, timeout_s: int) -> Tuple[int, str, str]:
         argv = parts + ["bash -lc " + shlex.quote(command)]
-        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s)
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s,
+                           stdin=subprocess.DEVNULL)   # never hang on an interactive prompt
         return p.returncode, p.stdout, p.stderr
 
     return _fn

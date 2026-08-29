@@ -48,6 +48,107 @@ are **grouped by cloud**: they land in `./acspeed-results/<adapter>/` (`run01.js
 `tables.json`), so `redu`, `aws`, `gcp`, `azure` runs for the same app sit side by side and compare
 directly. `--out` overrides the path.
 
+## Setup for live runs (microVM substrate, clouds, concurrency)
+
+`acspeed-run` runs each agent turn inside a **fresh Firecracker microVM** (the paper's C9 hermetic
+substrate): the VM holds only the target cloud's credentials, readiness is polled from the host (a
+neutral vantage), and the transcript is byte-identical to a plain `claude -p` run. Setup is one-time.
+
+**Platform support.** The microVM substrate is **Linux + KVM only** (a Firecracker constraint). On
+**macOS / Windows**, acspeed runs each agent turn on the **host** (`--no-sandbox`): everything still works
+(deploy, all five axes, teardown) except the hermetic per-cloud credential isolation of C9 (the host holds
+whatever creds you have). To get the microVM on a non-Linux machine, run acspeed inside a Linux VM / WSL2
+that exposes `/dev/kvm`. The one-time installer below is therefore Linux-only and says so if run elsewhere.
+
+**1. The microVM substrate (once per machine, right after install).** KVM and the tap pool are ephemeral
+kernel state (wiped on reboot), so instead of setting them up by hand every boot, run the one-time
+installer, which makes them **persist across reboots** (loads KVM on boot via `modules-load.d`, and
+installs a systemd oneshot that brings the tap pool up on boot) and brings everything up now:
+
+```bash
+sudo bash sandbox/install-sandbox.sh 8     # 8 = concurrent slots; idempotent, re-run to change it
+```
+
+After this you never touch `net-setup` again: KVM auto-loads and `acspeed-tap0..N` come up on every boot.
+(The lower-level `sudo modprobe kvm_amd` + `sudo bash sandbox/net-setup.sh N` still work if you want a
+one-off, non-persistent setup.) The prebuilt kernel and rootfs live under `sandbox/` (`bin/`, `images/`);
+rebuilding the rootfs (only if you edit `sandbox/rootfs/vm-runner.sh` or the `Containerfile`) is documented
+in `sandbox/STATE.md`. If the substrate is not available the run falls back to the host and says so;
+`--no-sandbox` forces that.
+
+**2. Concurrency (run multiple speed tests at the same time).** With `SLOTS` taps up, just launch up to
+`SLOTS` `acspeed-run` processes at once: each **claims a free tap slot** (a file-lock held for the VM's
+life) and **queues** if all slots are busy, so nothing collides. Change the count by re-running
+`sudo bash sandbox/install-sandbox.sh <N>`. One caveat: two runs of the **same app + same adapter** write
+to the same `acspeed-results/<adapter>/` folder, so give one of them `--out` (or run different apps/clouds).
+
+**3. Per-cloud credentials.** Each adapter needs its own reachable cloud, wired in the acspeed data dir
+(`$DATA/_config/*.mcp.json`, where `$DATA` is set near the top of `autorun.py`):
+
+- **redu** (`redu.mcp.json`) points at the redu MCP; the microVM keeps your redu login token so the
+  agent can deploy, and nothing else.
+- **aws** (`aws.mcp.json`) runs `mcp-proxy-for-aws` so the agent drives AWS through `call_aws`. Use a
+  **static IAM key**, NOT `aws login`: an `aws login` session expires after a few hours, and if it lapses
+  mid-run the deprovision agent has no credentials and leaves a **live, billing orphan**. A static key
+  never expires, so deploy and deprovision always authenticate.
+
+  **AWS static-key setup (once):**
+  ```bash
+  # a dedicated benchmark IAM user + a non-expiring key, written straight into a named profile
+  U=acspeed-batch
+  aws iam create-user --user-name "$U" --tags Key=purpose,Value=acspeed-benchmark
+  aws iam attach-user-policy --user-name "$U" --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+  CRED=$(aws iam create-access-key --user-name "$U" --output json)
+  aws configure set aws_access_key_id     "$(echo "$CRED" | python3 -c 'import sys,json;print(json.load(sys.stdin)["AccessKey"]["AccessKeyId"])')"     --profile "$U"
+  aws configure set aws_secret_access_key "$(echo "$CRED" | python3 -c 'import sys,json;print(json.load(sys.stdin)["AccessKey"]["SecretAccessKey"])')" --profile "$U"
+  aws configure set region us-east-1 --profile "$U"
+  unset CRED
+  aws sts get-caller-identity --profile "$U"      # expect ...:user/acspeed-batch (a fresh key may need a few seconds)
+  ```
+  Then wire the MCP config to sign with that profile: `aws.mcp.json` -> add `"--profile", "acspeed-batch"`
+  to the `mcp-proxy-for-aws` args. AdministratorAccess is the pragmatic choice for a **dedicated** account
+  the agent uses to deploy arbitrary services; keep the key safe (it is admin on that account).
+
+  Before each AWS run, acspeed runs a **credential preflight** (`sts get-caller-identity` with that same
+  profile) and **refuses to deploy** if it fails, so a misconfigured profile stops the run loudly instead
+  of burning a deploy it cannot tear down.
+
+- **gcp** (`gcp.mcp.json`) runs `@google-cloud/cloud-run-mcp` (the one official create-capable GCP MCP,
+  Cloud Run only; Compute Engine / GKE / App Engine go through `gcloud` over Bash). Auth = Application
+  Default Credentials: `gcloud auth login` + `gcloud config set project <id>` (or set
+  `GOOGLE_APPLICATION_CREDENTIALS` to a service-account key for a batch run), and put the project id into
+  `gcp.mcp.json` (`GOOGLE_CLOUD_PROJECT`). The Cloud Run MCP has **no delete tool**, so teardown is
+  `gcloud run services delete` (the agent runs it). Cost: a **Cloud Run** deploy is priced as a per-usage
+  schedule from the Cloud Billing Catalog via your **ADC** (no separate key) once the (free, read-only)
+  Billing API is enabled: `gcloud services enable cloudbilling.googleapis.com` (one-time). Preflight =
+  `gcloud auth print-access-token`.
+
+- **azure** (`azure.mcp.json`) runs `@azure/mcp` (`azmcp`); native compute/appservice tools are mostly
+  read/query, so the create/deploy/teardown path is the `extension` namespace running `az`/`azd`
+  (`az containerapp up` / `az webapp up` / `az vm create`; `az group delete` to tear down). Auth =
+  `az login` (or service-principal env vars `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET`
+  for a batch run). Cost: a **Container Apps** deploy is priced as a per-usage schedule from the **public**
+  Azure Retail Prices API (no key, no API-enable step; USD-native; live-verified). Preflight = `az account show`.
+
+  For both **gcp** and **azure**, the credential preflight (`gcloud auth print-access-token` / `az account
+  show`) runs before the deploy and **refuses to deploy** if it fails, exactly as for AWS.
+
+  **microVM note (gcp/azure):** the hermetic microVM mounts `~/.config/gcloud` / `~/.azure` only after the
+  rootfs is rebuilt to pick up the generalized `vm-runner` (the host-side staging and `vm-runner.sh` are
+  already generalized; the running rootfs image is not). Until you rebuild it, run gcp/azure with
+  `--no-sandbox` (agent turns on the host, using the host's creds directly). AWS and redu microVM runs are
+  unaffected.
+
+**4. Run it.**
+
+```bash
+acspeed-run --adapter redu  --model claude-opus-5     # time + liveness + cost + capability
+acspeed-run --adapter aws   --model claude-opus-5     # same, on AWS (uses the static-key profile)
+acspeed-run --adapter azure --model claude-opus-5 --no-sandbox   # Azure (host creds; cost is public-priced)
+acspeed-run --adapter gcp   --model claude-opus-5 --no-sandbox   # GCP  (host creds; Cloud Run + gcloud)
+# --no-cost / --no-capability skip those off-clock measures; --n N repeats the run
+```
+
 **The clock, pinned.** `t0` = the deploy request. `t1` = the first response the deployed URL gives
 with HTTP status **< 500**, found by an **external poller running concurrently** with the agent
 (it tails the session transcript for the URL and polls it every 5 s). 000 (no TLS/TCP) and 5xx

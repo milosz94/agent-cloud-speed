@@ -219,12 +219,25 @@ class TestSSHHandleArgv(unittest.TestCase):
         self.assertEqual(argv[-1], "ubuntu@1.2.3.4")
         self.assertFalse(any(str(a).startswith("ProxyJump=") for a in argv))  # generic: no bastion
 
-    def test_bastion_handle_adds_proxyjump_and_port(self):
+    def test_bastion_handle_uses_hardened_proxycommand(self):
+        # the jump must be a ProxyCommand carrying the SAME host-key hardening, NOT a bare ProxyJump=
+        # (which would prompt interactively on a fresh jump host and hang the run).
         h = cp.SSHHandle(host="10.50.0.5", user="ubuntu", private_key_path="/k/id",
                          port=22001, proxy_jump="jump@edge.redu.cloud:22")
         argv = cp._ssh_argv(h)
         self.assertIn("22001", argv)                                   # the redu stream port, generically
-        self.assertIn("ProxyJump=jump@edge.redu.cloud:22", argv)
+        self.assertFalse(any(str(a).startswith("ProxyJump=") for a in argv))  # no un-hardened jump
+        proxy = next(a for a in argv if str(a).startswith("ProxyCommand="))
+        self.assertIn("StrictHostKeyChecking=no", proxy)               # jump cannot prompt
+        self.assertIn("BatchMode=yes", proxy)
+        self.assertIn("UserKnownHostsFile=/dev/null", proxy)
+        self.assertIn("edge.redu.cloud", proxy)
+        self.assertIn("-p 22", proxy)                                  # the jump host's own port
+        self.assertIn("-W %h:%p", proxy)
+
+    def test_split_jump(self):
+        self.assertEqual(cp._split_jump("u@h:2200"), ("u", "h", 2200))
+        self.assertEqual(cp._split_jump("u@h"), ("u", "h", 22))
 
 
 class TestKeypair(unittest.TestCase):
@@ -248,7 +261,7 @@ def _fake_run(returncodes):
     seq = iter(returncodes)
     calls = {"n": 0}
 
-    def run(argv, capture_output, text, timeout):
+    def run(argv, capture_output, text, timeout, **kwargs):
         calls["n"] += 1
         rc = next(seq)
         return types.SimpleNamespace(returncode=rc, stdout=("ok" if rc == 0 else ""), stderr="")
@@ -399,8 +412,9 @@ class TestRunCapabilityOnHandle(unittest.TestCase):
 
 class TestTryKeys(unittest.TestCase):
     def _mkkeys(self, *names):
-        import os, tempfile
+        import os, shutil, tempfile
         d = tempfile.mkdtemp(prefix="acspeed-keys-")
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         paths = []
         for n in names:
             p = os.path.join(d, n)

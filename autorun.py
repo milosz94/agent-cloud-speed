@@ -60,7 +60,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from acspeed import transcript as acs  # noqa: E402
 from acspeed import operation as acs_op  # noqa: E402
 from acspeed import agenttime as acs_at  # noqa: E402
+from acspeed import suite as acs_suite  # noqa: E402
+from acspeed import suites as acs_suites  # noqa: E402
+from acspeed import procguard  # noqa: E402
 from acspeed.types import Span, PLATFORM  # noqa: E402
+import signal  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -83,9 +87,8 @@ def sandbox_available() -> tuple[bool, str]:
             return False, f"missing {os.path.basename(p)} (build the sandbox: see sandbox/STATE.md)"
     if not os.path.exists("/dev/kvm"):
         return False, "/dev/kvm absent (sudo modprobe kvm_amd)"
-    r = subprocess.run(["ip", "-o", "addr", "show", vmjob.TAP], capture_output=True, text=True)
-    if r.returncode != 0 or vmjob.TAP not in r.stdout:
-        return False, f"tap {vmjob.TAP} down (sudo bash sandbox/net-setup.sh)"
+    if not vmjob.discover_slots():
+        return False, "no acspeed tap(s) up (sudo bash sandbox/net-setup.sh [N])"
     return True, ""
 DATA = "/home/milos/Desktop/research_paper_data"
 
@@ -106,6 +109,7 @@ ADAPTERS = {
     # aws keeps none (it authenticates via ~/.aws), so neither can reach the other cloud.
     "redu": {"mcp_config": f"{DATA}/_config/redu.mcp.json",
              "keep_claude_tokens": ["redu"],
+             "cloud_label": "redu.cloud",
              "url_re": r"https://[a-z0-9.-]+\.redu\.cloud",
              "substrate_hosts": r"^https://(?:mcp|api|console|dashboard|docs|www|register)\.redu\.cloud"
                                 r"|^https://redu\.cloud/?$"},
@@ -118,6 +122,7 @@ ADAPTERS = {
     # EC2 public DNS (compute[-1]), Lightsail containers, Elastic Beanstalk, CloudFront, API Gateway.
     "aws":   {"mcp_config": f"{DATA}/_config/aws.mcp.json",
               "keep_claude_tokens": [], "aws_creds": "~/.aws",
+              "cloud_label": "AWS",
               "url_re": r"https?://[a-z0-9.-]+\.(?:"
                         r"awsapprunner\.com"                      # App Runner
                         r"|[a-z0-9-]+\.elb\.amazonaws\.com"       # ALB/ELB (name.region.elb...)
@@ -131,20 +136,90 @@ ADAPTERS = {
               # console/docs/signin are never the app; the MCP endpoint (api.aws) is not in url_re anyway.
               "substrate_hosts": r"^https?://(?:[a-z0-9.-]*\.)?(?:console|signin|docs|health|status)\.aws\.amazon\.com"
                                  r"|^https?://aws\.amazon\.com"},
-    # "gcp":   {"mcp_config": "<path>", "url_re": "<deployed-URL regex>", "substrate_hosts": "<own hosts>"},
-    # "azure": {"mcp_config": "<path>", "url_re": "<deployed-URL regex>", "substrate_hosts": "<own hosts>"},
+    # GCP: mcp_config points at the Cloud Run MCP (@google-cloud/cloud-run-mcp), the one official
+    # create-capable GCP MCP; Compute Engine / GKE / App Engine go through `gcloud` over Bash. Auth = ADC
+    # (a service-account key for a batch run), mounted into the microVM as ~/.config/gcloud. url_re is a
+    # strict WHITELIST of GCP's APP-HOSTING suffixes ONLY (a broad `googleapis.com` matches every GCP API
+    # endpoint and would falsely stop the clock; `googleusercontent.com` is NOT excluded because it doubles
+    # as the GCE reverse-DNS host). Verified 2026-08-28.  LIVE SEAM: no delete tool in the MCP, so the
+    # agent tears down via `gcloud run services delete` (Bash); confirm on first run.
+    "gcp":   {"mcp_config": f"{DATA}/_config/gcp.mcp.json",
+              "keep_claude_tokens": [], "gcp_creds": "~/.config/gcloud",
+              "cloud_label": "GCP",
+              "url_re": r"https?://[a-z0-9.-]+\.(?:"
+                        r"run\.app"                                # Cloud Run (svc-projnum.region.run.app + hash.run.app)
+                        r"|appspot\.com"                           # App Engine (project.REGION.r.appspot.com + legacy)
+                        r"|bc\.googleusercontent\.com"             # Compute Engine reverse-DNS PTR (weak fallback; GCE serves on raw IP)
+                        r")(?::\d+)?",
+              # console/docs/auth + ALL API endpoints (*.googleapis.com) + registries are never the app.
+              "substrate_hosts": r"^https?://(?:[a-z0-9.-]*\.)?(?:console\.cloud|cloud|accounts)\.google\.com"
+                                 r"|^https?://[a-z0-9-]+\.googleapis\.com"
+                                 r"|^https?://(?:[a-z0-9-]+\.)?pkg\.dev"
+                                 r"|^https?://(?:[a-z0-9-]+\.)?gcr\.io"},
+    # Azure: mcp_config points at the Azure MCP (@azure/mcp); native compute/appservice tools are largely
+    # read/query, so the create/deploy/teardown path is the `extension` namespace running `az`/`azd` (LIVE
+    # SEAM: exact execute-tool name confirmed on first run; `az`/`azd` over Bash is the guaranteed fallback).
+    # Auth = DefaultAzureCredential, mounted into the microVM as ~/.azure (SP env vars for a batch run).
+    # url_re whitelists Azure's APP-HOSTING suffixes; NOTE cloudapp.azure.com is a real VM app host, so a
+    # blanket `azure.com` exclude is WRONG (see substrate_hosts, which enumerates infra hosts instead).
+    # Verified 2026-08-28.
+    "azure": {"mcp_config": f"{DATA}/_config/azure.mcp.json",
+              "keep_claude_tokens": [], "azure_creds": "~/.azure",
+              "cloud_label": "Azure",
+              "url_re": r"https?://[a-z0-9.-]+\.(?:"
+                        r"azurecontainerapps\.io"                  # Container Apps
+                        r"|azurewebsites\.net"                     # App Service / Functions
+                        r"|azurecontainer\.io"                     # Container Instances
+                        r"|cloudapp\.azure\.com"                   # VM public-IP DNS name
+                        r")(?::\d+)?",
+              # portal/ARM/auth/docs/registry are infra; Kudu (scm.azurewebsites.net) is the deploy console,
+              # not the app. Never blanket-exclude azure.com (cloudapp.azure.com is a real app host).
+              "substrate_hosts": r"^https?://(?:[a-z0-9.-]*\.)?portal\.azure\.com"
+                                 r"|^https?://(?:[a-z0-9-]+\.)?management\.azure\.com"
+                                 r"|^https?://login\.microsoft(?:online)?\.com"
+                                 r"|^https?://graph\.microsoft\.com"
+                                 r"|^https?://[a-z0-9.-]+\.scm\.azurewebsites\.net"
+                                 r"|^https?://[a-z0-9-]+\.azurecr\.io"},
 }
 
 # App-agnostic by design: it deploys the CURRENT folder (or --app-dir) once. No named app, no per-app
-# check. The prompt is universal (nothing about WHAT, HOW, or WHICH CLOUD): "this directory" IS the app
-# under test. Which cloud the agent uses must come from the SESSION'S CAPABILITY (only the target
-# cloud's tools/creds are reachable), NOT from prompt instructions, which would contaminate the
-# benchmark. How to isolate the target environment is under revalidation (grounded in the paper + the
-# prior-benchmark literature), not the rejected prompt-binding approach.
+# check. The prompt names the TARGET CLOUD and nothing else about WHAT or HOW: "this directory" IS the
+# app under test, and {cloud} is the ONLY per-adapter substitution (identical template every cloud, so
+# the cross-cloud comparison stays controlled and symmetric). Earlier design left the cloud implicit
+# ("only the reachable cloud's creds are present, so the agent must use it"); that premise is empirically
+# FALSE (verified 2026-08-27 AWS run): real app folders are NOT cloud-neutral -- they carry other
+# providers' deploy docs/config (redu.md, vercel, ...) the user legitimately keeps, and a strong
+# cloud-specific doc CAPTURES the agent's plan. That run had aws-mcp + call_aws AVAILABLE and UNUSED:
+# the agent followed the folder's redu.md, could not auth redu (no token in the VM, by design), and
+# stopped without ever trying AWS. Stripping the folder is rejected (it is the user's). So the target
+# cloud is stated EXPLICITLY and symmetrically in the prompt: a disclosed, controlled instruction, not a
+# contaminant (the paper's C9 "prompt stays pure" note is updated to "prompt names only the target cloud").
 CONFIG = {
     "probe": f"{HERE}/probe_loadtest.py",            # unused now; kept for the future app-capability axis (C4)
-    "task_prompt": "Deploy the application in this directory.",
+    # {cloud} is filled from the adapter's cloud_label at prof assembly. SAME template for every cloud.
+    "task_prompt_template": ("Deploy the application in this directory to {cloud}, using the {cloud} "
+                             "tools and credentials available in this session. If the directory contains "
+                             "configuration or notes for other providers, ignore them and deploy only to "
+                             "{cloud}."),
 }
+
+# CLOUD-AGNOSTIC run identity (fixes the wrong-VM capture). The harness mints a per-run token and asks
+# the agent to put it in the deployment's NAME, so the deployment's own hostname carries it; the URL
+# capture then accepts ONLY hostnames bearing this run's token and can never latch onto a pre-existing
+# or concurrent deployment on the account (measured 2026-08-28: the poller grabbed a foreign
+# `origin-web` URL that a `list_deployments` result had put in the transcript). No cloud specifics live
+# here: "does the hostname contain the token" is a pure string test, and every per-cloud detail (url_re,
+# substrate hosts) stays in the adapter. ADAPTER SEAM: a cloud whose created URL cannot carry the name
+# (AWS App Runner random ids, EC2 IP-DNS) needs a per-cloud token->URL resolver in the adapter; redu /
+# GCP Cloud Run / Azure Container Apps + App Service + VMs all put the chosen name in the hostname.
+NAMING_INSTRUCTION = (
+    " Name the deployment so that its public hostname contains the exact token '{token}' (for example "
+    "name it '{token}' or '<app>-{token}'). This token is how this run identifies the one deployment it "
+    "created among any others already on the account, so it MUST appear in the deployment's URL and must "
+    "not be reused for anything else. If the folder's notes suggest a specific deployment name, hostname, "
+    "or dname, OVERRIDE it for this run: whatever name you choose, its hostname must still contain this "
+    "exact token."
+)
 # Cloud-agnostic autonomy wrapper (proceed non-interactively). NOT task guidance.
 AUTONOMY = (
     "This is a fully autonomous, non-interactive session. Never ask the user questions and never "
@@ -185,16 +260,26 @@ def _claude(prompt: str, *, cwd: str, mcp: str, model: str | None, resume: str |
         cmd += ["--model", model]
     if resume:
         cmd += ["--resume", resume]
+    # spawn in its OWN session (process-group leader) with stdin detached, so Ctrl-C reaches the host
+    # and the signal handler can group-kill claude AND its MCP-server grandchildren (procguard).
+    proc = procguard.spawn(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
-        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired as e:
+        out_s, err_s = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        procguard.kill_group(proc.pid)          # kill claude AND the MCP servers it spawned
+        try:
+            out_s, err_s = proc.communicate(timeout=10)
+        except Exception:  # noqa: BLE001
+            out_s, err_s = "", ""
         return {"is_error": True, "result": f"TIMEOUT after {timeout}s", "session_id": None,
-                "stdout": (e.stdout or "")[-2000:] if isinstance(e.stdout, str) else ""}
-    out = p.stdout.strip()
+                "stdout": (out_s or "")[-2000:]}
+    finally:
+        procguard.untrack(proc.pid)
+    out = (out_s or "").strip()
     try:
         return json.loads(out)
     except ValueError:
-        return {"is_error": True, "result": out[-2000:], "stderr": p.stderr[-2000:], "session_id": None}
+        return {"is_error": True, "result": out[-2000:], "stderr": (err_s or "")[-2000:], "session_id": None}
 
 
 def _install_recovered_ssh_keys(ssh_dir: str | None) -> None:
@@ -224,21 +309,50 @@ def _claude_vm(prompt: str, *, app_dir: str, mcp: str | None, model: str | None,
     res = vmjob.run_vm_job(
         prompt=prompt, model=model, mcp_config=(mcp or None), app_dir=app_dir,
         keep_claude_tokens=sandbox["keep_claude_tokens"], aws_dir=sandbox.get("aws_dir"),
+        creds_mounts=sandbox.get("creds_mounts"),
         max_turns=max_turns, timeout=timeout, boot_log=boot_log, system=system,
         resume_sid=resume, resume_transcript=resume_transcript,
         session_store=sandbox["session_store"])
     _install_recovered_ssh_keys(res.get("agent_ssh_dir"))   # so capability C can reach the deploy VM
-    r = res.get("result")
-    if isinstance(r, dict):
-        return r
-    tail = ""
     try:
-        tail = "\n".join(open(res["boot_log"]).read().splitlines()[-8:]) if res.get("boot_log") else ""
-    except OSError:
-        pass
-    return {"is_error": True, "session_id": None,
-            "result": f"microVM produced no result (exit={res.get('exit_code')}, "
-                      f"timed_out={res.get('timed_out')})\n{tail}"}
+        r = res.get("result")
+        if isinstance(r, dict):
+            return r
+        tail = ""
+        try:
+            tail = "\n".join(open(res["boot_log"]).read().splitlines()[-8:]) if res.get("boot_log") else ""
+        except OSError:
+            pass
+        return {"is_error": True, "session_id": None,
+                "result": f"microVM produced no result (exit={res.get('exit_code')}, "
+                          f"timed_out={res.get('timed_out')})\n{tail}"}
+    finally:
+        # Reclaim this run's ~4 GB rootfs copy. run_vm_job copies BASE_ROOTFS fresh per turn into an
+        # acspeed-vm-* dir and never removes it; unbounded accumulation is what filled the disk and
+        # starved a cloud in an n=10 x 4 batch. Guard on the prefix so a caller-provided work_dir is
+        # never touched.
+        #   SUCCESS -> drop the whole dir (transcripts are already merged into session_store, SSH keys
+        #             installed; nothing left we need).
+        #   FAILURE -> KEEP the small diagnostics (out.json = claude's own error, boot.log = console,
+        #             err.txt = agent stderr) so the cause is knowable, but still drop the ~4 GB rootfs +
+        #             job drive so the disk cannot fill. Deleting these on failure is what left us blind.
+        wd = res.get("work_dir")
+        if wd and os.path.basename(wd).startswith("acspeed-vm-"):
+            r = res.get("result")
+            succeeded = isinstance(r, dict) and not r.get("is_error")
+            if succeeded:
+                shutil.rmtree(wd, ignore_errors=True)
+            else:
+                try:
+                    vmjob._debugfs_dump(os.path.join(wd, "job.ext4"), "/err.txt", os.path.join(wd, "err.txt"))
+                except Exception:  # noqa: BLE001
+                    pass
+                for big in ("rootfs.ext4", "job.ext4", "agent_ssh.tar", "transcripts.tar"):
+                    try:
+                        os.remove(os.path.join(wd, big))
+                    except OSError:
+                        pass
+                _log(f"run FAILED -> kept diagnostics in {wd} (out.json / err.txt / boot.log); dropped the rootfs copy")
 
 
 def deprovision_agent(mcp: str, model: str | None, url: str, tag: str = "deprovision",
@@ -263,6 +377,76 @@ def deprovision_agent(mcp: str, model: str | None, url: str, tag: str = "deprovi
             "transcript": find_transcript(sid) if sid else None}
 
 
+def _slug(s: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", s)
+
+
+def drive_suite(inst, prof: dict, model: str | None, deploy_sid: str | None, url: str,
+                sandbox: dict | None, out_dir: str, i: int, cwd: str) -> dict | None:
+    """Drive a TIER instance's operations on top of the already-serving deployment (operation #1,
+    deploy-serve, was performed by run_once). Operations #2..N are resumed agent turns (session A) so
+    the deployment context persists; after EACH, the RUNNER verifies that operation's postcondition
+    independently (the observe primitive, never the agent's report). The terminal conjunction then
+    re-checks every DURABLE sentinel AFTER the restart (CP7). The agent OWNS the method for every
+    mutation; only the verified result is scored. Off-clock relative to t1. Returns the TierRun
+    summary dict. The instance is built by the caller (run_once) and shared with the teardown, so the
+    same per-run sentinel drives both. autorun knows nothing app-specific: the instance carries it."""
+    first_id = inst.operations[0].op_id
+
+    def run_agent(op, ctx, resume_sid):
+        if op.op_id == first_id:            # the deploy run_once already did: reuse it, do NOT re-deploy
+            return {"session_id": deploy_sid, "url": url}
+        rsid = resume_sid or deploy_sid     # every later op resumes session A (full deployment context)
+        op_boot = None
+        if sandbox:
+            op_boot = os.path.join(out_dir, f"run{i:02d}_op_{_slug(op.op_id)}.bootlog")
+            open(op_boot, "w").close()
+        r = _claude(op.task, cwd=cwd, mcp=prof["mcp_config"], model=model, resume=rsid,
+                    sandbox=sandbox, boot_log=op_boot,
+                    resume_transcript=(find_transcript(rsid) if sandbox else None),
+                    max_turns=120, timeout=DEPLOY_TIMEOUT_S)
+        _log(f"suite op {op.op_id}: agent session={r.get('session_id')} "
+             f"is_error={r.get('is_error')} cost=${r.get('total_cost_usd')}")
+        return r
+
+    _log(f"suite: driving tier '{inst.tier}' instance '{inst.name}' "
+         f"({len(inst.operations)} operations) on the serving deployment ({url}) ...")
+    ctx = acs_suite.OpContext(url=url)
+    run = acs_suite.run_tier(inst, ctx, run_agent=run_agent, log=_log)
+    _log(f"suite: tier {inst.tier} / {inst.name}: "
+         f"{'PASSED' if run.passed else 'FAILED (' + ', '.join(run.failures()) + ')'}")
+    return run.summary()
+
+
+def deprovision_suite_agent(prof: dict, model: str | None, url: str, sid: str | None,
+                            sandbox: dict | None, out_dir: str, i: int, cwd: str,
+                            teardown_hint: str = "") -> dict:
+    """Teardown for a TIER run. A Medium/Hard deployment creates MULTIPLE resources, so teardown
+    RESUMES session A (the agent that built them all) and removes everything this run created: a fresh
+    session cannot reliably identify a second site, but the builder can. Still a measured teardown; the
+    orphan check on the primary URL still runs after it in run_once. WHAT to remove comes from the
+    instance's ``teardown_hint`` (app-specific), so this orchestrator stays app-agnostic."""
+    boot = None
+    if sandbox:
+        boot = os.path.join(out_dir, f"run{i:02d}_teardown.bootlog")
+        open(boot, "w").close()
+    what = teardown_hint or "the application, its datastore, and any other resources you created"
+    r = _claude(
+        "Tear down EVERYTHING you deployed during this run, so nothing is left running or billing: "
+        f"{what} (the primary deployment is serving at {url}), together with every VM / instance / "
+        "volume / floating IP / proxy host you created for them. Use your cloud tools to find and delete "
+        "each one. Do NOT delete or modify any deployment or resource you did not create in THIS run. "
+        "Reply 'done' once they are all gone.",
+        cwd=cwd, mcp=prof["mcp_config"], model=model, resume=sid, sandbox=sandbox, boot_log=boot,
+        resume_transcript=(find_transcript(sid) if sandbox else None),
+        max_turns=80, timeout=TEARDOWN_TIMEOUT_S)
+    sid2 = r.get("session_id")
+    _log(f"deprovision (suite, run {i}): session={sid2} cost=${r.get('total_cost_usd')} "
+         f"is_error={r.get('is_error')}")
+    return {"session": sid2, "cost": r.get("total_cost_usd"),
+            "transcript": find_transcript(sid2) if sid2 else None}
+
+
 _SESSION_STORE: str | None = None   # set when a microVM run's transcripts are published to the host
 
 
@@ -285,17 +469,27 @@ AUX_HOSTS = re.compile(r"consul|jaeger|zipkin|grafana|prometheus|kibana|console|
 APP_HINT = re.compile(r"front|web|app|hotel|reserv", re.I)
 
 
-def pick_url(text: str, url_re: str, substrate_re: str | None = None) -> dict:
+def pick_url(text: str, url_re: str, substrate_re: str | None = None,
+             require_token: str | None = None) -> dict:
     """Choose the app URL from agent output, mirroring pick_transcript_by_time's discipline: exclude
     the cloud's OWN substrate hosts (never the app), exclude aux service hosts, prefer a
     frontend-looking host, and FLAG ambiguity rather than silently guess. A candidate matching
     `substrate_re` is dropped entirely (the deploy guide names the platform's API/MCP/docs hosts,
-    which always answer and would falsely stop the clock)."""
+    which always answer and would falsely stop the clock).
+
+    `require_token`: when set, ONLY hostnames carrying this run's token survive (the harness asked the
+    agent to name the deployment with it, see NAMING_INSTRUCTION). This is the cloud-agnostic fix for
+    latching onto a pre-existing / concurrent-run deployment the agent merely LISTED: a foreign URL
+    does not carry this run's token, so it is never a candidate. A pure substring test, no cloud
+    knowledge; the per-cloud url_re/substrate stay in the adapter."""
     sub = re.compile(substrate_re) if substrate_re else None
     cands: list[str] = []
     for u in re.findall(url_re, str(text)):
-        if u not in cands and not (sub and sub.search(u)):
-            cands.append(u)
+        if u in cands or (sub and sub.search(u)):
+            continue
+        if require_token and require_token not in u:   # only THIS run's deployment (its hostname carries the token)
+            continue
+        cands.append(u)
     app = [u for u in cands if not AUX_HOSTS.search(u)]
     hinted = [u for u in app if APP_HINT.search(u)]
     pool = hinted or app or cands
@@ -382,10 +576,11 @@ class ReadinessPoller(threading.Thread):
 
     def __init__(self, t0_mono: float, t0_epoch: float, slug_dir: str, url_re: str,
                  substrate_re: str | None = None, interval_s: float | None = None, max_candidates: int = 5,
-                 bootlog_path: str | None = None):
+                 bootlog_path: str | None = None, require_token: str | None = None):
         super().__init__(daemon=True, name="acspeed-readiness")
         self.t0_mono, self.t0_epoch, self.slug_dir, self.url_re = t0_mono, t0_epoch, slug_dir, url_re
         self.substrate_re = substrate_re
+        self.require_token = require_token   # only poll hostnames carrying this run's token (cloud-agnostic)
         # sandbox mode: the agent runs in a microVM, so the live transcript is not on the host. The VM
         # relays URLs to its serial console (boot_log); we tail THAT for candidates. The poll itself is
         # still external, from the host (a neutral vantage), so the measurement is unchanged.
@@ -416,7 +611,7 @@ class ReadinessPoller(threading.Thread):
         while not self._halt.is_set():
             txt = self._source_text()
             if txt:
-                pick = pick_url(txt, self.url_re, self.substrate_re)
+                pick = pick_url(txt, self.url_re, self.substrate_re, require_token=self.require_token)
                 pool = [u for u in pick["candidates"] if not AUX_HOSTS.search(u)] or pick["candidates"]
                 for u in pool:
                     if u not in self.candidates and len(self.candidates) < self.max_candidates:
@@ -614,12 +809,19 @@ def rich_panel(rows: list[dict]) -> dict:
 
 
 def curl_dead(url: str) -> dict:
-    """Read-verify teardown from OUTSIDE: the URL should no longer serve."""
+    """Read-verify teardown from OUTSIDE: the URL should no longer serve. 'dead' (= torn down, no orphan)
+    means the deployment is gone. This is NOT the liveness predicate: for teardown a 404 counts as dead,
+    because a deleted SERVERLESS service answers 404 on its now-nonexistent route (Cloud Run's
+    `<svc>-<projnum>.<region>.run.app`, and App Engine, return a 404 'page not found' once the service is
+    deleted), which the <500 liveness rule would misread as still-alive and flag a FALSE orphan on every
+    clean serverless teardown. A 404 on the same URL that served during the run means the route is gone.
+    Other 4xx (401/403) are NOT dead: the resource is up but access-gated, a possible lingering orphan;
+    5xx and a connection failure (000) are dead as before."""
     p = subprocess.run(["bash", "-c",
                         f'curl -s -o /dev/null -w "%{{http_code}}" --max-time 20 "{url}/" || echo 000'],
                        capture_output=True, text=True, timeout=40)
     code = (p.stdout or "").strip()[-3:] or "000"
-    return {"url": url, "http_code": code, "dead": code in ("000",) or code.startswith(("5",))}
+    return {"url": url, "http_code": code, "dead": code in ("000", "404") or code.startswith("5")}
 
 
 def agent_model(rows: list[dict]) -> str | None:
@@ -707,6 +909,49 @@ CAP_REFERENCE = f"{DATA}/_config/reference_machine.json"   # frozen neutral-host
 CAP_STREAM = f"{DATA}/_config/stream.c"                    # pinned McCalpin STREAM source (memory axis)
 
 
+def _looks_like_non_app(low: str) -> str | None:
+    """Precise, CONSERVATIVE signatures for an infrastructure error / default page that the app-agnostic
+    liveness predicate (<500) would still count as 'serving'. Returns the reason, or None if the body
+    looks like a real app (a legitimate app 4xx -- Isso's 400, an API's 401 JSON -- is NEVER matched)."""
+    if "welcome to nginx" in low:
+        return "default nginx page"
+    if "apache2 default page" in low or ("it works" in low and "apache" in low):
+        return "default apache page"
+    if "<error" in low and ("accessdenied" in low or "nosuchbucket" in low or "nosuchkey" in low):
+        return "S3/CloudFront access error"
+    if "the request could not be satisfied" in low:            # CloudFront generic error page
+        return "CloudFront generic error"
+    if any(g in low for g in ("502 bad gateway", "503 service temporarily", "504 gateway time")):
+        return "gateway error page"
+    return None
+
+
+def verify_served_content(url: str, timeout_s: int = 20) -> dict:
+    """OFF-CLOCK SUCCESS ORACLE, SEPARATE from the liveness clock (t1). The <500 predicate correctly stops
+    the clock when the HTTP server answers, but it cannot tell the deployed APP from an infrastructure
+    error / default page (a CloudFront/S3 AccessDenied, a default nginx page, a gateway error) that also
+    answers <500. This fetches the served root and records whether the content is the real app. CONSERVATIVE
+    by design: only a known infra-error/default-page signature (or an empty body) sets content_verified
+    False; a legitimate app 4xx is not rejected. Never raises; never affects timing. Addresses the
+    liveness-only / false-success trap (DeployBench premature-completion, the S3-fronted-hasura 403)."""
+    try:
+        r = subprocess.run(["curl", "-sS", "-L", "-m", str(timeout_s), "-w", "\n%{http_code}", url],
+                           capture_output=True, text=True, timeout=timeout_s + 5)
+        out = r.stdout
+        code = out.rsplit("\n", 1)[-1].strip() if "\n" in out else ""
+        content = out.rsplit("\n", 1)[0] if "\n" in out else out
+    except Exception as e:  # noqa: BLE001
+        return {"content_verified": None, "error": repr(e)[:120]}
+    low = content.lower()
+    hit = _looks_like_non_app(low)
+    empty = len(content.strip()) < 20
+    verified = not hit and not empty
+    return {"content_verified": verified, "http_code": code, "bytes": len(content), "signature": hit,
+            "note": (hit if hit else ("empty body" if empty else "app content")),
+            "disclosure": "off-clock success oracle, SEPARATE from the liveness clock (t1); conservative, "
+                          "flags only infra-error/default pages + empty bodies, never a legitimate app 4xx"}
+
+
 def measure_capability(prof: dict, url: str) -> dict | None:
     """OFF-CLOCK capability C (C12/C14) on the deployment's OWN VM: resolve its SSH endpoint (thin
     adapter), SSH in with the harness-held keypair, run the deterministic probe battery, normalize vs
@@ -723,7 +968,8 @@ def measure_capability(prof: dict, url: str) -> dict | None:
         stream_src = open(CAP_STREAM).read() if os.path.exists(CAP_STREAM) else None
 
         if cloud == "redu":
-            from acspeed.adapters.redu_capability import ReduCapabilityAdapter, resolve_deployment_id_by_url
+            from acspeed.adapters.redu_capability import (ReduCapabilityAdapter,
+                                                          resolve_deployment_id_by_url, resolve_network_pair)
             dep_id = resolve_deployment_id_by_url(url) or url
             handle = ReduCapabilityAdapter().ssh_handle(dep_id)          # endpoint (host/port/user) + resolved key
             if not handle:
@@ -739,8 +985,17 @@ def measure_capability(prof: dict, url: str) -> dict | None:
                         p = os.path.join(ssh_dir, name)
                         if p not in cands:
                             cands.append(p)
+            # C17 network axis: pair the app VM with the deployment's managed datastore VM (reached by
+            # ProxyJump through the app VM to its private IP, same keypair); None only for a true single-VM
+            # deploy -> N/A disclosed. Full VM-to-VM iperf3+ping over the tenant private network.
+            net_pair = None
+            try:
+                net_pair = resolve_network_pair(dep_id, handle)
+            except Exception:  # noqa: BLE001 - network is one off-clock axis; its failure is disclosed
+                net_pair = None
             return cp.run_capability_try_keys(handle.host, handle.user, handle.port, cands,
                                               reference_scalars=ref_scalars, stream_c_source=stream_src,
+                                              network_pair=net_pair,
                                               do_install=True, sudo="sudo ", residency="app-resident")
 
         if cloud == "aws":
@@ -765,6 +1020,39 @@ def measure_capability(prof: dict, url: str) -> dict | None:
                 last = res
             return last or {"ok": False, "error": f"no AWS SSH user in {AWS_SSH_USERS} authenticated at {host}"}
 
+        if cloud in ("gcp", "azure"):
+            # Both hyperscalers: capability is measurable ONLY on a raw shell-reachable VM (a GCE instance
+            # served on its external IP; an Azure VM on its public IP / cloudapp label). The serverless
+            # flagships (Cloud Run, Container Apps, App Service, Container Instances) expose an app front,
+            # not an instance shell, so C is disclosed N/A there, exactly as AWS App Runner. SSH user is
+            # not fixed (metadata-key on GCE; azureuser on Azure), so try each candidate.
+            if cloud == "gcp":
+                from acspeed.adapters.gcp_capability import (resolve_gcp_ssh_endpoint as _resolve_ep,
+                                                             gcp_key_candidates as _keys, GCP_SSH_USERS as _users)
+                na_reason = ("capability N/A: the GCP deploy is not a shell-reachable VM (Cloud Run / App "
+                             "Engine / serverless); C disclosed N/A")
+            else:
+                from acspeed.adapters.azure_capability import (resolve_azure_ssh_endpoint as _resolve_ep,
+                                                               azure_key_candidates as _keys, AZURE_SSH_USERS as _users)
+                na_reason = ("capability N/A: the Azure deploy is not a shell-reachable VM (Container Apps / "
+                             "App Service / Container Instances); C disclosed N/A")
+            ep = _resolve_ep(url)
+            if not ep:
+                return {"ok": False, "na": True, "error": na_reason}
+            host, port = ep
+            cands = _keys()
+            if not cands:
+                return {"ok": False, "error": f"capability: no recovered SSH keys to try for the {cloud} VM {host}"}
+            last = None
+            for user in _users:
+                res = cp.run_capability_try_keys(host, user, port, cands,
+                                                 reference_scalars=ref_scalars, stream_c_source=stream_src,
+                                                 do_install=True, sudo="sudo ", residency="app-resident")
+                if res and res.get("ok"):
+                    return res
+                last = res
+            return last or {"ok": False, "error": f"no {cloud} SSH user in {_users} authenticated at {host}"}
+
         return {"ok": False, "error": f"no capability adapter for cloud={cloud}"}
     except Exception as e:  # noqa: BLE001 - capability is off-clock; it must never break a run
         return {"ok": False, "error": repr(e)[:300]}
@@ -788,6 +1076,18 @@ def measure_cost(prof: dict, url: str, capture_date: str) -> dict | None:
             # dimension pricing (no per-service price code); Lightsail is the one live-priced exception.
             from acspeed.adapters.aws_runrate import AwsRunRateAdapter as AwsMcpAdapter
             rr = AwsMcpAdapter(profile=prof.get("aws_profile")).run_rate(url, capture_date=capture_date)
+        elif cloud == "azure":
+            # Azure Retail Prices API is PUBLIC (no creds) and USD-native, so the PRICING is live-verified;
+            # the BUNDLE resolution (what was provisioned) needs the Azure MCP / Resource Graph, the live
+            # seam. An unresolved bundle returns ok:false (disclosed), never a faked zero.
+            from acspeed.adapters.azure_cost import AzureRunRateAdapter
+            rr = AzureRunRateAdapter().run_rate(url, capture_date=capture_date)
+        elif cloud == "gcp":
+            # GCP Cloud Billing Catalog API needs an API key (GCP_BILLING_API_KEY); without it the bundle
+            # is disclosed unpriceable. Compute svc 6F81-5844-456A, Cloud SQL 9662-B51E-5089 (componentized
+            # vCPU + RAM SKUs). Bundle resolution via the Cloud Run MCP / gcloud is the live seam.
+            from acspeed.adapters.gcp_cost import GcpRunRateAdapter
+            rr = GcpRunRateAdapter().run_rate(url, capture_date=capture_date)
         else:
             return {"ok": False, "error": f"no run-rate adapter for cloud={cloud}"}
         if not rr:
@@ -827,23 +1127,31 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
         boot_log = os.path.join(out_dir, f"run{i:02d}_deploy.bootlog")
         open(boot_log, "w").close()                    # exist so the poller can tail from t0
 
-    _log(f"agent: deploying (session A)...  [{'microVM + ' if sandbox else ''}external readiness poller]")
+    # CLOUD-AGNOSTIC run identity: mint a per-run token and ask the agent (via the same template for
+    # every cloud) to put it in the deployment name, so ONLY this run's hostname is captured. This is
+    # the fix for latching onto a foreign/concurrent deployment the agent merely listed. Per-run random
+    # (distinct token every run, so a sequential run never matches a prior run's leftover); a caller may
+    # pin `prof["run_token"]` for reproducibility / tests.
+    run_token = prof.get("run_token") or ("acs" + os.urandom(4).hex())
+    task_prompt = prof["task_prompt"] + NAMING_INSTRUCTION.format(token=run_token)
+    _log(f"agent: deploying (session A)...  [{'microVM + ' if sandbox else ''}external readiness poller]  "
+         f"run-token={run_token} (only a hostname carrying it is this run's deployment)")
     t0 = time.monotonic()
     t0_epoch = time.time()
     sub_re = prof.get("substrate_hosts")
     poller = ReadinessPoller(t0, t0_epoch, transcript_dir_for(cwd), prof["url_re"], substrate_re=sub_re,
-                             bootlog_path=boot_log)
+                             bootlog_path=boot_log, require_token=run_token)
     poller.start()
-    dep = _claude(prof["task_prompt"], cwd=cwd, mcp=prof["mcp_config"], model=model,
+    dep = _claude(task_prompt, cwd=cwd, mcp=prof["mcp_config"], model=model,
                   sandbox=sandbox, boot_log=boot_log)
     agent_end_s = time.monotonic() - t0
     sid = dep.get("session_id")
-    upick = pick_url(dep.get("result", ""), prof["url_re"], sub_re)
+    upick = pick_url(dep.get("result", ""), prof["url_re"], sub_re, require_token=run_token)
     url_source = "final-message"
     if not upick["url"] and sid:                       # the URL may be only in a tool result
         tx_early = find_transcript(sid)
         if tx_early:
-            upick = pick_url(all_text(acs._load_rows(tx_early)), prof["url_re"], sub_re)
+            upick = pick_url(all_text(acs._load_rows(tx_early)), prof["url_re"], sub_re, require_token=run_token)
             url_source = "transcript" if upick["url"] else "none"
     if not upick["url"] and poller.candidates:
         upick = {"url": poller.candidates[0], "candidates": list(poller.candidates),
@@ -868,6 +1176,10 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
     if not url:
         poller.stop()
         outcome = "FAILURE-no-url"                       # never produced a deployment URL
+        _log(f"no URL carrying this run's token '{run_token}' appeared. Either the deploy did not "
+             "reach a public URL, or the agent did not put the token in the deployment name (so the "
+             "run cannot safely tell its own deployment from others on the account). This is a SAFE "
+             "failure: better than measuring the wrong VM.")
     else:
         for rnd in range(1, max_rounds + 1):
             if rnd == 1 and poller.t_serving_s is not None:
@@ -902,7 +1214,7 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
                           model=model, resume=sid, sandbox=sandbox, boot_log=rep_boot,
                           resume_transcript=(find_transcript(sid) if sandbox else None))
             rounds.append({"round": rnd + 1, "cost": rep.get("total_cost_usd")})
-            url = pick_url(rep.get("result", ""), prof["url_re"], sub_re)["url"] or url
+            url = pick_url(rep.get("result", ""), prof["url_re"], sub_re, require_token=run_token)["url"] or url
         outcome = ("SUCCESS" if first_attempt_success else
                    ("SUCCESS-after-repair" if reached_healthy else "FAILURE-never-served"))
     poller.stop()
@@ -941,6 +1253,21 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
     except Exception as e:  # noqa: BLE001
         _log(f"measure failed (non-fatal; deprovision still runs): {e!r}")
 
+    # 6a. OFF-CLOCK SUCCESS ORACLE (always on): separate from the liveness clock, records whether the
+    #     served root is the real app vs an infra error/default page the <500 predicate still counts as
+    #     serving. Never gates timing; the outcome stays liveness-based (app-agnostic, p2 s4), but a
+    #     content-unverified run is FLAGGED so a false-success is visible.
+    success_oracle = None
+    if url and reached_healthy:
+        success_oracle = verify_served_content(url)
+        cv = success_oracle.get("content_verified")
+        if cv is False:
+            _log(f"success-oracle: WARNING content NOT verified ({success_oracle.get('note')}, "
+                 f"http {success_oracle.get('http_code')}); served <500 but looks like an infra/default page")
+        else:
+            _log(f"success-oracle: content {'verified (app content)' if cv else 'inconclusive'} "
+                 f"(http {success_oracle.get('http_code')}, {success_oracle.get('bytes')} bytes)")
+
     # 6b. OPTIONAL, OFF-CLOCK (--screenshot): capture a picture of the working app while it is still
     #     up (before deprovision). Purely a keepsake/proof artifact, not a measurement: it runs after
     #     t1, never gates timing, never prompts an agent. Skipped silently unless --screenshot is set.
@@ -972,9 +1299,32 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
         capture_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         _log(f"cost: pricing the deployment's standing hourly run-rate (dated {capture_date}) off-clock...")
         cost_run_rate = measure_cost(prof, url, capture_date)
-        _log("cost: " + (f"${cost_run_rate.get('all_in_hourly_usd')}/hr (~${cost_run_rate.get('monthly_usd')}/mo)"
-                         if (cost_run_rate or {}).get("ok")
-                         else f"n/a ({(cost_run_rate or {}).get('error')})"))
+        if (cost_run_rate or {}).get("ok") and cost_run_rate.get("kind") == "usage":
+            sched = cost_run_rate.get("schedule") or []
+            pts = ", ".join(f"{p['label']} req -> ${p['usd_per_month']}/mo" for p in sched[:4])
+            _log(f"cost: usage-metered {cost_run_rate.get('service')} schedule ({pts}, ...)")
+        elif (cost_run_rate or {}).get("ok"):
+            _log(f"cost: ${cost_run_rate.get('all_in_hourly_usd')}/hr (~${cost_run_rate.get('monthly_usd')}/mo)")
+        if (cost_run_rate or {}).get("ok"):
+            te = cost_run_rate.get("traffic_estimate") or {}
+            _log(f"cost by traffic (est total $/mo): low ${te.get('low')} (10k req/mo), "
+                 f"medium ${te.get('medium')} (500k req/mo), high ${te.get('high')} (10M req/mo)")
+        else:
+            _log(f"cost: n/a ({(cost_run_rate or {}).get('error')})")
+
+    # 6e. OPTIONAL (--suite): drive a TIER instance's operations (Medium/Hard) on the serving
+    #     deployment. The agent OWNS the method for each mutation (resumed session-A turns); the RUNNER
+    #     verifies each postcondition independently, and the terminal conjunction re-checks every durable
+    #     sentinel AFTER the restart (CP7). Off-clock relative to t1; runs before deprovision so the
+    #     capability/cost axes above measured the un-perturbed deployment. Never skips deprovision.
+    tier_run = None
+    suite_inst = None
+    if prof.get("suite") and url and reached_healthy:
+        try:
+            suite_inst = acs_suites.get_instance(prof["suite"])   # built ONCE; shared with teardown
+            tier_run = drive_suite(suite_inst, prof, model, sid, url, sandbox, out_dir, i, cwd)
+        except Exception as e:  # noqa: BLE001 - a suite error must never skip deprovision
+            _log(f"suite: aborted (non-fatal; deprovision still runs): {e!r}")
 
     # 7. preserve workdir, then DEPROVISION (the agent tears down ONLY the deployment it provisioned,
     #    by its URL), then read-verify. --keep leaves the deployment up (you clean it up yourself).
@@ -991,6 +1341,12 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
     elif not url:
         _log("no URL captured: nothing to deprovision (the agent may not have created a deployment).")
         td = {"session": None, "cost": None, "transcript": None, "skipped": True}
+    elif prof.get("suite"):
+        # a tier run created MULTIPLE resources (app + datastore + second site): resume the builder
+        # session so the teardown removes everything this run created, not only the primary URL. WHAT to
+        # remove comes from the instance (app-specific), keeping this call app-agnostic.
+        td = deprovision_suite_agent(prof, model, url, sid, sandbox, out_dir, i, cwd,
+                                     teardown_hint=(suite_inst.teardown_hint if suite_inst else ""))
     else:
         td = deprovision_agent(prof["mcp_config"], model, url, tag=f"deprovision (run {i})", sandbox=sandbox)
     td_tx = td.get("transcript")
@@ -1018,8 +1374,10 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
         "agent_wall_s": agent_wall_s,                          # the agent's whole session (may outlive t1)
         "serving": serving,                                    # the external clock: how/when t1 was caught
         "screenshot": shot,                                    # optional off-clock proof artifact (or None)
+        "success_oracle": success_oracle,                      # off-clock content check, separate from the liveness clock (M1)
         "capability": capability,                              # optional off-clock delivered-capability C (or None)
         "cost_run_rate": cost_run_rate,                        # optional off-clock standing hourly run-rate (C19) or None
+        "tier_run": tier_run,                                  # optional --suite: Medium/Hard operation-graph result (or None)
         "split": opsplit,                                      # agent/platform SECONDS via acspeed, clipped at t1
         "steps": ((m or {}).get("tokens") or {}).get("turns"),  # LLM calls = the paper's portable "steps"
         "health_code": health_code,
@@ -1029,7 +1387,8 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
             "repair_prompts": (rounds_to_healthy - 1) if rounds_to_healthy else None,
         },
         "url": url, "url_source": url_source, "url_candidates": upick["candidates"],
-        "url_ambiguous": upick["ambiguous"],
+        "url_ambiguous": upick["ambiguous"], "run_token": run_token,   # only a hostname carrying this is this run's
+
         "prompts_used": len(rounds), "rounds": rounds,
         "deploy": {"session": sid, "transcript": tx, **m},     # PROVISION operation (session A)
         "deprovision": {"session": td.get("session"), "transcript": td_tx,      # DEPROVISION operation
@@ -1054,6 +1413,91 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
     else:
         _log(f"{tag}: time-to-serving {ttw} (no transcript, session={sid}){tail}")
     return rec
+
+
+def _aws_profile_from_mcp(mcp_config: str) -> str | None:
+    """The --profile the AWS MCP signs with (aws.mcp.json), so the preflight checks the SAME creds the
+    deploy/deprovision will use. None if the config names no profile (default credential chain)."""
+    try:
+        args = json.load(open(mcp_config))["mcpServers"]["aws-mcp"]["args"]
+        return args[args.index("--profile") + 1] if "--profile" in args else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def preflight_credentials(prof: dict) -> tuple[bool, str]:
+    """Fail FAST, before the agent burns a deploy, if the target cloud's credentials are unusable (a dead
+    aws login session, a misconfigured / rotated / missing profile). This is what prevents a deploy that
+    then CANNOT be torn down -> a live, billing orphan (the 2026-08-27 AWS incident). AWS: host-side
+    `sts get-caller-identity` with the SAME profile the microVM's MCP signs with (the VM copies ~/.aws,
+    so valid on the host == valid in the VM). Other clouds: no check yet (returns ok)."""
+    cloud = prof.get("cloud")
+    if cloud not in ("aws", "gcp", "azure"):
+        return True, ""
+    env = {**os.environ, "PATH": os.environ.get("PATH", "") + ":/tmp/awsv2-bin:" + os.path.expanduser("~/.local/bin")}
+
+    if cloud == "gcp":
+        # ADC / gcloud must be able to mint a token, so the agent can deploy AND deprovision (the Cloud Run
+        # MCP has no delete tool; teardown is `gcloud run services delete`). Fail fast otherwise.
+        try:
+            r = subprocess.run(["gcloud", "auth", "print-access-token"], capture_output=True, text=True,
+                               timeout=30, env=env)
+        except Exception as e:  # noqa: BLE001
+            return False, (f"GCP credential preflight could not run `gcloud` ({e}); install the Cloud SDK "
+                           "and `gcloud auth login` (or set GOOGLE_APPLICATION_CREDENTIALS to a service-account key).")
+        if r.returncode != 0 or not (r.stdout or "").strip():
+            return False, ("GCP credentials are unusable (`gcloud auth print-access-token` failed): "
+                           f"{(r.stderr or r.stdout).strip()[:200]}. Run `gcloud auth login` + "
+                           "`gcloud config set project <id>` (or set GOOGLE_APPLICATION_CREDENTIALS) before "
+                           "running -- refusing to deploy and risk an un-deletable orphan.")
+        return True, ""
+
+    if cloud == "azure":
+        # `az account show` proves a usable DefaultAzureCredential (az login or SP env vars), so deploy AND
+        # `az group delete` teardown can authenticate. Fail fast otherwise.
+        try:
+            r = subprocess.run(["az", "account", "show", "--output", "none"], capture_output=True, text=True,
+                               timeout=30, env=env)
+        except Exception as e:  # noqa: BLE001
+            return False, (f"Azure credential preflight could not run `az` ({e}); install the Azure CLI and "
+                           "`az login` (or set AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET).")
+        if r.returncode != 0:
+            return False, ("Azure credentials are unusable (`az account show` failed): "
+                           f"{(r.stderr or r.stdout).strip()[:200]}. Run `az login` (or set the "
+                           "service-principal env vars) before running -- refusing to deploy and risk an "
+                           "un-deletable orphan.")
+        return True, ""
+
+    profile = _aws_profile_from_mcp(prof["mcp_config"])
+    cmd = ["aws", "sts", "get-caller-identity", "--output", "text"]
+    if profile:
+        cmd += ["--profile", profile]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env)
+    except Exception as e:  # noqa: BLE001
+        return False, f"AWS credential preflight could not run `aws` ({e}); is the AWS CLI installed on PATH?"
+    if r.returncode != 0:
+        return False, (f"AWS credentials for profile '{profile or 'default'}' are unusable: "
+                       f"{(r.stderr or r.stdout).strip()[:200]}. Set up the static-key profile (README: "
+                       "'AWS setup') before running -- refusing to deploy and risk an un-deletable orphan.")
+    return True, ""
+
+
+def _install_signal_guards() -> None:
+    """SIGINT (Ctrl-C) / SIGTERM kill every child process group (agent turns, microVMs) and hard-exit,
+    so an interrupt never leaves a nested claude, its MCP servers, or a Firecracker VM running with the
+    terminal stuck. Children are spawned detached from the terminal (procguard.spawn), so the signal
+    reaches the host process reliably; the handler then group-kills them."""
+    def _handler(signum, _frame):
+        n = procguard.kill_all()
+        _log(f"signal {signum}: killed {n} child process group(s) (agent turns / microVMs). A "
+             "deployment a run had already created may still be up: check your dashboard. Exiting.")
+        os._exit(130)
+    for s in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(s, _handler)
+        except (ValueError, OSError):   # not the main thread (e.g. under a test runner): skip
+            pass
 
 
 def main() -> None:
@@ -1088,7 +1532,15 @@ def main() -> None:
                     help="off-clock (DEFAULT ON; --no-cost to skip): price the deployment's standing hourly "
                          "RUN-RATE (C19) from dated PUBLIC LIST prices, the Part-4 cost input (redu + aws "
                          "Lightsail; disclosed N/A for an unsupported service; never affects timing)")
+    ap.add_argument("--suite", default=None, choices=acs_suites.instance_names(),
+                    help="run a benchmark TIER instance (e.g. umami-medium) instead of Easy deploy-only: "
+                         "after the deploy serves, the agent performs the tier's operations "
+                         "(mutate/integrate/restart) as resumed turns and the runner verifies each "
+                         "postcondition, with a terminal durability re-check (CP7). Off-clock relative to "
+                         "t1; teardown resumes the builder session to remove ALL resources it created. "
+                         "Default None = Easy (deploy-only).")
     a = ap.parse_args()
+    _install_signal_guards()   # Ctrl-C now kills agent turns + microVMs and returns the terminal
 
     adapter = ADAPTERS[a.adapter]
     app_dir = os.path.abspath(os.path.expanduser(a.app_dir)) if a.app_dir else os.getcwd()
@@ -1096,39 +1548,82 @@ def main() -> None:
         ap.error(f"app dir is not a directory: {app_dir}")
     # results + data are GROUPED BY CLOUD (see resolve_out_dir): <app>/acspeed-results/<adapter>/.
     out_dir, copy_ignore = resolve_out_dir(app_dir, a.adapter, a.out)
-    # the working copy lives in a temp dir OUTSIDE the app folder, so it never pollutes it
-    work_cwd = os.path.join(tempfile.gettempdir(), "acspeed-work-" + os.path.basename(app_dir.rstrip("/")))
+    # the working copy lives in a temp dir OUTSIDE the app folder, so it never pollutes it. The CLOUD is
+    # in the path so the SAME app can run on multiple clouds CONCURRENTLY without clobbering one shared
+    # working copy (the overnight parallel Easy batch: umami on redu/aws/gcp/azure at once).
+    work_cwd = os.path.join(tempfile.gettempdir(),
+                            f"acspeed-work-{os.path.basename(app_dir.rstrip('/'))}-{a.adapter}")
     # the hermetic per-cloud substrate (C9): each agent turn runs in a fresh microVM holding ONLY the
     # target cloud's credentials. Same CLI; auto-enabled when built + KVM/tap present.
     sandbox = None
     if not a.no_sandbox:
         ok, why = sandbox_available()
         if ok:
+            # generalized credential mounting: aws keeps ~/.aws (dot-aws, the existing path); gcp/azure
+            # mount ~/.config/gcloud / ~/.azure as dot-config-gcloud / dot-azure. Only the TARGET cloud's
+            # creds are staged, so the hermetic-substrate scoping (C9) holds across all clouds. The guest
+            # placement of the new dirs activates on the next rootfs rebuild (README); --no-sandbox uses
+            # host creds directly and needs no mount.
             sandbox = {"keep_claude_tokens": adapter.get("keep_claude_tokens", []),
                        "aws_dir": (os.path.expanduser(adapter["aws_creds"]) if adapter.get("aws_creds") else None),
+                       "creds_mounts": {name: os.path.expanduser(adapter[key])
+                                        for key, name in (("gcp_creds", "dot-config-gcloud"),
+                                                          ("azure_creds", "dot-azure"))
+                                        if adapter.get(key)},
                        "session_store": None}
         else:
             _log(f"microVM substrate NOT used ({why}); running agent turns on the HOST.")
 
+    cloud_label = adapter.get("cloud_label", a.adapter)
     prof = {**CONFIG, **adapter, "cloud": a.adapter, "task": os.path.basename(app_dir.rstrip("/")),
+            "task_prompt": CONFIG["task_prompt_template"].format(cloud=cloud_label),
             "app_dir": app_dir, "run_cwd": work_cwd, "out_dir": out_dir, "copy_ignore": copy_ignore,
             "keep": a.keep, "screenshot": a.screenshot, "capability": a.capability, "cost": a.cost,
-            "sandbox": sandbox}
+            "suite": a.suite, "sandbox": sandbox}
+    # The off-clock COST read must sign with the SAME static profile as the deploy/deprovision (the aws
+    # MCP's --profile), never the host default credential chain: an expired `aws login` SSO session there
+    # made cost N/A with "refresh token has expired" (2026-08-28 run). None for non-aws clouds.
+    prof["aws_profile"] = _aws_profile_from_mcp(prof["mcp_config"])
     os.makedirs(out_dir, exist_ok=True)
     _log(f"adapter={a.adapter}  app-dir={app_dir}  task={prof['task']!r}  runs={a.n}  out={out_dir}")
+    if a.suite:
+        _log(f"SUITE: tier instance '{a.suite}' - after the deploy serves, the agent performs the tier's "
+             "operations (the agent owns the method) and the runner verifies each postcondition, with a "
+             "terminal durability re-check after a restart (CP7). Teardown removes ALL resources created.")
     if sandbox:
+        n_slots = len(vmjob.discover_slots())
         _log(f"SUBSTRATE: each agent turn runs in a FRESH microVM holding ONLY {a.adapter}'s credentials "
              f"(keep_tokens={sandbox['keep_claude_tokens']}, aws_creds={'yes' if sandbox['aws_dir'] else 'no'}); "
-             "a repo carrying another cloud's config/creds is inert. Same CLI; the microVM is transparent.")
+             f"the prompt names {cloud_label} as the target and other providers' config in the folder is "
+             "ignored. Same CLI; the microVM is transparent.")
+        _log(f"CONCURRENCY: {n_slots} tap slot(s) available -> up to {n_slots} acspeed run(s) at once; this "
+             "run claims a free slot (queues if all busy). Add slots: sudo bash sandbox/net-setup.sh <N>.")
     _log("SAFETY: the agent provisions its own deployment and then deprovisions THAT deployment. The "
          "tool never inspects, manages, or deletes anything else on your account.")
     _log(f"CLOCK: t0 = deploy request; t1 = {SERVING_PREDICATE}, polled EXTERNALLY every "
          f"{SERVING_POLL_S:.0f}s from the moment the URL appears, concurrently with the agent. "
          "The agent's 'done' is never the boundary.")
 
+    cred_ok, cred_why = preflight_credentials(prof)
+    if not cred_ok:
+        _log(f"PREFLIGHT FAILED: {cred_why}")
+        sys.exit(2)
+    if prof.get("cloud") == "aws":
+        _log(f"PREFLIGHT: AWS credentials valid (profile '{_aws_profile_from_mcp(prof['mcp_config']) or 'default'}'); "
+             "deploy + deprovision will authenticate, so a run cannot orphan on expired creds.")
+    elif prof.get("cloud") in ("gcp", "azure"):
+        _log(f"PREFLIGHT: {prof['cloud']} credentials valid; deploy + deprovision will authenticate, so a run "
+             "cannot orphan on expired creds. NOTE: the hermetic microVM mounts these creds only after a "
+             "rootfs rebuild picks up the generalized vm-runner (see README); until then run "
+             f"--no-sandbox for {prof['cloud']} (agent turns on the host, using the host's creds directly).")
+
     for i in range(a.start, a.start + a.n):
         try:
             run_once(i, prof, a.model, a.max_rounds)
+        except KeyboardInterrupt:            # backstop; the signal handler normally hard-exits first
+            _log("interrupted: killing any running agent turn / microVM and stopping.")
+            procguard.kill_all()
+            break
         except Exception as e:  # noqa: BLE001
             _log(f"RUN {i} ABORTED: {e!r} (if a deployment was left up, remove it from your dashboard)")
 

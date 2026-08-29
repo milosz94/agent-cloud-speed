@@ -209,6 +209,31 @@ class TestScreenshot(unittest.TestCase):
         self.assertEqual(r["tool"], "playwright")
 
 
+class TestCurlDead(unittest.TestCase):
+    """Teardown read-verify: 'dead' = the deployment is GONE (no orphan), which is NOT the liveness
+    predicate. A deleted SERVERLESS service (Cloud Run / App Engine) answers 404 on its now-nonexistent
+    route, which must count as torn down, not a false orphan on every clean serverless teardown."""
+
+    def _dead(self, code):
+        with mock.patch.object(autorun.subprocess, "run", return_value=mock.MagicMock(stdout=code)):
+            return autorun.curl_dead("https://it-tools-1234.europe-west1.run.app")["dead"]
+
+    def test_connection_failure_is_dead(self):
+        self.assertTrue(self._dead("000"))
+
+    def test_5xx_is_dead(self):
+        self.assertTrue(self._dead("503"))
+
+    def test_404_deleted_serverless_service_is_dead(self):   # the GCP Cloud Run false-orphan fix
+        self.assertTrue(self._dead("404"))
+
+    def test_403_access_gated_is_not_dead_possible_orphan(self):
+        self.assertFalse(self._dead("403"))
+
+    def test_200_still_serving_is_not_dead_real_orphan(self):
+        self.assertFalse(self._dead("200"))
+
+
 class TestReadinessPoller(unittest.TestCase):
     """The poller tails the live transcript for URL candidates, polls them, and fixes t1 on the
     first serving response, while the (simulated) agent session is still running."""

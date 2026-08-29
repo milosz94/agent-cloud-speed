@@ -38,26 +38,42 @@ REDU = CloudProfile(
     readiness="blocking",
 )
 
-# Hyperscaler stubs. Replace the TODO tool names with the target MCP server's
-# actual tool names (and confirm whether it offers a blocking readiness tool or
-# only status polling) when wiring Part 5.
+# AWS: the deploy path is the aws MCP (mcp-proxy-for-aws, generic call_aws) driven by the agent; these
+# low-level canonical names are the EC2 verbs for the (unused-by-the-agent-path) MCPAdapter.run() shape.
 AWS = CloudProfile(
     name="aws",
-    tool_map={"provision": "TODO_run_instances", "wait_ready": "TODO_wait",
-              "status": "TODO_describe_instances", "teardown": "TODO_terminate_instances"},
+    tool_map={"provision": "run_instances", "wait_ready": "describe_instances",
+              "status": "describe_instances", "teardown": "terminate_instances"},
     readiness="poll",
 )
+# GCP: the one official CREATE-capable MCP is @google-cloud/cloud-run-mcp (Cloud Run only; deploy is
+# blocking and returns the serving URL; NO delete tool -> teardown is `gcloud run services delete` over
+# Bash). Compute Engine / GKE / App Engine have no official creating MCP -> the GCP route for those is the
+# `gcloud` CLI over Bash. Auth = Application Default Credentials (a service-account key for a batch run).
+# Verified 2026-08-28: GoogleCloudPlatform/cloud-run-mcp README + npm.
 GCP = CloudProfile(
     name="gcp",
-    tool_map={"provision": "TODO_instances_insert", "wait_ready": "TODO_wait",
-              "status": "TODO_instances_get", "teardown": "TODO_instances_delete"},
-    readiness="poll",
+    server_command=["npx", "-y", "@google-cloud/cloud-run-mcp"],
+    tool_map={"provision": "deploy-local-folder",   # or deploy-file-contents
+              "wait_ready": "deploy-local-folder",   # deploy is blocking: returns the URL once serving
+              "status": "get-service",
+              "teardown": "gcloud run services delete"},  # NOT an MCP tool -> Bash/gcloud fallback
+    readiness="blocking",
 )
+# Azure: the official @azure/mcp (azmcp); its native compute/appservice tools are largely read/query, so
+# the dependable CREATE/DEPLOY/TEARDOWN path is the `extension` namespace executing `az`/`azd`
+# (az containerapp up / az webapp up / az vm create / azd up ; az group delete for teardown). Auth =
+# DefaultAzureCredential (service-principal env vars for a batch run). Verified 2026-08-28: npm @azure/mcp
+# + Learn tools index. (LIVE SEAM: the exact `extension` execute-tool name is confirmed on first run;
+# the `az`/`azd`-over-Bash path is the guaranteed fallback, same as GCP's gcloud fallback.)
 AZURE = CloudProfile(
     name="azure",
-    tool_map={"provision": "TODO_vm_create", "wait_ready": "TODO_wait",
-              "status": "TODO_vm_get", "teardown": "TODO_vm_delete"},
-    readiness="poll",
+    server_command=["npx", "-y", "@azure/mcp@latest", "server", "start"],
+    tool_map={"provision": "extension_az",   # az containerapp up / az webapp up / az vm create ; or azd up
+              "wait_ready": "extension_az",   # az create is blocking (returns when provisioned)
+              "status": "appservice",          # native get/list for App Service; `compute` for VMs
+              "teardown": "extension_az"},     # az group delete --yes
+    readiness="blocking",
 )
 
 PROFILES = {"redu": REDU, "aws": AWS, "gcp": GCP, "azure": AZURE}

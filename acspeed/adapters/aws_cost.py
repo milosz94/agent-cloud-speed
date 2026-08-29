@@ -89,6 +89,16 @@ _DIMENSIONS = {
         "attr_filters": {"instanceType": "instanceType", "cacheEngine": "cacheEngine"},
         "fixed_filters": {}, "unit": _HRS, "quantity": None,
     }]},
+    # Fargate (an ECS service) bills vCPU-hours + GB-hours; the quantity (vCPUs, GB) is resolved from the
+    # task definition in aws_runrate._fargate_resource. usagetype pins the SKU (Fargate has no productFamily).
+    ("ecs-fargate", "task"): {"dimensions": [
+        {"name": "compute:fargate-vcpu", "service_code": "AmazonECS", "product_family": None,
+         "attr_filters": {}, "fixed_filters": {"usagetype_contains": "Fargate-vCPU-Hours"},
+         "unit": _HRS, "quantity": {"attr": "vcpus"}},
+        {"name": "compute:fargate-mem", "service_code": "AmazonECS", "product_family": None,
+         "attr_filters": {}, "fixed_filters": {"usagetype_contains": "Fargate-GB-Hours"},
+         "unit": _HRS, "quantity": {"attr": "gb"}},
+    ]},
     # EBS is the clearest place "just multiply the SKU" breaks: 3 productFamilies + a free baseline.
     ("ec2", "volume"): {"dimensions": [
         {"name": "storage", "service_code": "AmazonEC2", "product_family": "Storage",
@@ -160,7 +170,7 @@ def _price_list_hourly_usd(products: dict, unit_expected: str,
             if usd_raw in (None, "", "0.0000000000", "0"):   # placeholder / other-currency SKU: skip
                 continue
             usd = float(usd_raw)
-            if unit == "Hrs":
+            if unit.lower() in ("hrs", "hours", "hour"):      # RDS/EC2 use "Hrs"; Fargate uses "hours"
                 return usd * quantity
             if unit.endswith("-Mo"):
                 return usd * quantity / HOURS_PER_MONTH

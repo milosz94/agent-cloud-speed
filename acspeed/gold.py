@@ -24,12 +24,51 @@ floor is loose, so the bracket WIDTH, not the floor ratio alone, is the first-cl
 """
 from __future__ import annotations
 
-from typing import List, Optional, Sequence
+from dataclasses import dataclass
+from typing import Callable, Dict, List, Optional, Sequence
 
-from .reference import Edge, ReferenceGraph, decompose, two_ratios
+from .reference import Edge, ReferenceGraph, decompose, gold_is_refuted, two_ratios
 
 _START = "start"
 _SERVED = "served"
+_PROVISIONED = "provisioned"
+
+# The authored gold is a DATED, VERSIONED artifact (literature: a refutable reference must be versioned
+# so a floor revision does not silently change every previously reported ratio; IPC revises its reference
+# plan the same way, AI Magazine 2024). Bump this when the floor-estimation rule or the graph structure
+# changes; the per-run floor itself is data-derived (min-observed) and moves WITHIN a version, disclosed
+# as ``floor_estimated_from_n`` and re-attributed by the refutation protocol.
+GOLD_VERSION = "provision-deploy/1.0.0"
+
+# Floor-sensitivity perturbation (literature P0: the competitive ratio is only as trustworthy as F_C, an
+# ESTIMATED denominator; report how the ratio moves under +/- this fraction so "revised down if undercut"
+# cannot read as "we tuned the denominator").
+_FLOOR_EPS = 0.10
+
+
+def _competitive_ratio_interval(m_actual: float, floor: float, best_achieved: float) -> List[float]:
+    """The competitive ratio M/OPT reported as an INTERVAL, never a point (literature P0). Because
+    F_C <= OPT <= best_achieved, the true ratio M/OPT lies in [M/best_achieved, M/F_C] = [best_ratio,
+    floor_ratio]. Reporting a single number against a self-declared two-sided bracket is internally
+    inconsistent; the interval is the honest object (the OR optimality-gap convention)."""
+    return [round(m_actual / best_achieved, 3), round(m_actual / floor, 3)]
+
+
+def _floor_sensitivity(best_achieved: float, floor: float, eps: float = _FLOOR_EPS) -> dict:
+    """How the headline bracket ratio moves when the estimated floor F_C is perturbed +/- eps. A ratio
+    that swings wildly under a small floor change is denominator-driven and must be read with that
+    caveat; a stable one shows the estimate is not load-bearing. This is the auditable answer to the
+    top reviewer objection to an estimated optimum."""
+    return {
+        "epsilon": eps,
+        "F_C_minus_s": round(floor * (1 - eps), 1),
+        "F_C_plus_s": round(floor * (1 + eps), 1),
+        "bracket_ratio_at_F_C_minus": round(best_achieved / (floor * (1 - eps)), 3) if floor > 0 else None,
+        "bracket_ratio_at_F_C_plus": round(best_achieved / (floor * (1 + eps)), 3) if floor > 0 else None,
+        "note": ("bracket ratio = best-achieved / F_C, recomputed at F_C(1-eps) and F_C(1+eps); the spread "
+                 "is the estimated floor's leverage on the headline (a stable spread means the ratio is "
+                 "not denominator-driven)."),
+    }
 
 
 def _reached_goal(rec: dict) -> bool:
@@ -97,19 +136,32 @@ def part3_provision(records: Sequence[dict]) -> Optional[dict]:
             "makespan_s": round(makespan, 1),
             "floor_ratio": ratios["floor_ratio"],
             "best_ratio": ratios["best_ratio"],
+            "competitive_ratio_interval": _competitive_ratio_interval(makespan, fc, best_achieved),
             "execution_excess_s": round(dec.execution_excess, 1),
             "selection_excess_s": round(dec.selection_excess, 1),
             "identity_holds": dec.identity_holds,
         })
 
+    refuted_to = gold_is_refuted(fc, [m for _run, m, _p in runs])  # a valid trace below the floor -> revise
     return {
         "instance": "provision (1-op degenerate)",
+        "gold_version": GOLD_VERSION,
         "F_C_s": round(fc, 1),
+        "floor_estimated_from_n": len(runs),
         "best_achieved_s": round(best_achieved, 1),
         "bracket_low_s": round(fc, 1),
         "bracket_high_s": round(best_achieved, 1),
         "bracket_width_s": round(best_achieved - fc, 1),
         "bracket_ratio": round(best_achieved / fc, 3) if fc > 0 else None,
+        "floor_sensitivity": _floor_sensitivity(best_achieved, fc),
+        "refutation": {
+            "protocol": ("F_C is the min-observed critical-platform-time; if any valid goal-reaching trace "
+                         "undercuts it, the gold is refuted and revised DOWN to that trace, bumping the "
+                         "floor within this gold_version. Every reported ratio is bound to (gold_version, "
+                         "floor_estimated_from_n)."),
+            "refuted": refuted_to is not None,
+            "revise_floor_to_s": round(refuted_to, 1) if refuted_to is not None else None,
+        },
         "n_runs": len(runs),
         "n_excluded_suspect": excluded_suspect,
         "per_run": per_run,
@@ -121,6 +173,160 @@ def part3_provision(records: Sequence[dict]) -> Optional[dict]:
                  "(Part 3): best_ratio and execution excess are the OBSERVED primary (counterfactual-"
                  "free); floor_ratio and selection excess are the ADMITTED counterfactual (vs F_C, a "
                  "schedule the agent did not run; bounded and refutable, on-suite only)."),
+        "layers": {
+            "observed_primary": ["makespan_s", "best_ratio", "execution_excess_s"],
+            "admitted_counterfactual": ["F_C_s", "floor_ratio", "selection_excess_s"],
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# The richer, multi-operation deploy gold (where selection excess becomes non-trivial).
+#
+# The degenerate ``part3_provision`` above scores "deploy X" as ONE provision edge, so selection excess
+# is 0 by construction (one edge, no alternatives) -- honest for a platform that BUNDLES provisioning
+# into a single call the agent cannot re-order. When the agent DOES issue separable operations (a
+# second app in the Medium tier; a managed datastore provisioned distinctly from its app compute; a
+# cross-architecture run that chose App-Runner-vs-VM-vs-container), the session is a genuine
+# operation-DAG with ALTERNATIVE schedules, and choosing a worse one (serializing what could overlap,
+# a slower datastore topology, an extra redeploy) is REAL selection excess. This block instantiates the
+# SAME reference-math (``reference.py``) on that richer graph, per Part 3 Sec 1.2:
+#
+#   "An edge is one scheduling step: launching one operation, or a CONCURRENT BUNDLE whose floor weight
+#    is the bundle's critical path."
+#
+# So the two-resource provision has two alternatives as two edges from start -> provisioned:
+#   * CONCURRENT bundle  floor = max(floor_app, floor_db)            (the reference-optimal path)
+#   * SERIAL             floor = floor_app + floor_db                (selection excess = min(app, db))
+# and a co-located-container topology is a third alternative with its own floor. F_C = shortest path
+# picks the min-makespan alternative; a run that took a heavier one pays selection excess exactly equal
+# to the extra floor its choice carried, with execution excess the residual above its chosen floor.
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ProvisionAlternative:
+    """One way to reach the ``provisioned`` state, as a SINGLE scheduling-epoch edge whose floor weight
+    is that alternative's critical path (Part 3 Sec 1.2). Examples for a two-resource app (app compute +
+    datastore): a CONCURRENT bundle weighs ``max(floor_app, floor_db)``; a SERIAL choice weighs
+    ``floor_app + floor_db``; a co-located datastore CONTAINER folds the store into the app host and
+    weighs the single-host provision floor. ``label`` is how a run's trajectory names the branch it took."""
+
+    label: str
+    floor: float
+
+
+def build_deploy_graph(provision_alternatives: Sequence[ProvisionAlternative],
+                       deploy_floor: float) -> ReferenceGraph:
+    """A two-stage provision -> deploy operation-state graph:
+    ``start --(alternative_i)--> provisioned --deploy--> served``. Each provision alternative is one
+    edge (one scheduling epoch); ``F_C = floor_makespan()`` picks the minimum-makespan alternative + the
+    deploy. The graph IS the goal (Part 3: efficiency is set-relative), so a run is scored only against
+    the alternatives that actually reach THIS goal. Raises if no alternatives are given (an empty graph
+    has no floor)."""
+    alts = list(provision_alternatives)
+    if not alts:
+        raise ValueError("a deploy graph needs at least one provision alternative")
+    edges = [Edge(_START, _PROVISIONED, a.label, floor=a.floor) for a in alts]
+    edges.append(Edge(_PROVISIONED, _SERVED, "deploy", floor=deploy_floor))
+    return ReferenceGraph(edges, _START, _SERVED)
+
+
+def score_deploy_run(graph: ReferenceGraph, chosen_provision_label: str,
+                     provision_actual: float, deploy_actual: float):
+    """Decompose one run whose trajectory took ``chosen_provision_label`` then the deploy edge, with the
+    measured actual times. Returns the Part-3 :class:`reference.Decomposition` (selection + execution
+    excess, telescoping advantages, and the numeric identity self-check). The floor twin runs the chosen
+    edges at floor speed, so selection excess is exactly the extra floor the chosen alternative carried
+    over F_C, and execution excess is the residual above the chosen floor."""
+    prov = next((e for e in graph.edges if e.src == _START and e.label == chosen_provision_label), None)
+    if prov is None:
+        raise ValueError(f"no provision alternative labelled {chosen_provision_label!r} in the graph")
+    dep = next((e for e in graph.edges if e.dst == _SERVED), None)
+    if dep is None:
+        raise ValueError("graph has no deploy edge into the served goal")
+    trajectory = [
+        Edge(_START, _PROVISIONED, prov.label, floor=prov.floor, actual=provision_actual),
+        Edge(_PROVISIONED, _SERVED, "deploy", floor=dep.floor, actual=deploy_actual),
+    ]
+    return decompose(graph, trajectory)
+
+
+# a record -> (chosen_provision_label, provision_actual_s, deploy_actual_s, makespan_s) or None to skip
+DeployExtract = Callable[[dict], Optional[tuple]]
+
+
+def part3_deploy(records: Sequence[dict], graph: ReferenceGraph,
+                 extract: DeployExtract, *, instance: str = "provision-deploy (multi-op)") -> Optional[dict]:
+    """Author + evaluate the multi-operation deploy gold from run history, given a PRE-BUILT reference
+    graph (floors already decided: authored for the published gold, or min-observed per operation) and an
+    ``extract`` that maps each record to its chosen branch + measured times. Same two-layer disclosure,
+    bracket, floor-sensitivity and refutation shape as :func:`part3_provision`, but with a genuine
+    selection/execution split because the graph carries alternatives. Returns None when no record yields
+    a usable trajectory (defensive, exactly like the degenerate gold)."""
+    fc = graph.floor_makespan()
+    scored = []                     # (run, label, makespan, Decomposition) for cleanly-scored runs
+    refuted_runs = []               # runs whose measured leg fell below an authored floor (the refutation)
+    for r in records:
+        got = extract(r)
+        if not got:
+            continue
+        label, prov_actual, dep_actual, makespan = got
+        if not (isinstance(makespan, (int, float)) and makespan > 0):
+            continue
+        try:
+            dec = score_deploy_run(graph, label, float(prov_actual), float(dep_actual))
+        except ValueError:
+            # a measured provision/deploy leg is below its authored floor: the authored floor is REFUTED
+            # for that branch (Part 3 Sec 2.2 layer 2). Record it as a refutation, never crash on it.
+            refuted_runs.append({"run": r.get("run"), "makespan_s": round(float(makespan), 1)})
+            continue
+        scored.append((r.get("run"), label, float(makespan), dec))
+    if not scored:
+        return None
+
+    best_achieved = min(m for _run, _l, m, _d in scored)
+    per_run = []
+    for run, label, makespan, dec in scored:
+        ratios = two_ratios(makespan, fc, best_achieved)
+        per_run.append({
+            "run": run,
+            "chosen_provision": label,
+            "makespan_s": round(makespan, 1),
+            "floor_ratio": ratios["floor_ratio"],
+            "best_ratio": ratios["best_ratio"],
+            "competitive_ratio_interval": _competitive_ratio_interval(makespan, fc, best_achieved),
+            "execution_excess_s": round(dec.execution_excess, 1),
+            "selection_excess_s": round(dec.selection_excess, 1),
+            "identity_holds": dec.identity_holds,
+        })
+
+    return {
+        "instance": instance,
+        "gold_version": GOLD_VERSION,
+        "F_C_s": round(fc, 1),
+        "best_achieved_s": round(best_achieved, 1),
+        "bracket_low_s": round(fc, 1),
+        "bracket_high_s": round(best_achieved, 1),
+        "bracket_width_s": round(best_achieved - fc, 1),
+        "bracket_ratio": round(best_achieved / fc, 3) if fc > 0 else None,
+        "floor_sensitivity": _floor_sensitivity(best_achieved, fc),
+        "refutation": {
+            "protocol": ("A run whose measured provision/deploy leg fell BELOW its authored floor refutes "
+                         "that branch's floor; revise it down to the observed leg, bump the floor within "
+                         "this gold_version, and re-attribute. Ratios are bound to (gold_version, F_C)."),
+            "refuted": len(refuted_runs) > 0,
+            "refuted_runs": refuted_runs,
+            "revise_floor_to_s": (min(rr["makespan_s"] for rr in refuted_runs) if refuted_runs else None),
+        },
+        "n_runs": len(scored),
+        "alternatives": [{"label": e.label, "floor_s": round(e.floor, 1)}
+                         for e in graph.edges if e.src == _START],
+        "per_run": per_run,
+        "note": ("Multi-operation deploy gold: F_C is the shortest floor path over the provision "
+                 "alternatives + deploy. Selection excess is the extra floor a run's chosen schedule "
+                 "carried over the min-makespan alternative (serializing the parallelizable, a slower "
+                 "datastore topology, or an extra operation); execution excess is the residual above the "
+                 "chosen floor. Two-layer disclosure as in the degenerate gold."),
         "layers": {
             "observed_primary": ["makespan_s", "best_ratio", "execution_excess_s"],
             "admitted_counterfactual": ["F_C_s", "floor_ratio", "selection_excess_s"],

@@ -16,7 +16,8 @@ from unittest import mock
 
 import autorun
 
-URL = "https://isso-test1.redu.cloud"
+RUN_TOKEN = "acstok01"                         # pinned so the mocked URL carries this run's token
+URL = f"https://isso-{RUN_TOKEN}.redu.cloud"   # the agent named the deployment with the token (real flow)
 
 
 def _row(offset_s, kind, content, base):
@@ -42,7 +43,7 @@ class TestRunOnceIssoRegression(unittest.TestCase):
         self.prof = {"task_prompt": "Deploy the application in this directory.",
                      "mcp_config": "/dev/null", "url_re": r"https://[a-z0-9.-]+\.redu\.cloud",
                      "cloud": "redu", "task": "app", "app_dir": self.app, "run_cwd": self.work,
-                     "out_dir": self.out, "copy_ignore": [], "keep": False}
+                     "out_dir": self.out, "copy_ignore": [], "keep": False, "run_token": RUN_TOKEN}
 
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
