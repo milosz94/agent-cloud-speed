@@ -637,14 +637,91 @@ def price_rg_resources(resources, *, region: str, fetch=None, skip_types=()) -> 
     return RgSweep(tuple(comps), tuple(unpriced), tuple(priced_types), tuple(serverless))
 
 
+# --- Azure App Service (*.azurewebsites.net): a STANDING App Service Plan, priced like a VM ------------
+#
+# The agent deploys umami to azure either as Container Apps (serverless, the schedule branch above) OR as
+# App Service (`az webapp up` / `az appservice plan create --sku B1`), non-deterministically. An App Service
+# Plan is a fixed hourly tier (B1/S1/P1v3/...) billed whether or not it serves - no per-request charge - so
+# it is a standing run-rate, like a VM. Without this path an azurewebsites.net URL fell through to the VM
+# resolver, found no bundle, and returned UNPRICED (ok=False): a real deploy silently unpriced.
+
+# an App Service resolver returns {region, sku, os} for the deployed plan, or None if not enumerable
+AppServiceResolver = Callable[[object], Optional[dict]]
+
+
+def is_app_service_url(url: str) -> bool:
+    host = urlparse(url if "://" in (url or "") else f"https://{url}").hostname or ""
+    return host.endswith(".azurewebsites.net")
+
+
+def _arm_region(region: str) -> str:
+    """Retail Prices uses armRegionName ('westus2'); az often returns the display form ('West US 2').
+    Collapsing spaces + lowercasing maps the common cases; an already-arm value is unchanged."""
+    return (region or "").replace(" ", "").lower()
+
+
+def app_service_hourly(region: str, sku: str, *, fetch=None) -> Optional[float]:
+    """Standing $/hr for a Linux Azure App Service Plan tier (B1/S1/P1v3/...) from the public Retail Prices
+    API. Basic/Standard/Premium plans bill hourly like a VM (no per-request charge). Matches the LINUX plan
+    meter whose skuName equals the plan sku (spaces/case normalized, e.g. 'P1 v3' == 'P1v3'), dropping the
+    Windows meter that shares the sku. None if not found (disclosed, never faked)."""
+    if not sku:
+        return None
+    want = str(sku).replace(" ", "").lower()
+    flt = f"serviceName eq 'Azure App Service' and armRegionName eq '{region}' and priceType eq 'Consumption'"
+    cands = []
+    for it in _retail_query(flt, fetch=fetch):
+        if not _is_on_demand_linux(it):                          # drops the Windows meter
+            continue
+        pn = str(it.get("productName", "")).lower()
+        if "linux" not in pn or "plan" not in pn:                # App Service PLAN, Linux
+            continue
+        if str(it.get("skuName", "")).replace(" ", "").lower() != want:
+            continue
+        if str(it.get("unitOfMeasure", "")).strip().lower() not in ("1 hour", "1hour"):
+            continue
+        p = it.get("retailPrice", it.get("unitPrice"))
+        if isinstance(p, (int, float)) and p >= 0:
+            cands.append(float(p))
+    return min(cands) if cands else None
+
+
+def _az_appservice_plan_resolver(run_cmd=None) -> AppServiceResolver:
+    """Default AppServiceResolver: from a *.azurewebsites.net URL, `az webapp list` to match the app by its
+    defaultHostName (or first-label name), read its plan id + location, then `az appservice plan show` for
+    the sku tier. Returns {region, sku, os} or None (offline / no creds -> None, disclosed). Injectable."""
+    def resolve(deployment_ref: object) -> Optional[dict]:
+        host = (urlparse(str(deployment_ref) if "://" in str(deployment_ref)
+                         else f"https://{deployment_ref}").hostname or "").lower()
+        if not host.endswith(".azurewebsites.net"):
+            return None
+        name = host.split(".")[0]
+        apps = _az_json(["webapp", "list"], run_cmd) or []
+        app = next((a for a in apps
+                    if str(a.get("defaultHostName", "")).lower() == host
+                    or str(a.get("name", "")).lower() == name), None)
+        if not app:
+            return None
+        plan_id = app.get("appServicePlanId") or app.get("serverFarmId")
+        sku = None
+        if plan_id:
+            plan = _az_json(["appservice", "plan", "show", "--ids", plan_id], run_cmd) or {}
+            sku = (plan.get("sku") or {}).get("name")
+        return {"region": _arm_region(app.get("location") or ""), "sku": sku, "os": "linux"} if sku else None
+    return resolve
+
+
 class AzureRunRateAdapter(RunRateAdapter):
     def __init__(self, resolve_bundle: Optional[BundleResolver] = None, call_tool=None,
                  postgres_resolver: Optional[PostgresResolver] = None,
                  scale_resolver: Optional[ScaleResolver] = None,
-                 rg_resources_resolver: Optional[RgResourcesResolver] = None):
+                 rg_resources_resolver: Optional[RgResourcesResolver] = None,
+                 appservice_resolver: Optional[AppServiceResolver] = None):
         # default: resolve a standing VM deploy via `az vm list` (serverless URLs never reach the resolver;
         # they take the usage-schedule branch in run_rate). Injectable for offline tests.
         self._resolve = resolve_bundle or _az_vm_resolver()
+        # App Service (*.azurewebsites.net): resolve the standing plan's region + sku tier. Injectable.
+        self._appservice = appservice_resolver or _az_appservice_plan_resolver()
         # serverless (Container Apps) seams, both injectable so the fold is tested offline (GAP 6 + GAP 7):
         #  - the managed-Postgres standing floor (default: live `az postgres flexible-server list`)
         #  - the min-replica idle floor's scale (default: live `az containerapp list` + FQDN match)
@@ -701,6 +778,33 @@ class AzureRunRateAdapter(RunRateAdapter):
             scale = self._scale(deployment_ref)
             return container_apps_usage_rate(capture_date, region=reg, standing_floor_hourly=floor,
                                              scale=scale, extra_notes=tuple(notes))
+        if isinstance(deployment_ref, str) and is_app_service_url(deployment_ref):
+            # Azure App Service: a STANDING App Service Plan (fixed hourly tier) + the managed Postgres floor.
+            plan = self._appservice(deployment_ref)
+            if not plan or not plan.get("sku"):
+                return None                                   # plan not enumerable -> UNPRICED, disclosed
+            reg = plan.get("region") or "eastus2"
+            hourly = app_service_hourly(reg, plan["sku"])
+            if hourly is None:
+                return None                                   # plan sku not priceable -> UNPRICED
+            comps = [RateComponent(name=f"compute:app-service-plan:{plan['sku']}", hourly_usd=hourly,
+                                   raw_unit_price=hourly, native_unit="plan-hour")]
+            for pg in (self._postgres() or []):
+                h = postgres_flexible_hourly(pg.get("region") or reg, pg.get("sku", ""), pg.get("storage_gb", 0))
+                if h is None:
+                    return None                               # provisioned DB unpriceable -> UNPRICED
+                comps.append(RateComponent(name="db:postgres-flexible", hourly_usd=h,
+                                           raw_unit_price=h, native_unit="db-hour"))
+            sweep = price_rg_resources(self._rg_resources(deployment_ref) or [], region=reg,
+                                       skip_types=(_TYPE_POSTGRES_FLEX,))
+            self.rg_unpriced = list(sweep.unpriced_resources)
+            for c in sweep.components:
+                comps.append(RateComponent(name=f"sweep:{c.name}", hourly_usd=c.hourly_usd,
+                                           raw_unit_price=c.hourly_usd, native_unit="hour"))
+            return compose_run_rate(comps, provider="azure", region=reg, flavor=f"App Service {plan['sku']}",
+                                    capture_date=capture_date,
+                                    price_source="Azure Retail Prices API (App Service Linux plan + managed "
+                                                 "Postgres, public list, USD)")
         b = self._resolve(deployment_ref)
         if not b:
             return None

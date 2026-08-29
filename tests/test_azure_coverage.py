@@ -185,6 +185,69 @@ def _postgres_or_ca(url: str):
     return {"Items": []}
 
 
+class TestAppServicePath(unittest.TestCase):
+    """Azure App Service (*.azurewebsites.net) is a STANDING App Service Plan, not Container Apps. The agent
+    picks `az webapp up` (App Service) or `az containerapp up` (Container Apps) non-deterministically; before
+    this path an App Service URL fell through to the VM resolver and returned UNPRICED (ok=False) - a real
+    deploy silently unpriced. It must price the plan tier + the managed Postgres floor as a run-rate."""
+
+    _RETAIL = [
+        {"serviceName": "Azure App Service", "productName": "Azure App Service Basic Plan - Linux",
+         "skuName": "B1", "meterName": "B1", "unitOfMeasure": "1 Hour", "retailPrice": 0.017,
+         "type": "Consumption", "armRegionName": "westus2"},
+        {"serviceName": "Azure App Service", "productName": "Azure App Service Basic Plan - Windows",
+         "skuName": "B1", "meterName": "B1 Windows", "unitOfMeasure": "1 Hour", "retailPrice": 0.075,
+         "type": "Consumption", "armRegionName": "westus2"},   # must be dropped (Windows)
+        {"serviceName": "Azure Database for PostgreSQL",
+         "productName": "Azure Database for PostgreSQL Flexible Server Burstable BS Series Compute",
+         "skuName": "B1MS", "meterName": "B1MS", "unitOfMeasure": "1 Hour", "retailPrice": 0.0199,
+         "type": "Consumption"},
+        {"serviceName": "Azure Database for PostgreSQL",
+         "productName": "Azure Database for PostgreSQL Flex Server Storage", "meterName": "Storage Data Stored",
+         "unitOfMeasure": "1 GB/Month", "retailPrice": 0.1369, "type": "Consumption"},
+    ]
+
+    def test_url_and_plan_pricing(self):
+        self.assertTrue(azure_cost.is_app_service_url("https://umami-acs2aafcf1f.azurewebsites.net"))
+        self.assertFalse(azure_cost.is_app_service_url("https://x.eastus2.azurecontainerapps.io"))
+        # the Windows meter that shares sku B1 is dropped; the Linux plan price wins
+        self.assertAlmostEqual(azure_cost.app_service_hourly("westus2", "B1", fetch=lambda u: {"Items": self._RETAIL}),
+                               0.017, places=4)
+        self.assertIsNone(azure_cost.app_service_hourly("westus2", "P3v9", fetch=lambda u: {"Items": self._RETAIL}))
+
+    def test_resolver_parses_plan_from_az(self):
+        def run_cmd(args):
+            if args[:2] == ["webapp", "list"]:
+                return [{"name": "umami-acs2aafcf1f", "defaultHostName": "umami-acs2aafcf1f.azurewebsites.net",
+                         "location": "West US 2", "appServicePlanId": "/subscriptions/x/.../asp-1"}]
+            if args[:3] == ["appservice", "plan", "show"]:
+                return {"sku": {"name": "B1"}}
+            return None
+        r = azure_cost._az_appservice_plan_resolver(run_cmd)("https://umami-acs2aafcf1f.azurewebsites.net")
+        self.assertEqual(r, {"region": "westus2", "sku": "B1", "os": "linux"})
+
+    def test_run_rate_prices_plan_plus_db(self):
+        from unittest import mock
+        ad = azure_cost.AzureRunRateAdapter(
+            appservice_resolver=lambda ref: {"region": "westus2", "sku": "B1", "os": "linux"},
+            postgres_resolver=lambda: [{"region": "westus2", "sku": "Standard_B1ms", "storage_gb": 32}],
+            rg_resources_resolver=lambda ref: [])
+        with mock.patch.object(azure_cost, "_retail_query", return_value=self._RETAIL):
+            rr = ad.run_rate("https://umami-acs2aafcf1f.azurewebsites.net", capture_date="2026-08-29")
+        self.assertIsNotNone(rr)                                  # NOT ok=False / UNPRICED anymore
+        d = rr.to_dict()
+        self.assertEqual(d["kind"], "standing")
+        names = [c["name"] for c in d["components"]]
+        self.assertTrue(any("app-service-plan" in n for n in names))
+        self.assertTrue(any("postgres" in n for n in names))
+        self.assertGreater(d["monthly_usd"], 25.0)               # plan ~12.4 + DB ~16 = ~28.5/mo
+
+    def test_unresolvable_plan_is_unpriced_not_faked(self):
+        ad = azure_cost.AzureRunRateAdapter(appservice_resolver=lambda ref: None,
+                                            postgres_resolver=lambda: [], rg_resources_resolver=lambda ref: [])
+        self.assertIsNone(ad.run_rate("https://x.azurewebsites.net", capture_date="2026-08-29"))
+
+
 class TestNoEmDash(unittest.TestCase):
     def test_source_has_no_em_dash(self):
         import acspeed.adapters.azure_cost as mod
