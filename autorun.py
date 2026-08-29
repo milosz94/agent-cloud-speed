@@ -225,7 +225,14 @@ AUTONOMY = (
     "This is a fully autonomous, non-interactive session. Never ask the user questions and never "
     "wait for confirmation: make reasonable default choices and proceed to completion. Whenever a "
     "tool or workflow offers an automatic / default / 'yolo' option, choose it. Keep going until the "
-    "task is genuinely done or you have exhausted your options, then stop."
+    "task is genuinely done or you have exhausted your options, then stop. "
+    "You get exactly ONE session and will NOT be re-invoked, so complete the WHOLE task within this "
+    "turn: never arm a background waiter, monitor, or scheduled wake-up and then stop, and never hand "
+    "off unfinished work expecting to be resumed. If a resource you created is still provisioning (a "
+    "managed database in particular can take several minutes to become ready), wait for it IN THE "
+    "FOREGROUND (sleep, then re-check, in a loop) and then finish the remaining steps yourself. A "
+    "deployment is not done until its public URL actually responds, so do not stop before you have "
+    "created every part and confirmed the URL serves."
 )
 DEPLOY_TIMEOUT_S = 3000    # a full build can run long; the agent's own turn budget
 TEARDOWN_TIMEOUT_S = 500
