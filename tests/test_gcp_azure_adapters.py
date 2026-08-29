@@ -207,7 +207,11 @@ class TestGcpMultiServiceCost(unittest.TestCase):
 
     def test_tier_parse(self):
         self.assertEqual(gcp_cost._parse_cloud_sql_tier("db-custom-2-7680"), (2.0, 7.5))
-        self.assertIsNone(gcp_cost._parse_cloud_sql_tier("db-f1-micro"))   # shared -> disclosed unpriced
+        # legacy predefined n1 tiers price by their public vCPU/RAM ratios, never left UNPRICED
+        self.assertEqual(gcp_cost._parse_cloud_sql_tier("db-n1-standard-1"), (1.0, 3.75))
+        self.assertEqual(gcp_cost._parse_cloud_sql_tier("db-n1-highmem-2"), (2.0, 13.0))
+        self.assertEqual(gcp_cost._parse_cloud_sql_tier("db-n1-highcpu-4"), (4.0, 3.6))
+        self.assertIsNone(gcp_cost._parse_cloud_sql_tier("db-f1-micro"))   # shared -> flat SKU, not vCPU+RAM
 
     def test_cloud_sql_hourly_db_custom(self):
         h = gcp_cost.cloud_sql_hourly("europe-west1", "db-custom-2-7680", 0, skus=self._sql_skus())

@@ -294,10 +294,21 @@ def _cloud_sql_zonal_rate(skus: List[dict], region: str, kind: str):
 
 
 def _parse_cloud_sql_tier(tier: str):
-    """(vcpus, ram_gb) from a db-custom Cloud SQL tier, or None (shared-core tiers are priced by their
-    flat SKU instead, see _SHARED_TIER). ``db-custom-N-M`` -> (N vCPUs, M MB / 1024)."""
-    m = re.match(r"db-custom-(\d+)-(\d+)$", tier or "")
-    return (float(m.group(1)), float(m.group(2)) / 1024.0) if m else None
+    """(vcpus, ram_gb) for a Cloud SQL tier priced per vCPU + RAM, or None (shared-core tiers use their flat
+    SKU instead, see _SHARED_TIER). Covers the custom form ``db-custom-N-M`` -> (N, M MB / 1024) AND the
+    legacy predefined ``db-n1-{standard,highmem,highcpu}-N``, which mirror the n1 machine ratios (standard
+    3.75, highmem 6.5, highcpu 0.9 GB of RAM per vCPU) -- public specs, so the instance is priced, never
+    left UNPRICED, via the same componentized vCPU+RAM SKUs as a custom tier."""
+    t = tier or ""
+    m = re.match(r"db-custom-(\d+)-(\d+)$", t)
+    if m:
+        return (float(m.group(1)), float(m.group(2)) / 1024.0)
+    ratio = {"standard": 3.75, "highmem": 6.5, "highcpu": 0.9}
+    m = re.match(r"db-n1-(standard|highmem|highcpu)-(\d+)$", t)
+    if m:
+        n = float(m.group(2))
+        return (n, n * ratio[m.group(1)])
+    return None
 
 
 # shared-core tiers bill a FLAT per-hour SKU ("Micro/Small instance"), not per vCPU+RAM. The catalog also
