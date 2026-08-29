@@ -139,6 +139,28 @@ to the same `acspeed-results/<adapter>/` folder, so give one of them `--out` (or
   `--no-sandbox` (agent turns on the host, using the host's creds directly). AWS and redu microVM runs are
   unaffected.
 
+**3b. Cost coverage: the complete-inventory sweep (one-time per cloud, off-clock).**
+
+To make the cost axis catch **every** billable resource the agent provisioned (not just the app compute
+and database it obviously created), each adapter discovers the deploy's whole resource scope from the
+cloud's **own complete inventory**, then prices each resource or discloses it by type - so a resource type
+the tool has no explicit price for is surfaced, never silently counted as $0, and a new type is caught with
+no code change. This sweep is off-clock (it never affects the measured deploy time) and best-effort: if the
+inventory API below is not enabled it no-ops and the run says so. Enable it once per cloud:
+
+- **gcp** - enable the **Cloud Asset API** (free, read-only): `gcloud services enable
+  cloudasset.googleapis.com` on the project. The sweep runs `gcloud asset search-all-resources` scoped to
+  the run token. It is on by default; without the API it returns nothing (disclosed). Set
+  `ACSPEED_GCP_ASSET_SWEEP=0` to force it off.
+- **aws** - create an **AWS Resource Explorer** index (not tag-gated, so it finds untagged / auto-created
+  resources like public IPv4 that the tag inventory misses): `aws resource-explorer-2 create-index`, then
+  for cross-region coverage promote it with `aws resource-explorer-2 update-index-type --arn <index-arn>
+  --type AGGREGATOR`. Without an index the sweep falls back to the tag inventory, then AWS Config
+  (disclosed).
+- **azure** - no API to enable: each run deploys into its **own** resource group `rg-acs<token>`, and the
+  sweep lists it with `az resource list -g rg-acs<token>` (built-in). It needs only the same `az login`
+  the deploy already uses.
+
 **4. Run it.**
 
 ```bash
