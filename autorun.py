@@ -63,7 +63,8 @@ from acspeed import agenttime as acs_at  # noqa: E402
 from acspeed import suite as acs_suite  # noqa: E402
 from acspeed import suites as acs_suites  # noqa: E402
 from acspeed import procguard  # noqa: E402
-from acspeed.types import Span, PLATFORM  # noqa: E402
+from acspeed.types import Span, PLATFORM, AGENT  # noqa: E402
+from acspeed.criticalpath import owner_split as _owner_split  # noqa: E402
 import signal  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -235,8 +236,15 @@ AUTONOMY = (
     "created every part and confirmed the URL serves."
 )
 DEPLOY_TIMEOUT_S = 3000    # a full build can run long; the agent's own turn budget
-TEARDOWN_TIMEOUT_S = 500
+TEARDOWN_TIMEOUT_S = 1200   # the AGENT-driven teardown must have time to finish removing EVERYTHING it built
+                            # (measured 2026-08-31: aws ~510s / azure ~513s Container Apps teardowns were killed
+                            # at the old 500s -> the turn returned session=None mid-delete, leaving orphaned RGs).
+                            # Agent-driven teardown is the universal path; the reaper is only the backstop.
 READINESS_TIMEOUT_S = 300   # after the agent hands off, how long to let the app finish booting/serving
+VM_BOOT_RETRIES = 2         # a microVM turn that yields NO agent result (empty out.json / session=None, the
+                            # guest torn down before claude wrote its result - exit 143) is an infra boot-flake,
+                            # not an agent outcome; retry it in a fresh VM this many times. Measured 2026-08-31:
+                            # one flake on the no-retry deploy-site-b op sank an otherwise-authenticated run.
 SERVING_POLL_S = 5.0        # external readiness poll interval (t1 resolution is +/- this)
 PROBE_DURATION_S = 90
 PROBE_RATE = 25
@@ -312,62 +320,74 @@ def _claude_vm(prompt: str, *, app_dir: str, mcp: str | None, model: str | None,
                max_turns: int, timeout: int, system: str | None, sandbox: dict,
                boot_log: str | None, resume_transcript: str | None) -> dict:
     """Run one agent turn inside a fresh microVM (vmjob) and return the same JSON shape as the host
-    path. Credential scoping (only the target cloud's tokens) comes from the adapter's sandbox config."""
-    res = vmjob.run_vm_job(
-        prompt=prompt, model=model, mcp_config=(mcp or None), app_dir=app_dir,
-        keep_claude_tokens=sandbox["keep_claude_tokens"], aws_dir=sandbox.get("aws_dir"),
-        creds_mounts=sandbox.get("creds_mounts"),
-        max_turns=max_turns, timeout=timeout, boot_log=boot_log, system=system,
-        resume_sid=resume, resume_transcript=resume_transcript,
-        session_store=sandbox["session_store"])
-    _install_recovered_ssh_keys(res.get("agent_ssh_dir"))   # so capability C can reach the deploy VM
-    try:
-        r = res.get("result")
-        if isinstance(r, dict):
-            return r
-        tail = ""
+    path. Credential scoping (only the target cloud's tokens) comes from the adapter's sandbox config.
+
+    A microVM occasionally yields NO agent result: the guest is torn down before `claude` writes out.json
+    (empty out.json, session=None, exit 143). That is an infrastructure boot-flake, not an agent outcome -
+    the agent never ran to completion, so nothing was provisioned - so a fresh VM is retried up to
+    VM_BOOT_RETRIES times. A turn that returns a real result (a session id, even an error) is NEVER retried,
+    so a genuine agent failure is never masked and a partial deploy is never double-provisioned."""
+    last: dict = {"is_error": True, "session_id": None, "result": "microVM never produced a result"}
+    for attempt in range(1, VM_BOOT_RETRIES + 2):
+        res = vmjob.run_vm_job(
+            prompt=prompt, model=model, mcp_config=(mcp or None), app_dir=app_dir,
+            keep_claude_tokens=sandbox["keep_claude_tokens"], aws_dir=sandbox.get("aws_dir"),
+            creds_mounts=sandbox.get("creds_mounts"),
+            max_turns=max_turns, timeout=timeout, boot_log=boot_log, system=system,
+            resume_sid=resume, resume_transcript=resume_transcript,
+            session_store=sandbox["session_store"])
+        _install_recovered_ssh_keys(res.get("agent_ssh_dir"))   # so capability C can reach the deploy VM
         try:
-            tail = "\n".join(open(res["boot_log"]).read().splitlines()[-8:]) if res.get("boot_log") else ""
-        except OSError:
-            pass
-        return {"is_error": True, "session_id": None,
-                "result": f"microVM produced no result (exit={res.get('exit_code')}, "
-                          f"timed_out={res.get('timed_out')})\n{tail}"}
-    finally:
-        # Reclaim this run's ~4 GB rootfs copy. run_vm_job copies BASE_ROOTFS fresh per turn into an
-        # acspeed-vm-* dir and never removes it; unbounded accumulation is what filled the disk and
-        # starved a cloud in an n=10 x 4 batch. Guard on the prefix so a caller-provided work_dir is
-        # never touched.
-        #   SUCCESS -> drop the whole dir (transcripts are already merged into session_store, SSH keys
-        #             installed; nothing left we need).
-        #   FAILURE -> KEEP the small diagnostics (out.json = claude's own error, boot.log = console,
-        #             err.txt = agent stderr) so the cause is knowable, but still drop the ~4 GB rootfs +
-        #             job drive so the disk cannot fill. Deleting these on failure is what left us blind.
-        wd = res.get("work_dir")
-        if wd:
-            # Adopt any Claude-login refresh the VM did (it holds the refresh token so a long run can renew
-            # the ~8h token), so the host is not left holding a rotated-out token -> no mid-work re-auth.
-            # Must run BEFORE the rootfs image below is deleted.
-            try:
-                vmjob.sync_claude_login_from_vm(os.path.join(wd, "rootfs.ext4"))
-            except Exception:  # noqa: BLE001 - best-effort; never break the run
-                pass
-        if wd and os.path.basename(wd).startswith("acspeed-vm-"):
             r = res.get("result")
-            succeeded = isinstance(r, dict) and not r.get("is_error")
-            if succeeded:
-                shutil.rmtree(wd, ignore_errors=True)
-            else:
+            if isinstance(r, dict):
+                return r
+            tail = ""
+            try:
+                tail = "\n".join(open(res["boot_log"]).read().splitlines()[-8:]) if res.get("boot_log") else ""
+            except OSError:
+                pass
+            last = {"is_error": True, "session_id": None,
+                    "result": f"microVM produced no result (exit={res.get('exit_code')}, "
+                              f"timed_out={res.get('timed_out')})\n{tail}"}
+        finally:
+            # Reclaim this run's ~4 GB rootfs copy. run_vm_job copies BASE_ROOTFS fresh per turn into an
+            # acspeed-vm-* dir and never removes it; unbounded accumulation is what filled the disk and
+            # starved a cloud in an n=10 x 4 batch. Guard on the prefix so a caller-provided work_dir is
+            # never touched.
+            #   SUCCESS -> drop the whole dir (transcripts are already merged into session_store, SSH keys
+            #             installed; nothing left we need).
+            #   FAILURE -> KEEP the small diagnostics (out.json = claude's own error, boot.log = console,
+            #             err.txt = agent stderr) so the cause is knowable, but still drop the ~4 GB rootfs +
+            #             job drive so the disk cannot fill. Deleting these on failure is what left us blind.
+            wd = res.get("work_dir")
+            if wd:
+                # Adopt any Claude-login refresh the VM did (it holds the refresh token so a long run can renew
+                # the ~8h token), so the host is not left holding a rotated-out token -> no mid-work re-auth.
+                # Must run BEFORE the rootfs image below is deleted.
                 try:
-                    vmjob._debugfs_dump(os.path.join(wd, "job.ext4"), "/err.txt", os.path.join(wd, "err.txt"))
-                except Exception:  # noqa: BLE001
+                    vmjob.sync_claude_login_from_vm(os.path.join(wd, "rootfs.ext4"))
+                except Exception:  # noqa: BLE001 - best-effort; never break the run
                     pass
-                for big in ("rootfs.ext4", "job.ext4", "agent_ssh.tar", "transcripts.tar"):
+            if wd and os.path.basename(wd).startswith("acspeed-vm-"):
+                r = res.get("result")
+                succeeded = isinstance(r, dict) and not r.get("is_error")
+                if succeeded:
+                    shutil.rmtree(wd, ignore_errors=True)
+                else:
                     try:
-                        os.remove(os.path.join(wd, big))
-                    except OSError:
+                        vmjob._debugfs_dump(os.path.join(wd, "job.ext4"), "/err.txt", os.path.join(wd, "err.txt"))
+                    except Exception:  # noqa: BLE001
                         pass
-                _log(f"run FAILED -> kept diagnostics in {wd} (out.json / err.txt / boot.log); dropped the rootfs copy")
+                    for big in ("rootfs.ext4", "job.ext4", "agent_ssh.tar", "transcripts.tar"):
+                        try:
+                            os.remove(os.path.join(wd, big))
+                        except OSError:
+                            pass
+                    _log(f"run FAILED -> kept diagnostics in {wd} (out.json / err.txt / boot.log); dropped the rootfs copy")
+        if attempt <= VM_BOOT_RETRIES:
+            _log(f"microVM produced no agent result (boot-flake, exit={res.get('exit_code')}); retrying "
+                 f"the VM turn in a fresh microVM (attempt {attempt + 1}/{VM_BOOT_RETRIES + 1})")
+    return last
 
 
 def deprovision_agent(mcp: str, model: str | None, url: str, tag: str = "deprovision",
@@ -420,6 +440,32 @@ def drive_suite(inst, prof: dict, model: str | None, deploy_sid: str | None, url
                     sandbox=sandbox, boot_log=op_boot,
                     resume_transcript=(find_transcript(rsid) if sandbox else None),
                     max_turns=120, timeout=DEPLOY_TIMEOUT_S)
+        # A later PROVISION operation (e.g. Medium's second site) stands up a NEW public URL. Resolve it
+        # from the agent's final message the same cloud-agnostic way run_once resolves the first URL
+        # (prof url_re whitelist + substrate exclusion), but keep the FIRST app's URL: pick the candidate
+        # whose hostname differs from the umami/deploy URL, and hand it to the engine as this op's url.
+        if op.op_type == acs_op.PROVISION and op.op_id != first_id:
+            def _hn(u: str) -> str:
+                return re.sub(r"^https?://", "", str(u)).split("/")[0].lower()
+            res_text = str(r.get("result", ""))
+            # DETERMINISTIC first: the op asked the agent to end with `SITE_B_URL: <url>`. This is
+            # cloud-agnostic (no url_re guessing) so a second site on any host - S3, a bucket, App
+            # Runner, a container - is captured even if its suffix is not in the deploy url_re whitelist.
+            m = re.search(r"(?im)^\s*SITE_B_URL:\s*(https?://\S+)\s*$", res_text)
+            newu = m.group(1).strip() if m else None
+            if newu and _hn(newu) == _hn(url or ""):
+                newu = None  # guard: must be distinct from the umami/deploy URL
+            if not newu:
+                # fallback: a cloud-pattern URL in the report that is not the umami/deploy URL
+                picked = pick_url(res_text, prof["url_re"], prof.get("substrate_hosts"))
+                newu = next((u for u in picked["candidates"] if _hn(u) != _hn(url or "")), None)
+            if newu:
+                r["url"] = newu
+                _log(f"suite op {op.op_id}: resolved a new provision URL {newu}")
+            else:
+                _log(f"suite op {op.op_id}: no distinct new URL in the agent's report "
+                     f"(no SITE_B_URL line; candidates="
+                     f"{pick_url(res_text, prof['url_re'], prof.get('substrate_hosts'))['candidates']})")
         _log(f"suite op {op.op_id}: agent session={r.get('session_id')} "
              f"is_error={r.get('is_error')} cost=${r.get('total_cost_usd')}")
         return r
@@ -430,36 +476,217 @@ def drive_suite(inst, prof: dict, model: str | None, deploy_sid: str | None, url
     run = acs_suite.run_tier(inst, ctx, run_agent=run_agent, log=_log)
     _log(f"suite: tier {inst.tier} / {inst.name}: "
          f"{'PASSED' if run.passed else 'FAILED (' + ', '.join(run.failures()) + ')'}")
-    return run.summary()
+    summ = run.summary()
+
+    # SLOT 7 (Part 2): every operation gets a critical-platform vs critical-agent split, not just deploy.
+    # The deploy op keeps run_once's own split (its window is empty here - it was performed before the
+    # suite). Each later op and each restart cycle is sliced from session A by its wall window.
+    txA = find_transcript(deploy_sid) if deploy_sid else None
+    if txA:
+        for row in summ.get("operations", []):
+            if row["op_id"] == first_id:
+                continue  # deploy-serve: the main run_once split is authoritative
+            sp = op_window_split(txA, row.get("started_at"), row.get("verified_at"))
+            if sp:
+                row["split"] = sp
+        for row in (summ.get("durability") or {}).get("cycles", []):
+            sp = op_window_split(txA, row.get("started_at"), row.get("verified_at"))
+            if sp:
+                row["split"] = sp
+    # expose the second-site URL so the teardown can VERIFY it stopped serving (a deleted deploy stops
+    # answering), not just trust the agent's "done".
+    summ["site_b_url"] = ctx.state.get("site_b_url")
+    return summ
 
 
 def deprovision_suite_agent(prof: dict, model: str | None, url: str, sid: str | None,
                             sandbox: dict | None, out_dir: str, i: int, cwd: str,
-                            teardown_hint: str = "") -> dict:
+                            teardown_hint: str = "", verify_urls: Sequence[str] = ()) -> dict:
     """Teardown for a TIER run. A Medium/Hard deployment creates MULTIPLE resources, so teardown
     RESUMES session A (the agent that built them all) and removes everything this run created: a fresh
-    session cannot reliably identify a second site, but the builder can. Still a measured teardown; the
-    orphan check on the primary URL still runs after it in run_once. WHAT to remove comes from the
-    instance's ``teardown_hint`` (app-specific), so this orchestrator stays app-agnostic."""
-    boot = None
-    if sandbox:
-        boot = os.path.join(out_dir, f"run{i:02d}_teardown.bootlog")
-        open(boot, "w").close()
+    session cannot reliably identify a second site, but the builder can. WHAT to remove comes from the
+    instance's ``teardown_hint`` (app-specific), so this orchestrator stays app-agnostic.
+
+    The agent's 'done' is NOT trusted (a run was seen reporting done while every resource stayed live):
+    after each teardown turn we VERIFY by polling every known public URL (the primary + any second site),
+    since a deleted deployment stops answering. Any URL still serving triggers a forceful re-delete turn,
+    up to a few rounds; a survivor after that is flagged ``orphaned`` with the live URLs for cleanup."""
     what = teardown_hint or "the application, its datastore, and any other resources you created"
-    r = _claude(
+    urls = [u for u in ([url] + list(verify_urls)) if u]
+
+    # Teardown runs on the HOST, never in the hermetic microVM, even for a sandboxed run. Teardown is NOT the
+    # measured operation, so it needs no isolation; and the deprovision microVM was the ONE thing that failed
+    # (its boot flaked under 4-way contention and returned an empty result, session=None, orphaning azure/aws
+    # 2026-08-31). On the host the cloud creds + MCP are present and the builder session is staged for
+    # --resume, so the agent-driven teardown -- which removes whatever it built, ANY service or cloud -- is
+    # reliable and UNIVERSAL, not a per-service reaper. `sandbox` is intentionally ignored for the turn.
+    def _turn(prompt: str, resume: str | None) -> dict:
+        _stage_transcript_for_resume(resume, cwd)   # host-side `claude --resume` must find a microVM session
+        return _claude(prompt, cwd=cwd, mcp=prof["mcp_config"], model=model, resume=resume,
+                       sandbox=None, max_turns=80, timeout=TEARDOWN_TIMEOUT_S)
+
+    r = _turn(
         "Tear down EVERYTHING you deployed during this run, so nothing is left running or billing: "
         f"{what} (the primary deployment is serving at {url}), together with every VM / instance / "
-        "volume / floating IP / proxy host you created for them. Use your cloud tools to find and delete "
-        "each one. Do NOT delete or modify any deployment or resource you did not create in THIS run. "
-        "Reply 'done' once they are all gone.",
-        cwd=cwd, mcp=prof["mcp_config"], model=model, resume=sid, sandbox=sandbox, boot_log=boot,
-        resume_transcript=(find_transcript(sid) if sandbox else None),
-        max_turns=80, timeout=TEARDOWN_TIMEOUT_S)
+        "managed database / volume / floating IP / proxy host you created for them. Use your cloud tools "
+        "to find and delete each one. Do NOT delete or modify any deployment or resource you did not "
+        "create in THIS run. Reply 'done' once they are all gone.", sid)
     sid2 = r.get("session_id")
-    _log(f"deprovision (suite, run {i}): session={sid2} cost=${r.get('total_cost_usd')} "
-         f"is_error={r.get('is_error')}")
-    return {"session": sid2, "cost": r.get("total_cost_usd"),
+    cost = r.get("total_cost_usd") or 0.0
+    orphaned = False
+    for attempt in range(3):
+        time.sleep(12)                                        # let the deletions take effect
+        # teardown liveness uses curl_dead (404/000/5xx = gone), NOT the readiness predicate: a deleted
+        # SERVERLESS route answers 404, which the <500 readiness rule would misread as still-alive and
+        # cry a FALSE orphan on every clean Cloud Run / App Runner teardown (seen on gcp 2026-08-30).
+        alive = [u for u in urls if not curl_dead(u)["dead"]]
+        if not alive:
+            break
+        if attempt == 2:
+            orphaned = True
+            _log(f"deprovision (suite, run {i}): ORPHAN WARNING - still serving after 3 turns: {alive}")
+            break
+        _log(f"deprovision (suite, run {i}): still serving {alive} - forcing another teardown turn")
+        rr = _turn(
+            f"These deployments are STILL LIVE and serving after your teardown: {alive}. You did NOT "
+            "delete them. Use your cloud tools to DELETE each one NOW - the deployment, its VM/instance, "
+            "its MANAGED DATABASE, its volume, and its floating IP - and confirm each stops responding.",
+            sid2 or sid)
+        sid2 = rr.get("session_id") or sid2
+        cost += rr.get("total_cost_usd") or 0.0
+    _log(f"deprovision (suite, run {i}): session={sid2} cost=${cost} "
+         f"is_error={r.get('is_error')} orphaned={orphaned}")
+    return {"session": sid2, "cost": cost, "orphaned": orphaned,
+            "live_urls": [u for u in urls if not curl_dead(u)["dead"]] if orphaned else [],
             "transcript": find_transcript(sid2) if sid2 else None}
+
+
+def reap_run(cloud: str, run_token: str, urls=(), *, log=None, sh=None, redu=None) -> dict:
+    """LAST-LINE teardown, AFTER the agent's own teardown, using each cloud's RESOURCE API (never a URL
+    poll). This matters because URL-death != resource-deletion: on a VM cloud the agent can stop the app or
+    remove the proxy (so the URL goes 000) while the deployment VM, its managed DB, and the second site's VM
+    keep running and billing - and curl_dead reads 000 as 'gone' and misses them (measured on redu
+    2026-08-30: a run reported orphaned=False with the umami VM AND the site-B VM still live). So the reaper
+    enumerates what this run actually created and deletes it. SCOPED to this run, two ways: the run TOKEN in
+    a resource's name, OR a resource whose hostname equals one of this run's known URLs - the second site is
+    named with the probe suffix, not the run token, so URL-host matching is what catches it. redu deletes are
+    RE-VERIFIED against a fresh list, so a delete call that TIMES OUT but actually succeeded is counted
+    reaped, not a false orphan (measured: delete_database timed out yet the DB was gone). Never raises; a
+    resource that genuinely survives deletion is a REAL orphan the batch surfaces. ``sh``/``redu`` are
+    injectable for tests; ``urls`` is the primary URL plus any second-site URL (a bare string is accepted)."""
+    log = log or _log
+    if isinstance(urls, str):
+        urls = [urls]
+    if not run_token:
+        return {"reaped": [], "failed": [], "checked": False}
+    tok = run_token.lower()
+
+    def _host(v):
+        return re.sub(r"^https?://", "", str(v or "")).split("/")[0].lower()
+
+    hosts = {_host(u) for u in urls if u}
+    reaped: list[str] = []
+    failed: list[str] = []
+
+    def _sh(args, timeout=180):
+        if sh is not None:
+            return sh(args, timeout)
+        try:
+            p = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+            return p.returncode, (p.stdout or ""), (p.stderr or "")
+        except Exception as e:  # noqa: BLE001
+            return 1, "", repr(e)
+
+    try:
+        if cloud == "redu":
+            rmh = redu
+            if rmh is None:
+                from acspeed.adapters import redu_mcp_http as rmh  # type: ignore
+
+            def _deps():
+                return (rmh.call_tool("list_deployments", {}) or {}).get("deployments", [])
+
+            def _dbs():
+                return (rmh.call_tool("list_databases", {}) or {}).get("databases", [])
+
+            def _gone(kind, rid):
+                try:
+                    if kind == "db":
+                        return str(rid) not in {str(x.get("id")) for x in _dbs()}
+                    return int(rid) not in {int(x.get("id")) for x in _deps()}
+                except Exception:  # noqa: BLE001
+                    return False
+
+            def _del(kind, tool, args, label):
+                try:
+                    rmh.call_tool(tool, args)
+                    reaped.append(label)
+                except Exception as e:  # noqa: BLE001 - a timeout may have deleted it anyway: re-verify
+                    if _gone(kind, args["id"]):
+                        reaped.append(label + " (confirmed gone after a timeout)")
+                    else:
+                        failed.append(f"{label}: {e!r}")
+
+            # every deployment this run created: token in name/dname/access_point, OR hostname == a known
+            # URL (catches the second site, whose name carries the probe suffix, not the run token).
+            matched_db_ids: set[str] = set()
+            try:
+                for r in _deps():
+                    blob = f"{r.get('name','')} {r.get('dname','')} {r.get('access_point','')}".lower()
+                    by_host = _host(r.get("dname")) in hosts or _host(r.get("access_point")) in hosts
+                    if tok in blob or by_host:
+                        if r.get("db_id"):
+                            matched_db_ids.add(str(r.get("db_id")))
+                        _del("dep", "delete_deployment", {"id": int(r.get("id"))},
+                             f"redu deployment {r.get('name')} (#{r.get('id')})")
+            except Exception as e:  # noqa: BLE001
+                log(f"reap redu: list_deployments failed (non-fatal): {e!r}")
+            # managed DBs: token-named OR attached to a deployment we just matched (the proven no-URL gap).
+            try:
+                for r in _dbs():
+                    if tok in f"{r.get('name','')}".lower() or str(r.get("id")) in matched_db_ids:
+                        _del("db", "delete_database", {"id": str(r.get("id"))},
+                             f"redu db {r.get('name')} (#{r.get('id')})")
+            except Exception as e:  # noqa: BLE001
+                log(f"reap redu: list_databases failed (non-fatal): {e!r}")
+
+        elif cloud == "azure":
+            # a run's resources live in resource group(s) named for it, but the AGENT chooses the name and
+            # was seen using rg-umami-<token> (not the exact rg-<token> this once looked for), so the group
+            # was missed and left billing (2026-08-31). Match ANY group whose name CONTAINS the run token;
+            # deleting a group removes EVERY resource in it (Postgres, Container App env, storage, IPs) at once.
+            _, out, _ = _sh(["az", "group", "list", "--query", "[].name", "-o", "tsv"], timeout=60)
+            for rg in [g for g in out.split() if tok in g.lower()]:
+                rc, _, err = _sh(["az", "group", "delete", "-n", rg, "--yes", "--no-wait"], timeout=120)
+                (reaped if rc == 0 else failed).append(f"azure resource group {rg}"
+                                                       + ("" if rc == 0 else f": {err[:120]}"))
+
+        elif cloud == "gcp":
+            _, out, _ = _sh(["gcloud", "sql", "instances", "list", "--format=value(name)"], timeout=90)
+            for name in [n for n in out.split() if tok in n.lower()]:
+                rc, _, err = _sh(["gcloud", "sql", "instances", "delete", name, "--quiet"], timeout=300)
+                (reaped if rc == 0 else failed).append(f"gcp cloudsql {name}"
+                                                       + ("" if rc == 0 else f": {err[:120]}"))
+
+        elif cloud == "aws":
+            p = ["aws", "--profile", "acspeed-batch", "--region", "us-east-1"]
+            _, out, _ = _sh(p + ["rds", "describe-db-instances", "--query",
+                                 "DBInstances[].DBInstanceIdentifier", "--output", "text"], timeout=90)
+            for name in [n for n in out.split() if tok in n.lower()]:
+                rc, _, err = _sh(p + ["rds", "delete-db-instance", "--db-instance-identifier", name,
+                                      "--skip-final-snapshot", "--delete-automated-backups"], timeout=180)
+                (reaped if rc == 0 else failed).append(f"aws rds {name}"
+                                                       + ("" if rc == 0 else f": {err[:120]}"))
+    except Exception as e:  # noqa: BLE001 - the reaper must never break the run loop
+        log(f"reap {cloud}: unexpected error (non-fatal): {e!r}")
+
+    if reaped:
+        log(f"reaper ({cloud}, token {run_token}): deleted {len(reaped)} leftover resource(s) the agent "
+            f"teardown MISSED (would otherwise bill unattended): {reaped}")
+    if failed:
+        log(f"reaper ({cloud}, token {run_token}): FAILED to delete {len(failed)} resource(s) - REAL "
+            f"ORPHAN, clean up manually: {failed}")
+    return {"reaped": reaped, "failed": failed, "checked": True}
 
 
 _SESSION_STORE: str | None = None   # set when a microVM run's transcripts are published to the host
@@ -474,6 +701,26 @@ def find_transcript(session_id: str) -> str | None:
         if hits:
             return hits[0]
     return None
+
+
+def _stage_transcript_for_resume(sid: str | None, cwd: str) -> None:
+    """Make a session that ran INSIDE a microVM resumable by a HOST-side ``claude --resume <sid>``: copy its
+    published transcript (located by find_transcript, e.g. in the per-run session store) into the host cwd's
+    project dir. No-op if there is no sid/transcript or it is already staged there. Best-effort; never raises.
+    This is what lets teardown run on the host (see deprovision_suite_agent) instead of a flaky microVM."""
+    if not sid:
+        return
+    tx = find_transcript(sid)
+    if not tx:
+        return
+    dst = os.path.join(transcript_dir_for(cwd), f"{sid}.jsonl")
+    try:
+        if os.path.abspath(tx) == os.path.abspath(dst):
+            return
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy(tx, dst)
+    except OSError:
+        pass
 
 
 # A DSB deploy publishes several hosts (frontend + consul/jaeger/etc). The agent's prose lists them
@@ -861,6 +1108,32 @@ def measure(tx: str | None) -> dict:
         "warmth": warmth_fingerprint(rows),
         "flavor": chosen_flavor(rows),
         "ops": rich_panel(rows),
+    }
+
+
+def op_window_split(tx: str | None, started_at: float | None, verified_at: float | None) -> dict | None:
+    """Slot-7 split for a NON-deploy operation (Part 2): slice session A's transcript to the operation's
+    wall window [started_at, verified_at] (its slot-1 start and slot-5 end signals, recorded by the suite
+    engine) and decompose that slice into critical-platform vs critical-agent, the same spine used for the
+    deploy op. The operate-mutate ops (register, integrate) and the restart cycles run inside the resumed
+    deploy session, so they are isolated by TIME, not by a separate transcript. Returns None if the window
+    holds no timed events."""
+    if not tx or started_at is None or verified_at is None:
+        return None
+    spans = acs.trace_from_transcript(tx, since_epoch=started_at, until_epoch=verified_at)
+    if not spans:
+        return None
+    split = _owner_split(spans)
+    owners = split["owners"]
+    cp = owners.get(PLATFORM, {}).get("critical", 0.0)
+    ca = owners.get(AGENT, {}).get("critical", 0.0)
+    return {
+        "critical_platform_s": round(cp, 1),
+        "critical_agent_s": round(ca, 1),
+        "makespan_s": round(split["makespan"], 1),   # = cp + ca + any held-out idle in the window
+        "overlap_s": round(sum(v["overlap"] for v in owners.values()), 1),
+        "wall_s": round(max(0.0, verified_at - started_at), 1),
+        "via": "acspeed.transcript window + owner_split",
     }
 
 
@@ -1376,7 +1649,8 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
         # session so the teardown removes everything this run created, not only the primary URL. WHAT to
         # remove comes from the instance (app-specific), keeping this call app-agnostic.
         td = deprovision_suite_agent(prof, model, url, sid, sandbox, out_dir, i, cwd,
-                                     teardown_hint=(suite_inst.teardown_hint if suite_inst else ""))
+                                     teardown_hint=(suite_inst.teardown_hint if suite_inst else ""),
+                                     verify_urls=([tier_run.get("site_b_url")] if tier_run else []))
     else:
         td = deprovision_agent(prof["mcp_config"], model, url, tag=f"deprovision (run {i})", sandbox=sandbox)
     td_tx = td.get("transcript")
@@ -1384,10 +1658,20 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
         if td_tx else {}
     verify = curl_dead(url) if url else {"dead": None}
     _log(f"read-verify: url dead={verify.get('dead')} (http {verify.get('http_code')})")
+    # LAST-LINE teardown: after the agent's own teardown and the URL read-verify, reap any token-scoped
+    # resource a URL poll cannot see - above all a managed DATABASE (redu keeps it by design; azure leaves
+    # it in the run's resource group). This is what lets an 8h UNATTENDED batch not quietly accrue DB cost.
+    reap = {"reaped": [], "failed": [], "checked": False}
+    if url and not prof.get("keep") and not td.get("skipped"):
+        known_urls = [url] + ([tier_run.get("site_b_url")] if tier_run else [])
+        reap = reap_run(prof["cloud"], run_token, known_urls)
     # ORPHAN SAFETY: a teardown was attempted (not --keep, not skipped) but the URL is STILL serving ->
     # the deployment was NOT removed and is BILLING. Loud, and recorded, so a long batch does not silently
     # accrue orphans (the 2026-08-25 AWS run left a live Lightsail service after its creds expired).
-    orphaned = bool(url) and not prof.get("keep") and not td.get("skipped") and verify.get("dead") is False
+    # the primary URL still serving OR the suite teardown flagged a survivor OR the reaper could not delete
+    # a no-URL resource (a managed DB) is an orphan.
+    orphaned = (bool(url) and not prof.get("keep") and not td.get("skipped") and verify.get("dead") is False) \
+        or bool(td.get("orphaned")) or bool(reap.get("failed"))
     if orphaned:
         _log(f"!! ORPHAN WARNING (run {i}): {url} is STILL SERVING after deprovision "
              f"(http {verify.get('http_code')}). The teardown did NOT remove it and it is BILLING. "
@@ -1424,6 +1708,7 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
         "deprovision": {"session": td.get("session"), "transcript": td_tx,      # DEPROVISION operation
                         "cost": td.get("cost"), "skipped": td.get("skipped", False),
                         "orphaned": orphaned, **td_measure},
+        "reaped": reap,                         # last-line token-scoped reaper: no-URL leftovers (DBs) it removed / could not
         "read_verify": verify,
         "orphan_warning": orphaned,             # top-level flag: this run left a live, billing deployment
     }
@@ -1511,6 +1796,53 @@ def preflight_credentials(prof: dict) -> tuple[bool, str]:
                        f"{(r.stderr or r.stdout).strip()[:200]}. Set up the static-key profile (README: "
                        "'AWS setup') before running -- refusing to deploy and risk an un-deletable orphan.")
     return True, ""
+
+
+def preflight_claude_auth() -> tuple[bool, str]:
+    """Fail FAST, before any deploy, if the host's Claude login is dead or expired. The microVM seeds the
+    host's claudeAiOauth (access + refresh token) and the host-side teardown runs `claude` under the SAME
+    login; if it cannot authenticate, EVERY agent turn returns 'OAuth session expired and could not be
+    refreshed' -> the deploy fails with no URL AND a partial deploy is left un-torn-down (a billing orphan).
+    This was the root cause of the 4-cloud batch that failed 2026-08-31 (every run: an expired token, and
+    nothing failed fast so it burned deploys and orphaned RDS/ECS/CloudSQL/an Azure RG). We do a REAL host
+    round-trip (the exact auth path the run uses) plus a token-TTL read, so a batch that would outlive the
+    ~8h token is flagged up front rather than discovered halfway through."""
+    creds = os.path.expanduser("~/.claude/.credentials.json")
+    ttl_min = None
+    try:
+        o = (json.load(open(creds)).get("claudeAiOauth") or {})
+        exp = float(o.get("expiresAt") or 0) / 1000.0
+        if exp:
+            ttl_min = (exp - time.time()) / 60.0
+    except Exception:  # noqa: BLE001 - a missing/odd creds file just skips the TTL hint; the round-trip still decides
+        pass
+    try:
+        r = subprocess.run(["claude", "-p", "reply with the single word READY",
+                            "--output-format", "json", "--max-turns", "1"],
+                           capture_output=True, text=True, timeout=120)
+    except Exception as e:  # noqa: BLE001
+        return False, f"Claude auth preflight could not run `claude` ({e}); is Claude Code installed on PATH?"
+    try:
+        d = json.loads((r.stdout or "").strip() or "{}")
+    except ValueError:
+        d = {}
+    result_s = str(d.get("result") or "")
+    dead = (r.returncode != 0 or bool(d.get("is_error"))
+            or "oauth" in result_s.lower() or "authenticate" in result_s.lower())
+    if dead:
+        detail = (result_s or (r.stderr or "") or (r.stdout or "")).strip()[-200:]
+        return False, ("Claude login is unusable (a headless `claude -p` did not authenticate): "
+                       f"{detail}. Run `claude auth login` (interactive) or `claude setup-token` (a "
+                       "long-lived token that survives an overnight batch) before running -- refusing to "
+                       "deploy on a dead login and risk agent turns that fail after a partial, "
+                       "un-torn-down deploy.")
+    msg = "host Claude login OK"
+    if ttl_min is not None:
+        msg += f" (~{ttl_min:.0f} min token TTL)"
+        if ttl_min < 90:
+            msg += (" -- LOW: this token may expire mid-batch and a single lost cross-VM refresh bricks the "
+                    "rest of the run; for a long/unattended batch run `claude setup-token` first.")
+    return True, msg
 
 
 def _install_signal_guards() -> None:
@@ -1649,6 +1981,30 @@ def main() -> None:
              "cannot orphan on expired creds. NOTE: the hermetic microVM mounts these creds only after a "
              "rootfs rebuild picks up the generalized vm-runner (see README); until then run "
              f"--no-sandbox for {prof['cloud']} (agent turns on the host, using the host's creds directly).")
+
+    # Claude-login preflight: the microVM (and the host-side teardown) run `claude` under the host's
+    # subscription login. A dead/expired token makes EVERY turn fail 'OAuth session expired' -> no URL and
+    # a possible un-torn-down orphan. Fail fast here (the 2026-08-31 4-cloud wipeout), before any spend.
+    claude_ok, claude_why = preflight_claude_auth()
+    if not claude_ok:
+        _log(f"PREFLIGHT FAILED: {claude_why}")
+        sys.exit(2)
+    _log(f"PREFLIGHT: {claude_why}")
+
+    # Browser preflight: the Medium/Hard integration read (R5) needs a REAL headless browser to drive the
+    # tracked visit, and it correctly REFUSES to fake it - so with no working browser every run passes the
+    # deploy and then fails integrate (measured 2026-08-31: three runs each burned ~12 min, then failed on
+    # 'no headless browser'). Fail fast HERE, with the fix, so a long batch never wastes hours + spend.
+    if prof.get("suite"):
+        from acspeed.suites._visit import headless_visit as _preflight_visit
+        _ok_b, _eng_b = _preflight_visit("data:text/html,<h1>acspeed browser preflight</h1>", settle_s=3.0)
+        if not _ok_b:
+            _log("PREFLIGHT FAILED: no working headless browser on this host, and the integration read "
+                 f"(a tracked visit) cannot be faked (engine={_eng_b}). The suite needs Playwright's chromium "
+                 "or a NON-snap chrome (a snap chromium is confined and cannot render). Install one for THIS "
+                 "python and re-run:\n    pip install playwright && python3 -m playwright install chromium")
+            sys.exit(2)
+        _log(f"PREFLIGHT: headless browser OK (engine={_eng_b}); the integration visit can be driven.")
 
     start = a.start if a.start is not None else _next_run_index(prof["out_dir"])
     if a.start is None and start > 1:

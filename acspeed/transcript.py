@@ -65,7 +65,8 @@ _EPS = 1e-9
 
 HUMAN = "human"
 IDLE = "idle"
-DEFAULT_IDLE_CAP = 300.0  # seconds; a longer gap is held-out idle, charged to no lane
+DEFAULT_IDLE_CAP = 300.0  # seconds; a longer NON-platform gap is held-out idle, charged to no lane
+                          # (a platform-ending gap is a blocking cloud call's latency: platform, no cap)
 ASK_TOOL = "AskUserQuestion"
 _KEEP_TYPES = ("assistant", "user")
 _USAGE_KEYS = ("input_tokens", "output_tokens",
@@ -137,24 +138,32 @@ def lane_of(row: dict, tool_names: Dict[str, str]) -> str:
 # Transcript -> owner-labelled trace
 # --------------------------------------------------------------------------------------------------
 
-def clip_rows(rows: Sequence[dict], until_epoch: Optional[float]) -> List[dict]:
-    """Rows at or before ``until_epoch`` (a Unix time). Part 2 ends an operation at its slot-5 end
-    signal (app-serving readiness, an EXTERNAL poll); events the agent produces after that instant
-    (post-serving verification, note-taking) are outside the operation and must not be attributed to
-    it. ``None`` keeps every row."""
-    if until_epoch is None:
-        return list(rows)
-    return [r for r in rows if _epoch(r) <= until_epoch + _EPS]
+def clip_rows(rows: Sequence[dict], until_epoch: Optional[float],
+              since_epoch: Optional[float] = None) -> List[dict]:
+    """Rows in the window ``(since_epoch, until_epoch]`` (Unix times). Part 2 ends an operation at its
+    slot-5 end signal (app-serving readiness, an EXTERNAL poll); events the agent produces after that
+    instant (post-serving verification, note-taking) are outside the operation and must not be
+    attributed to it. ``since_epoch`` opens the window at a later operation's start signal, so a resumed
+    session can be sliced per operation. ``None`` on either bound leaves that side open."""
+    out = list(rows)
+    if since_epoch is not None:
+        out = [r for r in out if _epoch(r) >= since_epoch - _EPS]
+    if until_epoch is not None:
+        out = [r for r in out if _epoch(r) <= until_epoch + _EPS]
+    return out
 
 
 def trace_from_transcript(path: str, cap: float = DEFAULT_IDLE_CAP,
-                          until_epoch: Optional[float] = None) -> List[Span]:
+                          until_epoch: Optional[float] = None,
+                          since_epoch: Optional[float] = None) -> List[Span]:
     """Reconstruct the run as a linear chain of gap-spans, each owned by the lane of the event that
-    ends it. A gap longer than ``cap`` is held-out idle (owner ``"idle"``) but stays in the chain, so
-    the makespan equals wall-clock. ``until_epoch`` clips the trace at the operation's end signal
-    (see ``clip_rows``). Returns ``[]`` for a transcript with fewer than two timed events.
+    ends it. A gap longer than ``cap`` is held-out idle (owner ``"idle"``) UNLESS it ends in a platform
+    event (a blocking cloud call's observed latency, which is platform-time at any length); either way
+    it stays in the chain, so the makespan equals wall-clock. ``until_epoch`` / ``since_epoch`` clip to a
+    single operation's window (its start/end signals, see ``clip_rows``). Returns ``[]`` for a window
+    with fewer than two timed events.
     """
-    rows = clip_rows(_load_rows(path), until_epoch)
+    rows = clip_rows(_load_rows(path), until_epoch, since_epoch)
     return _spans_from_rows(rows, cap)
 
 
@@ -168,10 +177,17 @@ def _spans_from_rows(rows: Sequence[dict], cap: float) -> List[Span]:
         gap = _epoch(cur) - _epoch(prev)
         if gap < 0:
             gap = 0.0
-        if gap > cap:
+        lane = lane_of(cur, tool_names)
+        # The idle cap holds out a long gap as un-owned idle, BUT a gap that ends in a platform event is
+        # the client-observed latency of a blocking cloud call (a provisioning/readiness poll that blocks
+        # for minutes), which the method defines as platform critical-path time -- platform is a ceiling
+        # (see the module docstring). Capping it to idle would drop real provisioning wall from makespan
+        # (measured: serverless deploys under-reported ~2.5x). So the cap applies only to non-platform
+        # gaps (a genuine agent/human pause); a platform-ending gap is charged to platform at any length.
+        if gap > cap and lane != PLATFORM:
             owner, kind = IDLE, ""
         else:
-            owner = lane_of(cur, tool_names)
+            owner = lane
             kind = "inference" if owner == AGENT else ""
         sid = "g%d" % i
         spans.append(Span(id=sid, duration=gap, owner=owner,

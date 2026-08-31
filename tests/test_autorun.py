@@ -234,6 +234,145 @@ class TestCurlDead(unittest.TestCase):
         self.assertFalse(self._dead("200"))
 
 
+class TestSuiteTeardownOrphan(unittest.TestCase):
+    """deprovision_suite_agent must use the teardown predicate (curl_dead), not the readiness predicate,
+    when deciding whether a survivor remains. This is the end-to-end lock on the gcp Cloud Run false
+    orphan: a clean serverless teardown answers 404 on the deleted routes and must NOT be flagged."""
+
+    def _run(self, dead_map):
+        # dead_map: url -> dead? ; one agent turn, then the loop polls curl_dead.
+        with mock.patch.object(autorun, "_claude",
+                               return_value={"session_id": "s2", "total_cost_usd": 0.0, "is_error": False}), \
+             mock.patch.object(autorun, "find_transcript", return_value=None), \
+             mock.patch.object(autorun.time, "sleep", lambda _s: None), \
+             mock.patch.object(autorun, "curl_dead",
+                               side_effect=lambda u: {"url": u, "http_code": "404", "dead": dead_map[u]}):
+            return autorun.deprovision_suite_agent(
+                {"mcp_config": None, "cloud": "gcp"}, None,
+                "https://umami-acs123-9988.us-central1.run.app", "s1", None, tempfile.mkdtemp(), 1,
+                tempfile.mkdtemp(), teardown_hint="umami + its db + the second site",
+                verify_urls=["https://acspeed-site-abc-9988.us-central1.run.app"])
+
+    def test_clean_serverless_teardown_is_not_orphaned(self):
+        # both the primary and the second site return 404 after delete = torn down.
+        td = self._run({"https://umami-acs123-9988.us-central1.run.app": True,
+                        "https://acspeed-site-abc-9988.us-central1.run.app": True})
+        self.assertFalse(td["orphaned"])
+        self.assertEqual(td["live_urls"], [])
+
+    def test_real_survivor_is_orphaned(self):
+        # the second site is still serving (not dead) -> a genuine orphan must be flagged.
+        surv = "https://acspeed-site-abc-9988.us-central1.run.app"
+        td = self._run({"https://umami-acs123-9988.us-central1.run.app": True, surv: False})
+        self.assertTrue(td["orphaned"])
+        self.assertIn(surv, td["live_urls"])
+
+
+class _FakeRedu:
+    """Stands in for redu_mcp_http. list_* return the CURRENT rows (a successful delete removes the row, so
+    a re-verify sees it gone). fail_ids: the delete raises AND the row stays (a genuine failure). timeout_ids:
+    the row IS removed (the delete landed) but the call still raises TimeoutError (the response timed out) -
+    the reaper's re-verify must count this reaped, not a false orphan."""
+    def __init__(self, dbs, deps, fail_ids=(), timeout_ids=()):
+        self.dbs, self.deps = list(dbs), list(deps)
+        self.deleted, self.fail_ids, self.timeout_ids = [], set(fail_ids), set(timeout_ids)
+
+    def call_tool(self, name, args):
+        if name == "list_databases":
+            return {"databases": self.dbs}
+        if name == "list_deployments":
+            return {"deployments": self.deps}
+        if name == "delete_database":
+            rid = args["id"]
+            if rid in self.fail_ids:
+                raise RuntimeError("delete refused")           # genuinely not deleted (row stays)
+            self.dbs = [x for x in self.dbs if str(x.get("id")) != str(rid)]
+            self.deleted.append(("db", rid))
+            if rid in self.timeout_ids:
+                raise TimeoutError("read timed out")           # deleted, but the response timed out
+            return {"deleted": True}
+        if name == "delete_deployment":
+            rid = args["id"]
+            self.deps = [x for x in self.deps if int(x.get("id")) != int(rid)]
+            self.deleted.append(("dep", rid))
+            return {"deleted": True}
+        return {}
+
+
+class TestReapRun(unittest.TestCase):
+    """The last-line token-scoped reaper: it removes the no-URL resources the agent teardown leaves (a
+    managed DB on redu, the whole resource group on azure) and NOTHING that lacks this run's token."""
+
+    def test_redu_reaps_token_db_and_deployment_only(self):
+        redu = _FakeRedu(
+            dbs=[{"id": "250", "name": "umami-acsb44fe2e7"}, {"id": "9", "name": "other-app-db"}],
+            deps=[{"id": 665, "name": "umami-acsb44fe2e7", "dname": "acsb44fe2e7-umami001.redu.cloud"},
+                  {"id": 10, "name": "someone-elses-app", "dname": "x.redu.cloud"}])
+        r = autorun.reap_run("redu", "acsb44fe2e7", "https://acsb44fe2e7-umami001.redu.cloud",
+                             log=lambda *_a: None, redu=redu)
+        self.assertEqual(r["failed"], [])
+        self.assertEqual(len(r["reaped"]), 2)
+        self.assertEqual(set(redu.deleted), {("db", "250"), ("dep", 665)})  # the other two were left alone
+
+    def test_redu_reaps_second_site_by_url_host_without_token(self):
+        # the sweep's bug: site B is named with the probe suffix, NOT the run token -> a token-only match
+        # missed it and left a live billing VM. It must be caught by its known URL host.
+        redu = _FakeRedu(dbs=[], deps=[
+            {"id": 668, "name": "probe-site-b", "dname": "probe-site-b-a6068151.redu.cloud",
+             "access_point": "https://probe-site-b-a6068151.redu.cloud"},
+            {"id": 700, "name": "unrelated", "dname": "unrelated.redu.cloud",
+             "access_point": "https://unrelated.redu.cloud"}])
+        r = autorun.reap_run("redu", "acs91f5efff",
+                             ["https://umami-acs91f5efff-7q3m2x8k.redu.cloud",
+                              "https://probe-site-b-a6068151.redu.cloud"], log=lambda *_a: None, redu=redu)
+        self.assertEqual(r["failed"], [])
+        self.assertEqual(redu.deleted, [("dep", 668)])   # only the known site-B host; not the unrelated one
+
+    def test_redu_timeout_but_actually_gone_is_reaped_not_failed(self):
+        # the sweep's other bug: delete_database returned a read TIMEOUT yet the DB was actually deleted;
+        # the reaper must re-verify and count it reaped, not raise a false orphan.
+        redu = _FakeRedu(dbs=[{"id": "251", "name": "umami-acs91f5efff"}], deps=[], timeout_ids={"251"})
+        r = autorun.reap_run("redu", "acs91f5efff", "https://umami-acs91f5efff.redu.cloud",
+                             log=lambda *_a: None, redu=redu)
+        self.assertEqual(r["failed"], [])
+        self.assertEqual(len(r["reaped"]), 1)
+        self.assertIn("confirmed gone", r["reaped"][0])
+
+    def test_redu_failed_delete_is_flagged_as_orphan(self):
+        redu = _FakeRedu(dbs=[{"id": "250", "name": "umami-acsb44fe2e7"}], deps=[], fail_ids={"250"})
+        r = autorun.reap_run("redu", "acsb44fe2e7", "https://x-acsb44fe2e7.redu.cloud",
+                             log=lambda *_a: None, redu=redu)
+        self.assertTrue(r["failed"])          # a delete that raised AND left the row is a REAL orphan
+        self.assertEqual(r["reaped"], [])
+
+    def test_azure_reaps_run_resource_groups_by_token_substring(self):
+        # the 2026-08-31 miss: the agent named the group rg-umami-<token> (not the exact rg-<token> this once
+        # looked for), so it was left billing. Now ANY group whose name CONTAINS the token is reaped, and a
+        # group without the token is left alone.
+        deleted = []
+
+        def sh(args, timeout=180):
+            if args[:3] == ["az", "group", "list"]:
+                return (0, "rg-umami-acs1a2b3c4d\nrg-acs1a2b3c4d\nrg-someone-else\n", "")
+            if args[:3] == ["az", "group", "delete"]:
+                deleted.append(args[args.index("-n") + 1])
+                return (0, "", "")
+            return (1, "", "")
+
+        r = autorun.reap_run("azure", "acs1a2b3c4d",
+                             "https://umami-acs1a2b3c4d.env.westeurope.azurecontainerapps.io",
+                             log=lambda *_a: None, sh=sh)
+        self.assertEqual(r["failed"], [])
+        self.assertEqual(set(deleted), {"rg-umami-acs1a2b3c4d", "rg-acs1a2b3c4d"})  # both token-named groups
+        self.assertNotIn("rg-someone-else", deleted)                                # unrelated group untouched
+        self.assertEqual(len(r["reaped"]), 2)
+
+    def test_no_token_is_a_noop(self):
+        r = autorun.reap_run("redu", "", "url", log=lambda *_a: None)
+        self.assertFalse(r["checked"])
+        self.assertEqual(r["reaped"], [])
+
+
 class TestReadinessPoller(unittest.TestCase):
     """The poller tails the live transcript for URL candidates, polls them, and fixes t1 on the
     first serving response, while the (simulated) agent session is still running."""
@@ -334,6 +473,99 @@ class TestReadinessPoller(unittest.TestCase):
             p.stop()
             p.join(timeout=3)
             self.assertEqual(p.candidates, [])
+
+
+class TestClaudeAuthPreflight(unittest.TestCase):
+    """The fail-fast gate that refuses to START on a dead Claude login. Root cause of the 2026-08-31
+    4-cloud wipeout: every run failed 'OAuth session expired', nothing failed fast, so deploys burned and
+    RDS/ECS/CloudSQL/an Azure RG were orphaned. Proves BOTH directions - a live round-trip passes, a dead
+    one is refused with the actionable fix - so the check cannot silently pass on a broken login."""
+
+    def _call(self, *, returncode=0, result="READY", is_error=False):
+        payload = json.dumps({"type": "result", "is_error": is_error, "result": result})
+        cp = mock.Mock(returncode=returncode, stdout=payload, stderr="")
+        with mock.patch.object(autorun.subprocess, "run", return_value=cp):
+            return autorun.preflight_claude_auth()
+
+    def test_live_login_passes(self):
+        ok, why = self._call(result="READY", is_error=False, returncode=0)
+        self.assertTrue(ok)
+        self.assertIn("OK", why)
+
+    def test_expired_oauth_is_refused(self):
+        ok, why = self._call(result="Failed to authenticate: OAuth session expired and could not be refreshed",
+                             is_error=True, returncode=0)
+        self.assertFalse(ok)
+        self.assertIn("setup-token", why)   # the durable fix is surfaced, not just "it failed"
+
+    def test_nonzero_exit_is_refused(self):
+        ok, _ = self._call(returncode=1, result="", is_error=False)
+        self.assertFalse(ok)
+
+    def test_authenticate_in_result_is_caught_even_if_flags_look_clean(self):
+        ok, _ = self._call(result="could not authenticate the request", is_error=False, returncode=0)
+        self.assertFalse(ok)
+
+    def test_low_ttl_passes_but_is_flagged(self):
+        # a valid-but-nearly-expired token is still usable (passes) but LOUDLY warns the batch may outlive it
+        creds = {"claudeAiOauth": {"accessToken": "a", "refreshToken": "r",
+                                   "expiresAt": (time.time() + 30 * 60) * 1000}}   # 30 min TTL
+        cp = mock.Mock(returncode=0, stdout=json.dumps({"is_error": False, "result": "READY"}), stderr="")
+        with mock.patch.object(autorun.subprocess, "run", return_value=cp), \
+             mock.patch("builtins.open", mock.mock_open(read_data=json.dumps(creds))):
+            ok, why = autorun.preflight_claude_auth()
+        self.assertTrue(ok)
+        self.assertIn("LOW", why)
+
+
+class TestVmBootFlakeRetry(unittest.TestCase):
+    """A microVM turn that yields NO agent result (empty out.json / session=None, exit 143) is an infra
+    boot-flake and is retried in a fresh VM; a real result (even an error) is returned immediately and NEVER
+    retried, so a genuine agent failure is not masked and a partial deploy is not double-provisioned. Root
+    cause of the medium tier failing 2026-08-31 (deploy-site-b, no-retry op) even though auth was fine."""
+
+    def _sandbox(self):
+        return {"keep_claude_tokens": ["redu"], "aws_dir": None, "creds_mounts": {}, "session_store": None}
+
+    def _call(self, side_effect):
+        with mock.patch.object(autorun.vmjob, "run_vm_job", side_effect=side_effect) as rvj, \
+             mock.patch.object(autorun, "_install_recovered_ssh_keys", lambda *_a, **_k: None):
+            out = autorun._claude_vm("task", app_dir="/x", mcp=None, model="m", resume=None,
+                                     max_turns=10, timeout=100, system=None, sandbox=self._sandbox(),
+                                     boot_log=None, resume_transcript=None)
+        return out, rvj
+
+    def _flake(self):   # guest torn down before claude wrote a result; work_dir=None so no real cleanup runs
+        return {"result": None, "exit_code": "143", "timed_out": False, "work_dir": None,
+                "boot_log": None, "session_id": None}
+
+    def _ok(self, sid="s1", is_error=False):
+        return {"result": {"is_error": is_error, "session_id": sid, "result": "done"},
+                "exit_code": "0", "timed_out": False, "work_dir": None, "boot_log": None, "session_id": sid}
+
+    def test_retries_boot_flake_until_a_real_result(self):
+        out, rvj = self._call([self._flake(), self._flake(), self._ok(sid="good")])
+        self.assertEqual(out.get("session_id"), "good")
+        self.assertEqual(rvj.call_count, 3)          # two flakes retried, third booted
+
+    def test_real_result_first_is_not_retried(self):
+        out, rvj = self._call([self._ok(sid="first")])
+        self.assertEqual(out.get("session_id"), "first")
+        self.assertEqual(rvj.call_count, 1)
+
+    def test_agent_error_result_is_not_retried(self):
+        # an agent that RAN and returned an error (has a session) is a real outcome, never a boot-flake
+        out, rvj = self._call([self._ok(sid="errsess", is_error=True)])
+        self.assertTrue(out.get("is_error"))
+        self.assertEqual(out.get("session_id"), "errsess")
+        self.assertEqual(rvj.call_count, 1)
+
+    def test_exhausts_retries_then_reports_no_result(self):
+        out, rvj = self._call([self._flake(), self._flake(), self._flake()])
+        self.assertTrue(out.get("is_error"))
+        self.assertIsNone(out.get("session_id"))
+        self.assertIn("no result", out.get("result", ""))
+        self.assertEqual(rvj.call_count, autorun.VM_BOOT_RETRIES + 1)   # bounded, does not loop forever
 
 
 if __name__ == "__main__":

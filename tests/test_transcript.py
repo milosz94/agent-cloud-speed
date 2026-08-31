@@ -137,6 +137,33 @@ class TestTraceReconstruction(unittest.TestCase):
             self.assertEqual(cur.deps, (prev.id,))
 
 
+class TestOperationWindowing(unittest.TestCase):
+    """Per-operation slot-7 split relies on slicing a resumed session by each op's [start, end] window
+    (acspeed.transcript since_epoch/until_epoch). Isolate a later op's turn and confirm the slice carries
+    only that op's spans."""
+
+    def test_since_epoch_isolates_a_later_operations_turn(self):
+        base = _BASE.timestamp()
+        rows = [
+            _assistant(0, "r1", "u0", [_tool_use("t1", "x")]),      # op1
+            _tool_result(5, "t1", uuid="u1"),                        # op1 platform 5s
+            _assistant(10, "r1b", "u2", [{"type": "text", "text": "op1 done"}]),
+            _assistant(100, "r2", "v0", [_tool_use("t2", "y")]),     # op2 starts
+            _tool_result(108, "t2", uuid="v1"),                      # op2 platform 8s
+        ]
+        path = _write(rows)
+        try:
+            spans = trace_from_transcript(path, since_epoch=base + 95, until_epoch=base + 120)
+            by = {o: v["critical"] for o, v in owner_split(spans)["owners"].items()}
+            self.assertAlmostEqual(by.get(PLATFORM, 0.0), 8.0, places=1)  # op2's tool wait only
+            self.assertEqual(by.get(AGENT, 0.0), 0.0)                     # none of op1 leaked in
+            # the FULL trace, by contrast, carries both op1 (5s) and op2 (8s) platform
+            full = {o: v["critical"] for o, v in owner_split(trace_from_transcript(path))["owners"].items()}
+            self.assertAlmostEqual(full.get(PLATFORM, 0.0), 13.0, places=1)
+        finally:
+            os.unlink(path)
+
+
 class TestTrapRegressions(unittest.TestCase):
     def test_background_poll_is_platform_not_human(self):
         # a backgrounded readiness poll returns as a bare user row; it is the platform, not a person.
@@ -162,6 +189,30 @@ class TestTrapRegressions(unittest.TestCase):
             s2 = lane_summary(path, cap=600.0)
             self.assertAlmostEqual(s2["idle_s"], 0.0, places=1)
             self.assertAlmostEqual(s2["lanes"][AGENT], 500.0, places=1)
+        finally:
+            os.unlink(path)
+
+    def test_long_platform_gap_is_platform_not_idle(self):
+        # a blocking cloud call (a provisioning / readiness poll) can block for minutes; that gap ends
+        # in a platform event, so it is platform critical-path time at ANY length, never held-out idle.
+        # (Capping it dropped real serverless provisioning wall from makespan by ~2.5x; the fix.)
+        rows = [_assistant(0, "r1", "u0", [_tool_use("t1", "wait_for_deployment")]),
+                _bg_notification(600)]  # 600s > cap, but ends on a platform (background) event
+        path = _write(rows)
+        try:
+            s = lane_summary(path, cap=300.0)
+            self.assertAlmostEqual(s["lanes"][PLATFORM], 600.0, places=1)
+            self.assertAlmostEqual(s["idle_s"], 0.0, places=1)
+            # a long gap ending on an ordinary tool_result is likewise platform, not idle.
+            rows2 = [_assistant(0, "r1", "u0", [_tool_use("t1", "deploy_app")]),
+                     _tool_result(500, "t1", uuid="u1")]
+            path2 = _write(rows2)
+            try:
+                s2 = lane_summary(path2, cap=300.0)
+                self.assertAlmostEqual(s2["lanes"][PLATFORM], 500.0, places=1)
+                self.assertAlmostEqual(s2["idle_s"], 0.0, places=1)
+            finally:
+                os.unlink(path2)
         finally:
             os.unlink(path)
 

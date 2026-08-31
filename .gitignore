@@ -13,3 +13,4 @@ sandbox/
 
 # private substrate denylist (names the infra we strip -- never publish)
 /acspeed/_substrate_rules.py
+node_modules/

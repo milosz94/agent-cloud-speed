@@ -41,6 +41,7 @@ restart). The only piece that needs a live app is an instance's own verify predi
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence
 
@@ -50,6 +51,7 @@ __all__ = [
     "VerifyResult",
     "OpContext",
     "TierOperation",
+    "DurabilityGoal",
     "OpOutcome",
     "TierInstance",
     "TierRun",
@@ -111,6 +113,11 @@ class TierOperation:
     depends_on: Sequence[str] = ()
     durable: bool = True
     fresh_session: bool = False
+    # how many agent turns the runner will give this operation to satisfy its postcondition. On a failed
+    # verify (up to this many attempts) the runner re-prompts the SAME session with the exact failure
+    # detail, so the agent can adapt (e.g. redeploy an immutable second site whose served page did not yet
+    # carry the tracking snippet). Default 1 = one shot. The op's wall spans all attempts (honest cost).
+    max_attempts: int = 1
 
     def __post_init__(self) -> None:
         if self.op_type not in OPERATION_TYPES:
@@ -119,6 +126,45 @@ class TierOperation:
             )
         if not callable(self.verify):
             raise ValueError(f"operation {self.op_id!r} has no callable verify predicate")
+        if self.max_attempts < 1:
+            raise ValueError(f"operation {self.op_id!r} max_attempts must be >= 1")
+
+
+@dataclass
+class DurabilityGoal:
+    """Restart-durability as a GOAL, not a pass/fail checkpoint (design-owner ruling, 2026-08-30).
+
+    The agent restarts its services; if a durable sentinel (the registered user, the recorded pageview)
+    did NOT survive the restart, that is not a failure to score, it is work still to do: the agent must
+    re-architect (persistent volumes, a managed or persistent datastore, restart policies, or a wholly
+    different architecture) and try again, up to ``max_iters`` restart+repair cycles. The tier is
+    achieved when EVERY durable postcondition survives a restart; the number of cycles it took is the
+    measured signal (a design that is durable on the first restart is more efficient than one that
+    needed three re-architectures). Only if the budget is exhausted with a sentinel still lost is the
+    run not durable.
+
+    ``task`` is the base restart instruction (the criterion, not the method); on a retry the runner
+    appends which specific sentinels were lost so the agent repairs the right thing. ``liveness`` is the
+    optional "app serves again after the restart" read (R6), verified each cycle."""
+
+    task: str
+    op_id: str = "restart-durability"
+    max_iters: int = 4
+    liveness: Optional[Verify] = None
+    # Optional app hook: after a cycle where some durable sentinel was LOST, re-create the state that
+    # only the HARNESS can produce (e.g. re-drive the tracked visit that generates a pageview), so the
+    # NEXT restart tests the re-architected storage against freshly-established state. Called with
+    # (ctx, lost_op_ids). Without it, state the harness generated (a pageview) cannot be recovered once
+    # a restart wipes it, so the tier can only pass if storage was durable from the start.
+    reestablish: Optional[Callable[["OpContext", List[str]], None]] = None
+
+    def __post_init__(self) -> None:
+        if self.max_iters < 1:
+            raise ValueError("durability max_iters must be >= 1")
+        if self.liveness is not None and not callable(self.liveness):
+            raise ValueError("durability liveness must be callable or None")
+        if self.reestablish is not None and not callable(self.reestablish):
+            raise ValueError("durability reestablish must be callable or None")
 
 
 @dataclass
@@ -129,6 +175,11 @@ class OpOutcome:
     op: TierOperation
     agent: dict
     verify: VerifyResult
+    # the operation's wall window (Unix epochs): slot-1 start signal (the agent turn began) and slot-5
+    # end signal (its postcondition first verified). autorun slices the session transcript to this
+    # window to compute the operation's slot-7 platform/agent split. None when not recorded.
+    started_at: Optional[float] = None
+    verified_at: Optional[float] = None
 
     @property
     def ok(self) -> bool:
@@ -150,10 +201,16 @@ class TierInstance:
     tier: str
     operations: List[TierOperation]
     teardown_hint: str = ""
+    durability: Optional[DurabilityGoal] = None
 
     def __post_init__(self) -> None:
         if not self.operations:
             raise ValueError(f"tier instance {self.name!r} has no operations")
+        if self.durability is not None and not any(op.durable for op in self.operations):
+            raise ValueError(
+                f"tier instance {self.name!r} declares a durability goal but has no durable operations "
+                "to survive the restart"
+            )
         seen: set = set()
         for op in self.operations:
             for dep in op.depends_on:
@@ -177,6 +234,13 @@ class TierRun:
     tier: str
     outcomes: List[OpOutcome]
     terminal: Dict[str, VerifyResult]
+    # the restart+repair iterations of the durability goal (report-only; they do not gate pass/fail,
+    # the terminal conjunction does). Empty when the instance has no durability goal.
+    durability_outcomes: List[OpOutcome] = field(default_factory=list)
+    durability_iters: int = 0
+    # the iteration at which every durable sentinel first survived a restart, or None if the budget
+    # was exhausted with a sentinel still lost.
+    durability_achieved: Optional[int] = None
 
     @property
     def passed(self) -> bool:
@@ -190,24 +254,70 @@ class TierRun:
         bad += [f"{op_id} (terminal)" for op_id, v in self.terminal.items() if not v.ok]
         return bad
 
+    # Part-5 scoring: checkpoint partial credit plus a full-completion bonus, so a run that provisions
+    # and wires but misses the recorded-visit or restart still scores, and the break point is located.
+    FULL_COMPLETION_BONUS = 0.5
+
+    def score(self) -> dict:
+        """Graded score, not just pass/fail. Each operation's postcondition is a checkpoint; the
+        restart-durability goal is one more. ``partial_credit`` is the fraction of checkpoints met
+        (0..1); a fully-complete run additionally earns ``FULL_COMPLETION_BONUS``, so completing strictly
+        beats a high partial. The failing checkpoint(s) are named so the break point is located."""
+        checkpoints = [(o.op.op_id, o.ok) for o in self.outcomes]
+        ran_durability_goal = self.durability_iters > 0 or self.durability_achieved is not None
+        if ran_durability_goal:
+            checkpoints.append(("restart-durability", self.durability_achieved is not None))
+        else:
+            checkpoints.append(("terminal-durability", all(v.ok for v in self.terminal.values())))
+        n = len(checkpoints)
+        passed = sum(1 for _, ok in checkpoints if ok)
+        partial = round(passed / n, 4) if n else 0.0
+        completed = self.passed
+        return {
+            "checkpoints": [{"name": nm, "ok": ok} for nm, ok in checkpoints],
+            "passed": passed,
+            "total": n,
+            "partial_credit": partial,
+            "completed": completed,
+            "full_completion_bonus": self.FULL_COMPLETION_BONUS if completed else 0.0,
+            "score": round(partial + (self.FULL_COMPLETION_BONUS if completed else 0.0), 4),
+            "break_point": self.failures(),
+        }
+
+    def _op_row(self, o: "OpOutcome") -> dict:
+        wall = None
+        if o.started_at is not None and o.verified_at is not None:
+            wall = round(max(0.0, o.verified_at - o.started_at), 1)
+        return {
+            "op_id": o.op.op_id,
+            "op_type": o.op.op_type,
+            "durable": o.op.durable,
+            "verify_ok": o.verify.ok,
+            "verify_detail": o.verify.detail,
+            "agent_error": bool(o.agent.get("is_error")),
+            "agent_session": o.agent.get("session_id"),
+            "agent_cost_usd": o.agent.get("total_cost_usd"),
+            # slot-1 / slot-5 wall window; autorun fills "split" (slot 7) by slicing the transcript.
+            "started_at": o.started_at,
+            "verified_at": o.verified_at,
+            "wall_s": wall,
+            "split": None,
+        }
+
     def summary(self) -> dict:
         return {
             "instance": self.instance_name,
             "tier": self.tier,
             "passed": self.passed,
-            "operations": [
-                {
-                    "op_id": o.op.op_id,
-                    "op_type": o.op.op_type,
-                    "durable": o.op.durable,
-                    "verify_ok": o.verify.ok,
-                    "verify_detail": o.verify.detail,
-                    "agent_error": bool(o.agent.get("is_error")),
-                    "agent_session": o.agent.get("session_id"),
-                    "agent_cost_usd": o.agent.get("total_cost_usd"),
-                }
-                for o in self.outcomes
-            ],
+            "score": self.score(),
+            "operations": [self._op_row(o) for o in self.outcomes],
+            "durability": {
+                # restart-durability as a goal: how many restart+repair cycles it took (design ruling)
+                "iters": self.durability_iters,
+                "achieved_on_iter": self.durability_achieved,
+                "achieved": self.durability_achieved is not None,
+                "cycles": [self._op_row(o) for o in self.durability_outcomes],
+            },
             "terminal_reverify": {
                 op_id: {"ok": v.ok, "detail": v.detail} for op_id, v in self.terminal.items()
             },
@@ -238,36 +348,117 @@ def run_tier(
     resume_sid: Optional[str] = None
 
     for op in instance.operations:
-        use_sid = None if op.fresh_session else resume_sid
-        log(f"operation {op.op_id} ({op.op_type}): agent turn (resume={use_sid or 'new'})")
-        agent = run_agent(op, ctx, use_sid) or {}
+        started_at = time.time()
+        agent: dict = {}
+        result: Optional[VerifyResult] = None
+        for attempt in range(1, op.max_attempts + 1):
+            use_sid = None if (op.fresh_session and attempt == 1) else resume_sid
+            # on a retry, hand the agent the SAME task plus the exact postcondition failure to adapt to.
+            run_op = op
+            if attempt > 1 and result is not None:
+                run_op = TierOperation(
+                    op_id=op.op_id, op_type=op.op_type, durable=op.durable,
+                    task=(op.task + f"\n\nYOUR PREVIOUS ATTEMPT DID NOT SATISFY THE CHECK: "
+                          f"{result.detail}. Fix exactly that and complete the operation."),
+                    verify=op.verify)
+            log(f"operation {op.op_id} ({op.op_type}): agent turn "
+                f"(resume={use_sid or 'new'}, attempt {attempt}/{op.max_attempts})")
+            agent = run_agent(run_op, ctx, use_sid) or {}
+            sid = agent.get("session_id")
+            if sid and resume_sid is None:
+                resume_sid = sid
+            url = agent.get("url")
+            if url:
+                ctx.url = url
+            result = op.verify(ctx)
+            if result.ok:
+                if attempt > 1:
+                    log(f"operation {op.op_id}: recovered on attempt {attempt}")
+                break
+            log(f"operation {op.op_id}: verify FAIL (attempt {attempt}/{op.max_attempts}) - {result.detail}")
 
-        # Capture the session to resume, and the served URL, from whatever the turn produced. The
-        # first turn that yields a session id becomes the deployment session the rest resume.
-        sid = agent.get("session_id")
-        if sid and resume_sid is None:
-            resume_sid = sid
-        url = agent.get("url")
-        if url:
-            ctx.url = url
+        verified_at = time.time()
+        log(f"operation {op.op_id}: verify {'OK' if result and result.ok else 'FAIL'} - "
+            f"{result.detail if result else 'no result'}")
+        outcomes.append(OpOutcome(op=op, agent=agent, verify=result or VerifyResult(False, "no attempt"),
+                                  started_at=started_at, verified_at=verified_at))
 
-        result = op.verify(ctx)
-        log(f"operation {op.op_id}: verify {'OK' if result.ok else 'FAIL'} - {result.detail}")
-        outcomes.append(OpOutcome(op=op, agent=agent, verify=result))
-
+    durable_ops = [op for op in instance.operations if op.durable]
     terminal: Dict[str, VerifyResult] = {}
-    for op in instance.operations:
-        if not op.durable:
-            continue
-        v = op.verify(ctx)
-        log(f"terminal re-verify {op.op_id}: {'OK' if v.ok else 'FAIL'} - {v.detail}")
-        terminal[op.op_id] = v
+    dur_outcomes: List[OpOutcome] = []
+    dur_iters = 0
+    dur_achieved: Optional[int] = None
+
+    if instance.durability is None:
+        # No durability goal: a single terminal re-verify of every durable postcondition.
+        for op in durable_ops:
+            v = op.verify(ctx)
+            log(f"terminal re-verify {op.op_id}: {'OK' if v.ok else 'FAIL'} - {v.detail}")
+            terminal[op.op_id] = v
+    else:
+        # Restart-durability as a GOAL: restart, and if any durable sentinel did not survive, hand the
+        # agent the list of what was lost and let it re-architect, up to max_iters cycles. The terminal
+        # conjunction is the LAST cycle's re-read of every durable postcondition; the run is durable iff
+        # they all hold within the budget (dur_achieved set to that cycle).
+        g = instance.durability
+        lost: List[str] = []
+        for it in range(1, g.max_iters + 1):
+            dur_iters = it
+            task = g.task
+            if lost:
+                task = (
+                    task + "\n\nAFTER YOUR LAST RESTART these did NOT survive: " + ", ".join(lost)
+                    + ". The deployment is not durable yet. Change whatever is necessary - persistent "
+                    "volumes, a managed or persistent datastore, restart policies, or a different "
+                    "architecture - so that ALL of them survive a restart, then restart again to prove it."
+                )
+            restart_op = TierOperation(
+                op_id=g.op_id, op_type=OPERATE_MUTATE, task=task,
+                verify=(g.liveness or (lambda _c: VerifyResult(True, "restart turn (no liveness read)"))),
+                durable=False,
+            )
+            log(f"durability cycle {it}/{g.max_iters}: restart + repair turn")
+            started_at = time.time()
+            agent = run_agent(restart_op, ctx, resume_sid) or {}
+            sid = agent.get("session_id")
+            if sid and resume_sid is None:
+                resume_sid = sid
+            url = agent.get("url")
+            if url:
+                ctx.url = url
+            live = restart_op.verify(ctx)  # R6: the app serves again after the restart
+            verified_at = time.time()
+            results = {op.op_id: op.verify(ctx) for op in durable_ops}
+            dur_outcomes.append(OpOutcome(op=restart_op, agent=agent, verify=live,
+                                          started_at=started_at, verified_at=verified_at))
+            terminal = results
+            lost = [op_id for op_id, v in results.items() if not v.ok]
+            log(
+                f"durability cycle {it}: serves={'yes' if live.ok else 'no'}; "
+                + ("all durable state survived the restart" if not lost else f"LOST {lost}")
+            )
+            if not lost:
+                dur_achieved = it
+                break
+            if g.reestablish is not None and it < g.max_iters:
+                # re-create harness-generated state (e.g. the tracked visit) on the new architecture so
+                # the next restart tests persistence of freshly-established state, not a lost event.
+                try:
+                    g.reestablish(ctx, lost)
+                    log(f"durability cycle {it}: re-established {lost} before the next restart")
+                except Exception as e:  # noqa: BLE001 - reestablish is best-effort
+                    log(f"durability cycle {it}: reestablish raised {e!r} (ignored)")
+        if dur_achieved is None:
+            log(f"durability NOT achieved within {g.max_iters} cycles; still lost: {lost}")
 
     run = TierRun(
-        instance_name=instance.name, tier=instance.tier, outcomes=outcomes, terminal=terminal
+        instance_name=instance.name, tier=instance.tier, outcomes=outcomes, terminal=terminal,
+        durability_outcomes=dur_outcomes, durability_iters=dur_iters, durability_achieved=dur_achieved,
     )
     log(
         f"tier {instance.tier} / {instance.name}: "
         f"{'PASS' if run.passed else 'FAIL ' + ', '.join(run.failures())}"
+        + (f" (durable on cycle {dur_achieved}/{dur_iters})" if dur_achieved
+           else (f" (durability NOT achieved in {dur_iters} cycles)" if instance.durability else ""))
     )
     return run
