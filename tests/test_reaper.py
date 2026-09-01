@@ -50,9 +50,10 @@ class FakeAWS:
             return 0, "", ""
         if "delete-security-group" in a:
             gid = args[args.index("--group-id") + 1]
-            # DEPENDENCY: refuse while any load balancer still exists
-            if self.lbs:
-                return 1, "", "DependencyViolation: resource in use"
+            # DEPENDENCY: the alb SG (sg-111) cannot delete while the app SG (sg-222) still references it,
+            # so it FAILS on pass 1 and only succeeds a later pass -> genuinely exercises retry-until-stable.
+            if gid == "sg-111" and "sg-222" in self.sgs.values():
+                return 1, "", "DependencyViolation: an SG still references this group"
             self.sgs = {k: v for k, v in self.sgs.items() if v != gid}
             self.deleted.append(gid)
             return 0, "", ""

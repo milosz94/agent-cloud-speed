@@ -345,24 +345,29 @@ class TestReapRun(unittest.TestCase):
         self.assertTrue(r["failed"])          # a delete that raised AND left the row is a REAL orphan
         self.assertEqual(r["reaped"], [])
 
-    def test_azure_reaps_run_resource_groups_by_token_substring(self):
-        # the 2026-08-31 miss: the agent named the group rg-umami-<token> (not the exact rg-<token> this once
-        # looked for), so it was left billing. Now ANY group whose name CONTAINS the token is reaped, and a
-        # group without the token is left alone.
+    def test_azure_reaps_run_resource_groups_universal(self):
+        # azure now delegates to the universal reaper: match ANY group carrying the token (rg-umami-<token>
+        # AND rg-<token>), collapse the run's resources to their groups, delete the groups (async --no-wait),
+        # leave an unrelated group alone, and do NOT re-report an async-deleting group as a survivor.
+        import json as _json
         deleted = []
 
         def sh(args, timeout=180):
-            if args[:3] == ["az", "group", "list"]:
-                return (0, "rg-umami-acs1a2b3c4d\nrg-acs1a2b3c4d\nrg-someone-else\n", "")
-            if args[:3] == ["az", "group", "delete"]:
+            a = " ".join(args)
+            if "resource list" in a:
+                return (0, _json.dumps([{"name": "umami-acs1a2b3c4d",
+                                         "resourceGroup": "rg-umami-acs1a2b3c4d"}]), "")
+            if "group list" in a:
+                return (0, _json.dumps(["rg-umami-acs1a2b3c4d", "rg-acs1a2b3c4d", "rg-someone-else"]), "")
+            if "group delete" in a:
                 deleted.append(args[args.index("-n") + 1])
-                return (0, "", "")
-            return (1, "", "")
+                return (0, "", "")   # --no-wait accepts async; group may still list until gone
+            return (0, "[]", "")
 
         r = autorun.reap_run("azure", "acs1a2b3c4d",
                              "https://umami-acs1a2b3c4d.env.westeurope.azurecontainerapps.io",
                              log=lambda *_a: None, sh=sh)
-        self.assertEqual(r["failed"], [])
+        self.assertEqual(r["failed"], [])                                           # no false survivors
         self.assertEqual(set(deleted), {"rg-umami-acs1a2b3c4d", "rg-acs1a2b3c4d"})  # both token-named groups
         self.assertNotIn("rg-someone-else", deleted)                                # unrelated group untouched
         self.assertEqual(len(r["reaped"]), 2)

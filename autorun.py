@@ -221,6 +221,18 @@ NAMING_INSTRUCTION = (
     "or dname, OVERRIDE it for this run: whatever name you choose, its hostname must still contain this "
     "exact token."
 )
+# The SAME token-naming rule, applied to a LATER provision (Medium's second site). Without it the second
+# site was deployed under a fixed name (e.g. 'alcove'), so successive runs collided on the same shared
+# service (broke run-independence) and the token-scoped reaper could not find it to tear it down. Reusing
+# the identical mechanism the primary already relies on makes the second site collision-free and reapable
+# on any cloud (naming is platform-agnostic). Enforced by the SITE_B_URL token check in drive_suite.
+SECOND_SITE_NAMING = (
+    " Name this second site so that its public hostname ALSO contains the exact token '{token}' (for "
+    "example '<name>-{token}'), the SAME token that is already in the first app's URL. This is how this "
+    "run finds and tears down the second site, and how it is kept distinct from any other run's second "
+    "site; a fixed shared name would collide with other runs. If the application's source suggests a fixed "
+    "name, OVERRIDE it so the served hostname carries this exact token."
+)
 # Cloud-agnostic autonomy wrapper (proceed non-interactively). NOT task guidance.
 AUTONOMY = (
     "This is a fully autonomous, non-interactive session. Never ask the user questions and never "
@@ -436,7 +448,12 @@ def drive_suite(inst, prof: dict, model: str | None, deploy_sid: str | None, url
         if sandbox:
             op_boot = os.path.join(out_dir, f"run{i:02d}_op_{_slug(op.op_id)}.bootlog")
             open(op_boot, "w").close()
-        r = _claude(op.task, cwd=cwd, mcp=prof["mcp_config"], model=model, resume=rsid,
+        task = op.task
+        if op.op_type == acs_op.PROVISION and op.op_id != first_id and prof.get("run_token"):
+            # a LATER provision is Medium's second site: apply the SAME token-naming rule the primary uses,
+            # so it is collision-free across runs and the token-scoped reaper can tear it down.
+            task = op.task + SECOND_SITE_NAMING.format(token=prof["run_token"])
+        r = _claude(task, cwd=cwd, mcp=prof["mcp_config"], model=model, resume=rsid,
                     sandbox=sandbox, boot_log=op_boot,
                     resume_transcript=(find_transcript(rsid) if sandbox else None),
                     max_turns=120, timeout=DEPLOY_TIMEOUT_S)
@@ -459,6 +476,14 @@ def drive_suite(inst, prof: dict, model: str | None, deploy_sid: str | None, url
                 # fallback: a cloud-pattern URL in the report that is not the umami/deploy URL
                 picked = pick_url(res_text, prof["url_re"], prof.get("substrate_hosts"))
                 newu = next((u for u in picked["candidates"] if _hn(u) != _hn(url or "")), None)
+            # ENFORCE the token: a second-site URL that does not carry this run's token is a collision risk
+            # (a fixed / shared name) and is not reapable, so reject it. The op then re-verifies and the agent,
+            # which was told to token-name the site, redeploys it correctly. Mirrors the primary require_token.
+            rt = (prof.get("run_token") or "").lower()
+            if newu and rt and rt not in newu.lower():
+                _log(f"suite op {op.op_id}: SITE_B_URL {newu} does NOT carry the run token '{rt}' "
+                     f"(collision risk / not reapable); rejecting so the op re-verifies for a token-named site")
+                newu = None
             if newu:
                 r["url"] = newu
                 _log(f"suite op {op.op_id}: resolved a new provision URL {newu}")
@@ -650,33 +675,18 @@ def reap_run(cloud: str, run_token: str, urls=(), *, log=None, sh=None, redu=Non
             except Exception as e:  # noqa: BLE001
                 log(f"reap redu: list_databases failed (non-fatal): {e!r}")
 
-        elif cloud == "azure":
-            # a run's resources live in resource group(s) named for it, but the AGENT chooses the name and
-            # was seen using rg-umami-<token> (not the exact rg-<token> this once looked for), so the group
-            # was missed and left billing (2026-08-31). Match ANY group whose name CONTAINS the run token;
-            # deleting a group removes EVERY resource in it (Postgres, Container App env, storage, IPs) at once.
-            _, out, _ = _sh(["az", "group", "list", "--query", "[].name", "-o", "tsv"], timeout=60)
-            for rg in [g for g in out.split() if tok in g.lower()]:
-                rc, _, err = _sh(["az", "group", "delete", "-n", rg, "--yes", "--no-wait"], timeout=120)
-                (reaped if rc == 0 else failed).append(f"azure resource group {rg}"
-                                                       + ("" if rc == 0 else f": {err[:120]}"))
-
-        elif cloud == "gcp":
-            _, out, _ = _sh(["gcloud", "sql", "instances", "list", "--format=value(name)"], timeout=90)
-            for name in [n for n in out.split() if tok in n.lower()]:
-                rc, _, err = _sh(["gcloud", "sql", "instances", "delete", name, "--quiet"], timeout=300)
-                (reaped if rc == 0 else failed).append(f"gcp cloudsql {name}"
-                                                       + ("" if rc == 0 else f": {err[:120]}"))
-
-        elif cloud == "aws":
-            p = ["aws", "--profile", "acspeed-batch", "--region", "us-east-1"]
-            _, out, _ = _sh(p + ["rds", "describe-db-instances", "--query",
-                                 "DBInstances[].DBInstanceIdentifier", "--output", "text"], timeout=90)
-            for name in [n for n in out.split() if tok in n.lower()]:
-                rc, _, err = _sh(p + ["rds", "delete-db-instance", "--db-instance-identifier", name,
-                                      "--skip-final-snapshot", "--delete-automated-backups"], timeout=180)
-                (reaped if rc == 0 else failed).append(f"aws rds {name}"
-                                                       + ("" if rc == 0 else f": {err[:120]}"))
+        else:
+            # aws / gcp / azure: UNIVERSAL token-scoped teardown (acspeed/reaper.py). It enumerates EVERY
+            # resource carrying the run token across services (each cloud's own inventory) and deletes it in a
+            # retry-until-stable loop, replacing the old per-service branches that reaped only RDS / Cloud SQL /
+            # one resource-group pattern and leaked everything else (security groups, IAM roles, log groups,
+            # load balancers, Cloud Run services, Artifact Registry). ``sh`` is threaded through for tests.
+            from acspeed.reaper import reap_universal
+            ru = reap_universal(cloud, run_token, list(urls), dry_run=False,
+                                run=(sh if sh is not None else None), log=log)
+            reaped.extend(ru["deleted"])
+            for f in ru["failed"]:
+                failed.append(f"{f['res']} ({f['reason']})" if isinstance(f, dict) else str(f))
     except Exception as e:  # noqa: BLE001 - the reaper must never break the run loop
         log(f"reap {cloud}: unexpected error (non-fatal): {e!r}")
 
@@ -1436,6 +1446,7 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
     # (distinct token every run, so a sequential run never matches a prior run's leftover); a caller may
     # pin `prof["run_token"]` for reproducibility / tests.
     run_token = prof.get("run_token") or ("acs" + os.urandom(4).hex())
+    prof["run_token"] = run_token   # share it with drive_suite (second-site naming + enforcement) and reap
     task_prompt = prof["task_prompt"] + NAMING_INSTRUCTION.format(token=run_token)
     _log(f"agent: deploying (session A)...  [{'microVM + ' if sandbox else ''}external readiness poller]  "
          f"run-token={run_token} (only a hostname carrying it is this run's deployment)")

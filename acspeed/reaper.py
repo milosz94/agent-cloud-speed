@@ -282,48 +282,51 @@ def reap_universal(cloud: str, run_token: str, urls=(), *, dry_run: bool = True,
             return []
 
     planned, deleted, failed = [], [], []
-    seen_plan = set()
+    # ``issued`` = resources whose delete returned success (which on azure is an ASYNC --no-wait accept, so
+    # the group can still show as Deleting). They are never re-enumerated or re-reported as a survivor; a
+    # delete that FAILED (rc != 0, e.g. a dependency) is NOT here, so it is retried next pass.
+    seen_plan, issued = set(), set()
     passes = 0
+    KINDS = {"aws": _AWS_KINDS, "gcp": _GCP_KINDS, "azure": _AZ_KINDS}[cloud]
     for _p in range(max_passes):
         passes += 1
-        resources = enum()
+        resources = [r for r in enum() if str(r) not in issued]
         if not resources:
             break
-        # record the plan once per unique resource (first time we see it)
-        for r in resources:
+        for r in resources:                       # record the plan on first sighting
             key = str(r)
             if key not in seen_plan:
                 seen_plan.add(key)
                 planned.append(r)
-                m = _DELETE[cloud]
-                if (cloud == "aws" and r.kind not in _AWS_KINDS) or \
-                   (cloud == "gcp" and r.kind not in _GCP_KINDS) or \
-                   (cloud == "azure" and r.kind not in _AZ_KINDS):
-                    failed.append({"res": str(r), "reason": "no delete mapping (disclosed, not skipped)"})
+                if r.kind not in KINDS:
+                    failed.append({"res": key, "reason": "no delete mapping (disclosed, not skipped)"})
         if dry_run:
             break  # nothing changes, so one enumeration pass is the whole plan
         progress = 0
         for r in resources:
+            if r.kind not in KINDS:
+                continue                          # unmapped: already disclosed, cannot delete
             try:
                 if cloud == "aws":
-                    rc, out, err = _aws_delete(r, run, region, profile)
+                    rc, _o, _e = _aws_delete(r, run, region, profile)
                 elif cloud == "gcp":
-                    rc, out, err = _gcp_delete(r, run)
+                    rc, _o, _e = _gcp_delete(r, run)
                 else:
-                    rc, out, err = _azure_delete(r, run)
-            except Exception as e:  # noqa: BLE001
-                rc, err = 1, repr(e)
-            if rc == 0:
+                    rc, _o, _e = _azure_delete(r, run)
+            except Exception:  # noqa: BLE001
+                rc = 1
+            if rc == 0:                           # success: sync-gone, or an async delete was accepted
+                issued.add(str(r))
                 deleted.append(str(r))
                 progress += 1
-            # a non-zero here may be a dependency (retried next pass); only the final remainder is a failure
+            # a non-zero may be a dependency (retried next pass); only the final remainder is a real failure
         if progress == 0:
             break  # nothing deletable this pass -> stuck (dependency deadlock or a real orphan)
 
     if not dry_run:
-        remaining = enum()
-        for r in remaining:
-            failed.append({"res": str(r), "reason": "survived deletion (real orphan)"})
+        for r in enum():
+            if str(r) not in issued:
+                failed.append({"res": str(r), "reason": "survived deletion (real orphan)"})
 
     result = {"planned": [str(r) for r in planned], "deleted": deleted,
               "failed": failed, "passes": passes, "checked": True, "dry_run": dry_run}
