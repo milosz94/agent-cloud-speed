@@ -227,11 +227,12 @@ NAMING_INSTRUCTION = (
 # the identical mechanism the primary already relies on makes the second site collision-free and reapable
 # on any cloud (naming is platform-agnostic). Enforced by the SITE_B_URL token check in drive_suite.
 SECOND_SITE_NAMING = (
-    " Name this second site so that its public hostname ALSO contains the exact token '{token}' (for "
-    "example '<name>-{token}'), the SAME token that is already in the first app's URL. This is how this "
-    "run finds and tears down the second site, and how it is kept distinct from any other run's second "
-    "site; a fixed shared name would collide with other runs. If the application's source suggests a fixed "
-    "name, OVERRIDE it so the served hostname carries this exact token."
+    " Name this second site so that its public hostname contains BOTH the exact token '{token}' (the SAME "
+    "token already in the first app's URL) AND the literal marker 'siteb' (written exactly, no hyphen "
+    "inside it), for example 'siteb-{token}'. The token is how this run finds and tears down the second "
+    "site; the 'siteb' marker is how the harness tells this second site apart from the first app when both "
+    "are running at once, so it MUST appear in the hostname. If the application's source suggests a fixed "
+    "name, OVERRIDE it so the served hostname carries this exact token and the 'siteb' marker."
 )
 # Cloud-agnostic autonomy wrapper (proceed non-interactively). NOT task guidance.
 AUTONOMY = (
@@ -739,6 +740,14 @@ def _stage_transcript_for_resume(sid: str | None, cwd: str) -> None:
 AUX_HOSTS = re.compile(r"consul|jaeger|zipkin|grafana|prometheus|kibana|console|"
                        r"mongo|redis|memcached|rabbitmq|kafka|adminer", re.I)
 APP_HINT = re.compile(r"front|web|app|hotel|reserv", re.I)
+# The second site (Medium tier) carries the run token like the primary, so a token-only picker cannot tell
+# them apart when both are up at once (Medium B provisions them concurrently, and the readiness poller
+# locked onto whichever served first - the run05 duplicate-token bug). SECOND_SITE_NAMING makes the agent
+# stamp the literal 'siteb' marker into the second site's hostname; pick_url drops any 'siteb' host from the
+# PRIMARY pool, so the poller locks umami, never the second site (and returns None to keep polling if only
+# the second site has served yet). Matched as a hostname label (bounded by - . / or the host edges) so
+# 'sitebuilder' and the like are not false positives.
+SECOND_SITE_RE = re.compile(r"(?i)(?:^|[-./])siteb(?:[-./]|$)")
 
 
 def pick_url(text: str, url_re: str, substrate_re: str | None = None,
@@ -762,9 +771,12 @@ def pick_url(text: str, url_re: str, substrate_re: str | None = None,
         if require_token and require_token not in u:   # only THIS run's deployment (its hostname carries the token)
             continue
         cands.append(u)
-    app = [u for u in cands if not AUX_HOSTS.search(u)]
+    # the second site carries the run token too, but is never the PRIMARY app: drop it from every pool so
+    # the poller locks umami, and returns None (keep polling) when only the second site has served yet.
+    primary = [u for u in cands if not SECOND_SITE_RE.search(u)]
+    app = [u for u in primary if not AUX_HOSTS.search(u)]
     hinted = [u for u in app if APP_HINT.search(u)]
-    pool = hinted or app or cands
+    pool = hinted or app or primary
     return {"url": pool[0] if pool else None, "candidates": cands, "ambiguous": len(pool) > 1}
 
 

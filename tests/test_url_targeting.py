@@ -39,6 +39,29 @@ class TestTokenTargeting(unittest.TestCase):
         self.assertIsNone(got["url"])
         self.assertEqual(got["candidates"], [])
 
+    def test_second_site_never_selected_as_primary(self):
+        # the Medium-B duplicate-token bug: umami AND the second site both carry the run token, provisioned
+        # concurrently, and the poller locked whichever served first. The 'siteb' marker keeps the second
+        # site out of the primary pool, so umami is picked even when the second site served first.
+        token = "acs8acb9180"
+        blob = f"https://siteb-{token}.redu.cloud served first then https://umami-{token}.redu.cloud"
+        got = pick_url(blob, REDU_RE, REDU_SUB, require_token=token)
+        self.assertEqual(got["url"], f"https://umami-{token}.redu.cloud")
+        self.assertFalse(got["ambiguous"])  # the second site is excluded, so no ambiguity remains
+
+    def test_only_second_site_served_yields_no_url(self):
+        # if ONLY the second site has served yet, return None so the poller keeps waiting for umami
+        # rather than locking the second site as the primary.
+        token = "acs8acb9180"
+        got = pick_url(f"https://siteb-{token}.redu.cloud", REDU_RE, REDU_SUB, require_token=token)
+        self.assertIsNone(got["url"])
+
+    def test_siteb_marker_is_bounded_no_false_positive(self):
+        # 'sitebuilder' in a host must NOT be mistaken for the second-site marker.
+        token = "acs1a2b3c4d"
+        got = pick_url(f"https://sitebuilder-{token}.redu.cloud", REDU_RE, REDU_SUB, require_token=token)
+        self.assertEqual(got["url"], f"https://sitebuilder-{token}.redu.cloud")
+
     def test_token_appears_in_the_hostname_not_only_a_path(self):
         # a foreign URL that merely mentions the token in a path must NOT be accepted; the token has to
         # be in the hostname. (Here the whole-URL substring is what we test; a path-only mention still
