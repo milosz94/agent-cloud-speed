@@ -13,9 +13,17 @@ from ..suite import TierInstance
 from . import umami_medium
 from . import umami_hard
 
+def _umami_medium_b(**kwargs) -> TierInstance:
+    """Medium B: the SAME umami Medium workload, DISCLOSED regime (full plan up front). Same operations,
+    verifies, durability and gold as Medium A; only plan_upfront differs, so a Medium A run and a Medium B
+    run on the same cloud/goal give the paired value-of-plan-lookahead gap M_online - M_disclosed."""
+    return umami_medium.build(plan_upfront=True, **kwargs)
+
+
 # name -> factory(**kwargs) -> TierInstance
 _REGISTRY: Dict[str, Callable[..., TierInstance]] = {
     "umami-medium": umami_medium.build,
+    "umami-medium-b": _umami_medium_b,
     "umami-hard": umami_hard.build,
 }
 

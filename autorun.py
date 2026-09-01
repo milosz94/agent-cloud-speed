@@ -1447,7 +1447,14 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
     # pin `prof["run_token"]` for reproducibility / tests.
     run_token = prof.get("run_token") or ("acs" + os.urandom(4).hex())
     prof["run_token"] = run_token   # share it with drive_suite (second-site naming + enforcement) and reap
+    # Build the tier instance ONCE, here, so (a) a plan_upfront (Medium B, DISCLOSED) instance discloses the
+    # full plan in the deploy prompt below (the agent then schedules with lookahead), and (b) the SAME
+    # instance and per-run sentinel drive the suite and the teardown later. Online (Medium A) or no suite:
+    # nothing extra is added to the deploy prompt.
+    suite_inst = acs_suites.get_instance(prof["suite"]) if prof.get("suite") else None
     task_prompt = prof["task_prompt"] + NAMING_INSTRUCTION.format(token=run_token)
+    if suite_inst is not None and getattr(suite_inst, "plan_upfront", False):
+        task_prompt = task_prompt + acs_suite.full_plan_preamble(suite_inst, run_token)
     _log(f"agent: deploying (session A)...  [{'microVM + ' if sandbox else ''}external readiness poller]  "
          f"run-token={run_token} (only a hostname carrying it is this run's deployment)")
     t0 = time.monotonic()
@@ -1632,10 +1639,8 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
     #     sentinel AFTER the restart (CP7). Off-clock relative to t1; runs before deprovision so the
     #     capability/cost axes above measured the un-perturbed deployment. Never skips deprovision.
     tier_run = None
-    suite_inst = None
-    if prof.get("suite") and url and reached_healthy:
+    if suite_inst is not None and url and reached_healthy:   # suite_inst built once, above (before deploy)
         try:
-            suite_inst = acs_suites.get_instance(prof["suite"])   # built ONCE; shared with teardown
             tier_run = drive_suite(suite_inst, prof, model, sid, url, sandbox, out_dir, i, cwd)
         except Exception as e:  # noqa: BLE001 - a suite error must never skip deprovision
             _log(f"suite: aborted (non-fatal; deprovision still runs): {e!r}")

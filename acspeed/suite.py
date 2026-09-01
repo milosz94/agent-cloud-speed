@@ -56,6 +56,7 @@ __all__ = [
     "TierInstance",
     "TierRun",
     "run_tier",
+    "full_plan_preamble",
 ]
 
 
@@ -202,6 +203,13 @@ class TierInstance:
     operations: List[TierOperation]
     teardown_hint: str = ""
     durability: Optional[DurabilityGoal] = None
+    # Information regime. False (default) = ONLINE (Medium A): operations are revealed one at a time, so the
+    # agent cannot overlap work it has not yet seen. True = DISCLOSED (Medium B): the full plan is handed to
+    # the agent up front (see full_plan_preamble), so it can schedule with lookahead (overlap independent
+    # provisions, choose durable storage from the first step). The paired makespan gap
+    # M_online - M_disclosed is the VALUE OF PLAN LOOKAHEAD (Part-3 Sec-5 clairvoyance gap), reported as a
+    # tier-level companion; it is NOT the Sec-4 selection excess (M_twin - F_C), which stays reported per run.
+    plan_upfront: bool = False
 
     def __post_init__(self) -> None:
         if not self.operations:
@@ -323,6 +331,32 @@ class TierRun:
             },
             "failures": self.failures(),
         }
+
+
+def full_plan_preamble(instance: TierInstance, token: str = "") -> str:
+    """Medium B (DISCLOSED regime): the complete operation plan revealed up front, so the agent can
+    schedule with lookahead (overlap independent provisions, pick durable storage from the first step)
+    instead of discovering each operation one at a time. Discloses WHAT each operation's goal is, never
+    HOW to do it. Prepended to the deploy prompt for a ``plan_upfront`` instance; the online regime
+    (Medium A) omits it and reveals operations one at a time."""
+    lines = []
+    for n, op in enumerate(instance.operations, 1):
+        lines.append(f"  {n}. {op.task.strip()}")
+    if instance.durability is not None:
+        lines.append(f"  {len(instance.operations) + 1}. {instance.durability.task.strip()}")
+    plan = "\n".join(lines)
+    naming = ("" if not token else
+              "\n\nEvery resource you provision for this run (the app, its datastore, the second site) must "
+              "carry this run's token '" + token + "' in its public hostname, so this run's resources are "
+              "uniquely identified and torn down cleanly.")
+    return (
+        "\n\nYOU ARE GIVEN THE COMPLETE PLAN UP FRONT. This deployment will require ALL of the following, "
+        "and you know every one of them now (each will be checked afterward):\n\n" + plan +
+        "\n\nBecause you know the whole plan now, schedule it freely and efficiently: provision independent "
+        "pieces concurrently rather than one after another, and choose durable storage and the right "
+        "architecture from the very first step so nothing has to be migrated or rebuilt later. Complete the "
+        "ENTIRE plan in this session now; the later steps only confirm each part is in place." + naming
+    )
 
 
 def run_tier(

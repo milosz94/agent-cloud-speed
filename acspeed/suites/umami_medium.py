@@ -492,9 +492,14 @@ def _integration_recorded(ctx: OpContext) -> VerifyResult:
 
 # ---- the tier instance -------------------------------------------------------------------------
 
-def build(probe: Optional[dict] = None, durability_max_iters: int = 4) -> TierInstance:
+def build(probe: Optional[dict] = None, durability_max_iters: int = 4,
+          plan_upfront: bool = False) -> TierInstance:
     """Build the umami Medium instance. ``probe`` is the per-run sentinel; a fresh one is generated if
-    not supplied. ``durability_max_iters`` caps the restart+repair cycles (the durability goal)."""
+    not supplied. ``durability_max_iters`` caps the restart+repair cycles (the durability goal).
+    ``plan_upfront`` selects the information regime: False = ONLINE (Medium A, operations revealed one at
+    a time); True = DISCLOSED (Medium B, the full plan handed to the agent up front so it can schedule
+    with lookahead). Both share the SAME operations, verifies, durability goal and gold; only the regime
+    differs, so the paired makespan gap M_online - M_disclosed is the value of plan lookahead."""
     probe = probe or _make_probe()
 
     def _seed(ctx: OpContext) -> None:
@@ -591,7 +596,8 @@ def build(probe: Optional[dict] = None, durability_max_iters: int = 4) -> TierIn
     )
 
     return TierInstance(
-        name="umami-medium", tier="medium", operations=ops, durability=durability,
+        name="umami-medium-b" if plan_upfront else "umami-medium", tier="medium",
+        operations=ops, durability=durability, plan_upfront=plan_upfront,
         teardown_hint=("the umami application, its managed database, and the second website you deployed "
                        "for the analytics integration"),
     )
