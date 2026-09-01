@@ -1,56 +1,42 @@
-# redu (medium tier): umami + second site + integration + durability (2026-08-31)
+# redu (medium tier): umami + second site + integration + durability (2026-09-01)
 
-n=3 (run01-03), the fresh batch through the corrected medium harness (a real second site, a harness-driven
-headless-browser visit, and host-side teardown). The **Medium** tier is a five-operation workload, not just a
-deploy: **deploy-serve** (umami provisions and serves), **register** (a probe admin user exists),
-**deploy-site-b** (a standardized second site, a real Node app, serves), **integrate** (umami tracking is wired
-into the second site and a REAL headless-browser visit records a pageview on a unique sentinel path, 0 -> 1),
-then a **restart-durability** goal (restart, and require every durable effect to survive). Every run below
-passed all five operations, was **durable on cycle 1**, was **content-verified** (the served root is real umami
-app content, 9673 bytes, not a default page), and was **torn down clean** (no orphans; the URL is dead on
-re-check). Architecture: fixed VM (m1.medium) umami + managed Postgres + a second site.
+n=1 (run01), a fresh run on the current harness (second-site token-naming + the universal token-scoped
+teardown). It **supersedes the earlier 2026-08-31 pre-fix redu batch** (fixed-name second site,
+per-service teardown), which remains in git history. n=1 is a single observation, not a distribution;
+extend it by running more. redu is the adapter and validation baseline, not a paper subject.
 
-The overview is keyed on **total wall** (the whole workload), because a single operation's time (the deploy
-`t1`) hides most of the run. The per-operation table breaks out where the time goes.
+This run **passed all five operations (5/5)**, was durable on cycle 1, content-verified (real umami app
+content, 9673 bytes), and first-attempt live. The second site is **token-named** (`alcove-acsb58a8db1-...`,
+the fix), and teardown left **zero resources** (verified after the run via the redu API: 0 deployments,
+0 databases, 0 instances). Architecture: a fixed VM (umami) + a managed Postgres + a second VM for the site.
 
-## Overview (total wall = all operations; agent $ = the whole workflow)
+## Result (n=1)
 
-| run | total wall (s) | agent $ | fixed $/mo | $/mo @ 10k req | $/mo @ 500k req | $/mo @ 10M req |
-|----:|---------------:|--------:|-----------:|---------------:|----------------:|---------------:|
-| 1 | 1694 | $9.05 | $44.67 | $44.67 | $44.67 | $44.67 |
-| 2 | 2345 | $7.04 | $44.67 | $44.67 | $44.67 | $44.67 |
-| 3 | 2537 | $10.16 | $44.67 | $44.67 | $44.67 | $44.67 |
+| run | tier | total wall (s) | agent $ | fixed $/mo | deploy t1 (s) |
+|----:|:----:|---------------:|--------:|-----------:|--------------:|
+| 1 | 5/5 | 1172 | $6.79 | $44.67 | 440 |
 
-`fixed $/mo` is the flat all-in price of the VM (m1.medium) + managed Postgres. It is a fixed VM, so the bill
-stays **$44.67/mo at any traffic** (the three traffic columns are equal). Dated public list price, captured
-2026-08-31; egress separate. GBP list price converted at GBP->USD 1.3539 (ECB, 2026-08-31).
+Cost is a standing **run-rate** (a fixed VM `m1.medium` + a managed Postgres + a second VM), so it does not
+scale with traffic: **$44.67/mo** at every traffic level (dated redu list price, captured 2026-09-01,
+$0.0612/hr all-in).
 
 ## Per operation (wall seconds)
 
 | run | deploy (t1) | register | deploy-site-b | integrate | durability | total |
 |----:|------------:|---------:|--------------:|----------:|-----------:|------:|
-| 1 | 207 | 33 | 885 | 309 | 260 | 1694 |
-| 2 | 207 | 23 | 1264 | 653 | 198 | 2345 |
-| 3 | 217 | 416 | 1040 | 579 | 285 | 2537 |
+| 1 | 440 | 33 | 209 | 266 | 225 | 1172 |
 
-The deploy is fast and consistent (~210s), but **deploy-site-b dominates** the total, and that time is almost
-all redu PLATFORM time from a REPEATED provision (the second app), not redu's per-deploy speed:
+## Capability (Part 1) is MEASURED (redu is a shell-reachable VM)
 
-| run | deploy-site-b wall (s) | platform (s) | agent (s) |
-|----:|-----------------------:|-------------:|----------:|
-| 1 | 885 | 591 | 288 |
-| 2 | 1264 | 1014 | 244 |
-| 3 | 1040 | 827 | 207 |
-
-(run03 register = 416s is an agent-side outlier, not a platform cost; it is kept, not trimmed.)
+Unlike a serverless surface, redu's compute is an SSH-reachable VM, so the off-clock capability micro-probes
+run on the deploy's own machine. Delivered-capability index (partial, compute/memory/disk axes, normalized
+against the frozen neutral-host reference): **DCI 0.23** (compute 0.067, memory 1.35, disk 0.137). The
+VM-to-VM network axis is scored only for multi-VM operations.
 
 ## Provision spine (Part 1/2, the deploy-serve operation only)
 
-Time-to-serving `t1` (external concurrent poll, first HTTP status < 500): **210.6s** [95% CI 207.2, 217.2],
-= critical_platform **127.2s** + critical_agent **78.5s** (overlap 0). First-attempt liveness **3/3**,
-content-verified **3/3**. Capability C (DCI, off-clock sysbench/STREAM/fio on the deploy's own VM vs a frozen
-neutral reference) **0.27**; VM-to-VM private RTT ~0.53ms. Efficiency (Part 3) floor-ratio **1.7x** against the
-min-observed platform floor.
+Time-to-serving `t1` = **440s** (n=1, single observation), = critical_platform **316s** + critical_agent
+**119s** (overlap 0). First-attempt liveness **1/1**, content-verified **1/1**.
 
-Redacted, infrastructure-neutral transcripts (one resumed session per run, covering all operations and the
-teardown) are in `sessions/`; see `sessions/REDACTION-MANIFEST.json` (residue 0).
+Redacted, infrastructure-neutral transcript (one resumed session covering all operations and the teardown)
+is in `sessions/`; see `sessions/REDACTION-MANIFEST.json` (residue 0, n=1).
