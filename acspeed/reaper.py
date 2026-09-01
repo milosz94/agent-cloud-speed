@@ -157,6 +157,18 @@ def _aws_enumerate(tok: str, run: Runner, region: str = "us-east-1", profile: st
         for sarn in _jloads(o2):
             out.append(Res(kind="aws/ecs-service", name=sarn.split("/")[-1], cluster=cname))
         out.append(Res(kind="aws/ecs-cluster", name=cname))
+    # EC2 instances (a VM deploy; the reaper previously handled ONLY ECS/Fargate, so an EC2-based run
+    # leaked its instance - the biggest billed resource). Matched by the run token in the instance's Name
+    # tag; terminated in _aws_delete. (After termination its ENIs take a few minutes to detach, so a
+    # security group it held may need a later pass to delete.)
+    rc, o, _ = run(_aws(["ec2", "describe-instances", "--filters",
+                         "Name=instance-state-name,Values=running,pending,stopping,stopped", "--query",
+                         "Reservations[].Instances[].[InstanceId,Tags[?Key=='Name']|[0].Value]",
+                         "--output", "json"], region, profile), 90)
+    for row in _jloads(o):
+        iid, name = (list(row) + [None, None])[:2] if isinstance(row, list) else (None, None)
+        if iid and has(name):
+            out.append(Res(kind="aws/ec2-instance", name=iid, ec2_name=name))
     # Load balancers
     rc, o, _ = run(_aws(["elbv2", "describe-load-balancers", "--query",
                          "LoadBalancers[].[LoadBalancerName,LoadBalancerArn]", "--output", "json"], region, profile), 90)
@@ -197,6 +209,8 @@ def _aws_enumerate(tok: str, run: Runner, region: str = "us-east-1", profile: st
 
 def _aws_delete(r: Res, run: Runner, region: str = "us-east-1", profile: str = "acspeed-batch") -> tuple:
     k = r.kind
+    if k == "aws/ec2-instance":
+        return run(_aws(["ec2", "terminate-instances", "--instance-ids", r["name"]], region, profile), 120)
     if k == "aws/ecs-service":
         run(_aws(["ecs", "update-service", "--cluster", r["cluster"], "--service", r["name"],
                   "--desired-count", "0"], region, profile), 90)
@@ -339,7 +353,7 @@ def reap_universal(cloud: str, run_token: str, urls=(), *, dry_run: bool = True,
     return result
 
 
-_AWS_KINDS = {"aws/ecs-service", "aws/ecs-cluster", "aws/load-balancer", "aws/target-group",
+_AWS_KINDS = {"aws/ec2-instance", "aws/ecs-service", "aws/ecs-cluster", "aws/load-balancer", "aws/target-group",
               "aws/rds", "aws/security-group", "aws/log-group", "aws/iam-role"}
 _GCP_KINDS = {"gcp/run-service", "gcp/sql-instance", "gcp/artifact-repo"}
 _AZ_KINDS = {"azure/resource-group"}

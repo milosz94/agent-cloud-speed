@@ -17,10 +17,18 @@ class FakeAWS:
         self.rds = {f"umami-{t}-db"}
         self.logs = {f"/ecs/umami-{t}"}
         self.roles = {f"umami-{t}-exec", "umami-ecs-execution-role"}  # shared role has NO token
+        self.ec2 = {"i-0ec2deadbeef0": f"app-{t}"}   # a VM-based deploy: instance id -> Name tag
         self.deleted = []
 
     def run(self, args, timeout=90):
         a = " ".join(args)
+        if "describe-instances" in a:
+            return 0, json.dumps([[iid, name] for iid, name in self.ec2.items()]), ""
+        if "terminate-instances" in a:
+            iid = args[args.index("--instance-ids") + 1]
+            self.ec2.pop(iid, None)
+            self.deleted.append(iid)
+            return 0, json.dumps({"Return": True}), ""
         if "describe-load-balancers" in a:
             return 0, json.dumps([[n, arn] for n, arn in self.lbs.items()]), ""
         if "describe-target-groups" in a:
@@ -155,6 +163,21 @@ class TestReaper(unittest.TestCase):
         self.assertIn("aws/rds", kinds)
         self.assertIn("aws/iam-role", kinds)
         self.assertIn("aws/log-group", kinds)
+
+    def test_aws_reaps_ec2_instance(self):
+        # the gap that leaked the Medium-B aws VM: the reaper handled only ECS/Fargate, not EC2.
+        f = FakeAWS()
+        r = reaper.reap_universal("aws", "acsdead00", dry_run=False, run=f.run)
+        self.assertIn("i-0ec2deadbeef0", f.deleted)                       # the VM instance is terminated
+        self.assertTrue(any("aws/ec2-instance" in p for p in r["planned"]))
+        self.assertEqual(r["failed"], [])
+
+    def test_aws_ec2_needs_the_name_tag_token(self):
+        # an instance whose Name tag does NOT carry the token is left alone (never a foreign/other-run VM)
+        f = FakeAWS()
+        f.ec2 = {"i-0foreign": "someone-elses-box"}
+        reaper.reap_universal("aws", "acsdead00", dry_run=False, run=f.run)
+        self.assertNotIn("i-0foreign", f.deleted)
 
     def test_azure_collapses_to_resource_groups(self):
         rows = [{"name": "umami-acsdead00", "resourceGroup": "rg-umami-acsdead00"},
