@@ -110,12 +110,19 @@ def _json_kv_sub(m: "re.Match") -> str:
 _CUE = r"(?i)(?:password|passwd|\bpw\b|new_?pw|secret|token|admin\s*[:/])"
 _HARVEST = re.compile(_CUE + r"[\s:=/'\"`()\-]{0,8}['\"`]?([A-Za-z0-9][A-Za-z0-9_+/.=@!-]{7,})")
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+# The acspeed run token (``acs`` + hex) is a PUBLIC identifier: it is the app-name segment of every
+# deployed URL and every resource name. It is credential-SHAPED (letters+digits), so without this guard
+# the harvest global-strip would erase it -- and, because it strips the literal EVERYWHERE, blank out
+# the run token inside the app URLs the bundle exists to keep. An admin password that merely CONTAINS
+# the run token (``Redu-acs40e05303-Adm1n-2026``) is a different, longer literal and is still stripped.
+_RUNTOKEN = re.compile(r"^acs[0-9a-f]{6,}$", re.I)
 
 
 def _is_credentialish(v: str) -> bool:
     """A harvested value worth stripping globally: long, mixed letters+digits (or very long), and not a
-    placeholder or a UUID (session/website ids are KEPT, so never strip a UUID by value)."""
-    if _MARK in v or len(v) < 8 or _UUID.match(v):
+    placeholder, a UUID, or the public acspeed run token (session/website ids and the run token are KEPT,
+    so never strip them by value)."""
+    if _MARK in v or len(v) < 8 or _UUID.match(v) or _RUNTOKEN.match(v):
         return False
     has_alpha = any(c.isalpha() for c in v)
     has_digit = any(c.isdigit() for c in v)

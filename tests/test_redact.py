@@ -105,6 +105,18 @@ class TestRedactText(unittest.TestCase):
         self.assertIn("umami-acs40e05303-k4ms7bqz.redu.cloud", red2)
         self.assertIn("76e28485-df97-4cb7-af5e-40f8b98bee81", red2)
 
+    def test_public_run_token_survives_even_next_to_a_cue(self):
+        # the acspeed run token (acs+hex) is PUBLIC (it is in every URL). Even when it appears next to a
+        # "token" cue it must NOT be harvested+stripped, or the app URLs get blanked. But an admin
+        # password that merely CONTAINS the run token is a different literal and IS still stripped.
+        txt = ("source token: acs5fc7ebcf\n"
+               "serving at https://umami-acs5fc7ebcf.politepond-847049e8.northeurope.azurecontainerapps.io\n"
+               "admin password: Redu-acs5fc7ebcf-Adm1n-2026\n")
+        red, _ = redact.redact_transcript(txt)
+        self.assertIn("umami-acs5fc7ebcf.politepond-847049e8.northeurope.azurecontainerapps.io", red)
+        self.assertNotIn("Redu-acs5fc7ebcf-Adm1n-2026", red)   # the password literal is still gone
+        self.assertEqual(redact.scan_for_secrets(red), [])
+
 
 class TestRedactObj(unittest.TestCase):
     def test_keyed_value_and_token_count_kept(self):

@@ -2,41 +2,41 @@
   "files": [
     {
       "bytes_in": 861551,
-      "bytes_out": 860478,
+      "bytes_out": 859173,
       "lines": 565,
       "name": "a0c27b89-6125-4308-821f-95d80c7e31f5.jsonl",
       "redactions": {
         "conn-password": 3,
         "ip": 50,
-        "value": 301
+        "value": 40
       },
       "residue": 0,
       "source": "a0c27b89-6125-4308-821f-95d80c7e31f5.jsonl"
     },
     {
       "bytes_in": 1240748,
-      "bytes_out": 1240723,
+      "bytes_out": 1239213,
       "lines": 874,
       "name": "41a44d06-8086-4a00-8f01-8618c43eaaae.jsonl",
       "redactions": {
         "conn-password": 3,
         "ip": 93,
         "keyed": 2,
-        "value": 379
+        "value": 77
       },
       "residue": 0,
       "source": "41a44d06-8086-4a00-8f01-8618c43eaaae.jsonl"
     },
     {
       "bytes_in": 583093,
-      "bytes_out": 581970,
+      "bytes_out": 581105,
       "lines": 331,
       "name": "3aa325ac-b8ed-4eaa-a127-fdb852c8c8d6.jsonl",
       "redactions": {
         "conn-password": 3,
         "ip": 46,
         "keyed": 2,
-        "value": 238
+        "value": 65
       },
       "residue": 0,
       "source": "3aa325ac-b8ed-4eaa-a127-fdb852c8c8d6.jsonl"
@@ -48,8 +48,8 @@
     "conn-password": 9,
     "ip": 189,
     "keyed": 4,
-    "value": 918
+    "value": 182
   },
-  "total_redactions_count": 1120,
+  "total_redactions_count": 384,
   "written": 3
 }

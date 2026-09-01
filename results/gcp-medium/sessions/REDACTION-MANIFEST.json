@@ -2,7 +2,7 @@
   "files": [
     {
       "bytes_in": 753625,
-      "bytes_out": 752863,
+      "bytes_out": 751513,
       "lines": 442,
       "name": "97ec285a-4f45-4f9d-b236-e9c54a6fc453.jsonl",
       "redactions": {
@@ -10,33 +10,33 @@
         "infra": 2,
         "infra-host": 4,
         "ip": 2,
-        "value": 345
+        "value": 75
       },
       "residue": 0,
       "source": "97ec285a-4f45-4f9d-b236-e9c54a6fc453.jsonl"
     },
     {
       "bytes_in": 476181,
-      "bytes_out": 475180,
+      "bytes_out": 474845,
       "lines": 322,
       "name": "23e283ed-49b6-45a3-a9ee-3410effdd1da.jsonl",
       "redactions": {
         "conn-password": 1,
         "ip": 2,
-        "value": 117
+        "value": 50
       },
       "residue": 0,
       "source": "23e283ed-49b6-45a3-a9ee-3410effdd1da.jsonl"
     },
     {
       "bytes_in": 452799,
-      "bytes_out": 452145,
+      "bytes_out": 451740,
       "lines": 289,
       "name": "79bf64f7-f357-4f00-ad9f-c34e41b4f4c2.jsonl",
       "redactions": {
         "conn-password": 1,
         "ip": 2,
-        "value": 138
+        "value": 57
       },
       "residue": 0,
       "source": "79bf64f7-f357-4f00-ad9f-c34e41b4f4c2.jsonl"
@@ -49,8 +49,8 @@
     "infra": 2,
     "infra-host": 4,
     "ip": 6,
-    "value": 600
+    "value": 182
   },
-  "total_redactions_count": 615,
+  "total_redactions_count": 197,
   "written": 3
 }
