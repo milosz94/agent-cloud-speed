@@ -1,17 +1,45 @@
 {
   "files": [
     {
-      "bytes_in": 861551,
-      "bytes_out": 859173,
-      "lines": 565,
-      "name": "a0c27b89-6125-4308-821f-95d80c7e31f5.jsonl",
+      "bytes_in": 829352,
+      "bytes_out": 827697,
+      "lines": 474,
+      "name": "0c988acb-dd17-472e-a6b0-cccebb6f1843.jsonl",
       "redactions": {
         "conn-password": 3,
-        "ip": 50,
-        "value": 40
+        "ip": 32,
+        "value": 33
       },
       "residue": 0,
-      "source": "a0c27b89-6125-4308-821f-95d80c7e31f5.jsonl"
+      "source": "0c988acb-dd17-472e-a6b0-cccebb6f1843.jsonl"
+    },
+    {
+      "bytes_in": 1025423,
+      "bytes_out": 1024440,
+      "lines": 542,
+      "name": "1eb9e227-f075-47dc-bb3e-8ab1b44870ac.jsonl",
+      "redactions": {
+        "conn-password": 12,
+        "infra": 2,
+        "ip": 19,
+        "value": 88
+      },
+      "residue": 0,
+      "source": "1eb9e227-f075-47dc-bb3e-8ab1b44870ac.jsonl"
+    },
+    {
+      "bytes_in": 583093,
+      "bytes_out": 581105,
+      "lines": 331,
+      "name": "3aa325ac-b8ed-4eaa-a127-fdb852c8c8d6.jsonl",
+      "redactions": {
+        "conn-password": 3,
+        "ip": 46,
+        "keyed": 2,
+        "value": 65
+      },
+      "residue": 0,
+      "source": "3aa325ac-b8ed-4eaa-a127-fdb852c8c8d6.jsonl"
     },
     {
       "bytes_in": 1240748,
@@ -28,28 +56,106 @@
       "source": "41a44d06-8086-4a00-8f01-8618c43eaaae.jsonl"
     },
     {
-      "bytes_in": 583093,
-      "bytes_out": 581105,
-      "lines": 331,
-      "name": "3aa325ac-b8ed-4eaa-a127-fdb852c8c8d6.jsonl",
+      "bytes_in": 1316924,
+      "bytes_out": 1314662,
+      "lines": 729,
+      "name": "432b39d8-faa8-4d01-8f0b-bb51066e88e8.jsonl",
       "redactions": {
-        "conn-password": 3,
-        "ip": 46,
+        "conn-password": 7,
+        "ip": 104,
+        "jwt": 2,
         "keyed": 2,
-        "value": 65
+        "value": 60
       },
       "residue": 0,
-      "source": "3aa325ac-b8ed-4eaa-a127-fdb852c8c8d6.jsonl"
+      "source": "432b39d8-faa8-4d01-8f0b-bb51066e88e8.jsonl"
+    },
+    {
+      "bytes_in": 882757,
+      "bytes_out": 880341,
+      "lines": 571,
+      "name": "6a2b5380-102c-455c-bd5e-6481e57bf943.jsonl",
+      "redactions": {
+        "conn-password": 4,
+        "infra": 2,
+        "infra-host": 4,
+        "ip": 34,
+        "ssh-key": 11,
+        "value": 63
+      },
+      "residue": 0,
+      "source": "6a2b5380-102c-455c-bd5e-6481e57bf943.jsonl"
+    },
+    {
+      "bytes_in": 1226799,
+      "bytes_out": 1222273,
+      "lines": 899,
+      "name": "90259adf-f346-4d99-b2f8-4dc22e77c636.jsonl",
+      "redactions": {
+        "conn-password": 5,
+        "ip": 34,
+        "value": 56
+      },
+      "residue": 0,
+      "source": "90259adf-f346-4d99-b2f8-4dc22e77c636.jsonl"
+    },
+    {
+      "bytes_in": 904544,
+      "bytes_out": 882118,
+      "lines": 583,
+      "name": "9946d834-3ebe-4a99-8ee4-883cb1e992e5.jsonl",
+      "redactions": {
+        "conn-password": 6,
+        "ip": 21,
+        "keyed": 1,
+        "value": 125,
+        "vendor-token": 20
+      },
+      "residue": 0,
+      "source": "9946d834-3ebe-4a99-8ee4-883cb1e992e5.jsonl"
+    },
+    {
+      "bytes_in": 861551,
+      "bytes_out": 859173,
+      "lines": 565,
+      "name": "a0c27b89-6125-4308-821f-95d80c7e31f5.jsonl",
+      "redactions": {
+        "conn-password": 3,
+        "ip": 50,
+        "value": 40
+      },
+      "residue": 0,
+      "source": "a0c27b89-6125-4308-821f-95d80c7e31f5.jsonl"
+    },
+    {
+      "bytes_in": 749024,
+      "bytes_out": 747165,
+      "lines": 437,
+      "name": "fe209205-0c06-4419-9a91-bef16432affd.jsonl",
+      "redactions": {
+        "conn-password": 2,
+        "infra": 2,
+        "ip": 59,
+        "ssh-key": 4,
+        "value": 44
+      },
+      "residue": 0,
+      "source": "fe209205-0c06-4419-9a91-bef16432affd.jsonl"
     }
   ],
   "files_with_residue": {},
-  "inputs": 3,
+  "inputs": 10,
   "total_redactions": {
-    "conn-password": 9,
-    "ip": 189,
-    "keyed": 4,
-    "value": 182
+    "conn-password": 48,
+    "infra": 6,
+    "infra-host": 4,
+    "ip": 492,
+    "jwt": 2,
+    "keyed": 7,
+    "ssh-key": 15,
+    "value": 651,
+    "vendor-token": 20
   },
-  "total_redactions_count": 384,
-  "written": 3
+  "total_redactions_count": 1245,
+  "written": 10
 }
