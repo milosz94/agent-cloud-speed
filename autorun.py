@@ -227,12 +227,18 @@ NAMING_INSTRUCTION = (
 # the identical mechanism the primary already relies on makes the second site collision-free and reapable
 # on any cloud (naming is platform-agnostic). Enforced by the SITE_B_URL token check in drive_suite.
 SECOND_SITE_NAMING = (
-    " Name this second site so that its public hostname contains BOTH the exact token '{token}' (the SAME "
-    "token already in the first app's URL) AND the literal marker 'siteb' (written exactly, no hyphen "
-    "inside it), for example 'siteb-{token}'. The token is how this run finds and tears down the second "
-    "site; the 'siteb' marker is how the harness tells this second site apart from the first app when both "
-    "are running at once, so it MUST appear in the hostname. If the application's source suggests a fixed "
-    "name, OVERRIDE it so the served hostname carries this exact token and the 'siteb' marker."
+    " Name this second site so that its public hostname is '{name}-{token}': its own name '{name}' followed "
+    "by this run's token '{token}' (the SAME token already in the first app's URL). The token is how this "
+    "run finds and tears down the second site and keeps it distinct from other runs; the name '{name}' keeps "
+    "it distinct from the first app when both are running at once. Use exactly this hostname prefix; if the "
+    "application's source suggests a different fixed name, override it to '{name}-{token}'."
+)
+# generic fallback when the suite did not name the second site (a non-umami second site): token only, no
+# marker; the primary is still picked by its own name, so a token-only second site is simply not the primary.
+SECOND_SITE_NAMING_GENERIC = (
+    " Name this second site so that its public hostname carries this run's token '{token}' (the SAME token "
+    "already in the first app's URL, so this run finds and tears it down); it must be a DIFFERENT hostname "
+    "from the first app."
 )
 # Cloud-agnostic autonomy wrapper (proceed non-interactively). NOT task guidance.
 AUTONOMY = (
@@ -451,9 +457,12 @@ def drive_suite(inst, prof: dict, model: str | None, deploy_sid: str | None, url
             open(op_boot, "w").close()
         task = op.task
         if op.op_type == acs_op.PROVISION and op.op_id != first_id and prof.get("run_token"):
-            # a LATER provision is Medium's second site: apply the SAME token-naming rule the primary uses,
-            # so it is collision-free across runs and the token-scoped reaper can tear it down.
-            task = op.task + SECOND_SITE_NAMING.format(token=prof["run_token"])
+            # a LATER provision is Medium's second site: name it '<its own name>-<token>' (one name, no
+            # marker) so it is collision-free across runs, reapable by token, and distinct from the primary,
+            # which the harness selects by ITS name. If the suite did not name it, fall back to token-only.
+            second_name = prof.get("second_site_url_name") or ""
+            task = op.task + (SECOND_SITE_NAMING.format(name=second_name, token=prof["run_token"])
+                              if second_name else SECOND_SITE_NAMING_GENERIC.format(token=prof["run_token"]))
         r = _claude(task, cwd=cwd, mcp=prof["mcp_config"], model=model, resume=rsid,
                     sandbox=sandbox, boot_log=op_boot,
                     resume_transcript=(find_transcript(rsid) if sandbox else None),
@@ -499,6 +508,8 @@ def drive_suite(inst, prof: dict, model: str | None, deploy_sid: str | None, url
     _log(f"suite: driving tier '{inst.tier}' instance '{inst.name}' "
          f"({len(inst.operations)} operations) on the serving deployment ({url}) ...")
     ctx = acs_suite.OpContext(url=url)
+    if prof.get("run_token"):
+        ctx.state["run_token"] = prof["run_token"]  # lets a verify match a service by identity across its alternate URLs
     run = acs_suite.run_tier(inst, ctx, run_agent=run_agent, log=_log)
     _log(f"suite: tier {inst.tier} / {inst.name}: "
          f"{'PASSED' if run.passed else 'FAILED (' + ', '.join(run.failures()) + ')'}")
@@ -740,18 +751,10 @@ def _stage_transcript_for_resume(sid: str | None, cwd: str) -> None:
 AUX_HOSTS = re.compile(r"consul|jaeger|zipkin|grafana|prometheus|kibana|console|"
                        r"mongo|redis|memcached|rabbitmq|kafka|adminer", re.I)
 APP_HINT = re.compile(r"front|web|app|hotel|reserv", re.I)
-# The second site (Medium tier) carries the run token like the primary, so a token-only picker cannot tell
-# them apart when both are up at once (Medium B provisions them concurrently, and the readiness poller
-# locked onto whichever served first - the run05 duplicate-token bug). SECOND_SITE_NAMING makes the agent
-# stamp the literal 'siteb' marker into the second site's hostname; pick_url drops any 'siteb' host from the
-# PRIMARY pool, so the poller locks umami, never the second site (and returns None to keep polling if only
-# the second site has served yet). Matched as a hostname label (bounded by - . / or the host edges) so
-# 'sitebuilder' and the like are not false positives.
-SECOND_SITE_RE = re.compile(r"(?i)(?:^|[-./])siteb(?:[-./]|$)")
 
 
 def pick_url(text: str, url_re: str, substrate_re: str | None = None,
-             require_token: str | None = None) -> dict:
+             require_token: str | None = None, primary_name: str | None = None) -> dict:
     """Choose the app URL from agent output, mirroring pick_transcript_by_time's discipline: exclude
     the cloud's OWN substrate hosts (never the app), exclude aux service hosts, prefer a
     frontend-looking host, and FLAG ambiguity rather than silently guess. A candidate matching
@@ -762,7 +765,13 @@ def pick_url(text: str, url_re: str, substrate_re: str | None = None,
     agent to name the deployment with it, see NAMING_INSTRUCTION). This is the cloud-agnostic fix for
     latching onto a pre-existing / concurrent-run deployment the agent merely LISTED: a foreign URL
     does not carry this run's token, so it is never a candidate. A pure substring test, no cloud
-    knowledge; the per-cloud url_re/substrate stay in the adapter."""
+    knowledge; the per-cloud url_re/substrate stay in the adapter.
+
+    `primary_name`: when set, the PRIMARY app is selected positively by its own name (the agent was told
+    to name it '<primary_name>-<token>'). Medium stands up a SECOND site that carries the same token, so a
+    token-only pick cannot tell the two apart when both are up at once (Medium B provisions them
+    concurrently); matching the primary's name selects it and never the second site, and returns None (keep
+    polling) when the primary has not served yet. The second site simply has a different name."""
     sub = re.compile(substrate_re) if substrate_re else None
     cands: list[str] = []
     for u in re.findall(url_re, str(text)):
@@ -771,12 +780,14 @@ def pick_url(text: str, url_re: str, substrate_re: str | None = None,
         if require_token and require_token not in u:   # only THIS run's deployment (its hostname carries the token)
             continue
         cands.append(u)
-    # the second site carries the run token too, but is never the PRIMARY app: drop it from every pool so
-    # the poller locks umami, and returns None (keep polling) when only the second site has served yet.
-    primary = [u for u in cands if not SECOND_SITE_RE.search(u)]
-    app = [u for u in primary if not AUX_HOSTS.search(u)]
-    hinted = [u for u in app if APP_HINT.search(u)]
-    pool = hinted or app or primary
+    app = [u for u in cands if not AUX_HOSTS.search(u)]
+    if primary_name:
+        # positively select THIS run's primary app by its own name; the second site (a different name) is
+        # never the primary, and an empty pool -> None keeps the poller waiting for the primary to serve.
+        pool = [u for u in app if primary_name.lower() in u.lower()]
+    else:
+        hinted = [u for u in app if APP_HINT.search(u)]
+        pool = hinted or app or cands
     return {"url": pool[0] if pool else None, "candidates": cands, "ambiguous": len(pool) > 1}
 
 
@@ -860,11 +871,13 @@ class ReadinessPoller(threading.Thread):
 
     def __init__(self, t0_mono: float, t0_epoch: float, slug_dir: str, url_re: str,
                  substrate_re: str | None = None, interval_s: float | None = None, max_candidates: int = 5,
-                 bootlog_path: str | None = None, require_token: str | None = None):
+                 bootlog_path: str | None = None, require_token: str | None = None,
+                 primary_name: str | None = None):
         super().__init__(daemon=True, name="acspeed-readiness")
         self.t0_mono, self.t0_epoch, self.slug_dir, self.url_re = t0_mono, t0_epoch, slug_dir, url_re
         self.substrate_re = substrate_re
         self.require_token = require_token   # only poll hostnames carrying this run's token (cloud-agnostic)
+        self.primary_name = primary_name    # when set, poll ONLY the primary app by name, never the second site
         # sandbox mode: the agent runs in a microVM, so the live transcript is not on the host. The VM
         # relays URLs to its serial console (boot_log); we tail THAT for candidates. The poll itself is
         # still external, from the host (a neutral vantage), so the measurement is unchanged.
@@ -895,8 +908,12 @@ class ReadinessPoller(threading.Thread):
         while not self._halt.is_set():
             txt = self._source_text()
             if txt:
-                pick = pick_url(txt, self.url_re, self.substrate_re, require_token=self.require_token)
-                pool = [u for u in pick["candidates"] if not AUX_HOSTS.search(u)] or pick["candidates"]
+                pick = pick_url(txt, self.url_re, self.substrate_re, require_token=self.require_token,
+                                primary_name=self.primary_name)
+                cand = pick["candidates"]
+                if self.primary_name:   # never poll the second site: restrict to the primary app by name
+                    cand = [u for u in cand if self.primary_name.lower() in u.lower()]
+                pool = [u for u in cand if not AUX_HOSTS.search(u)] or cand
                 for u in pool:
                     if u not in self.candidates and len(self.candidates) < self.max_candidates:
                         self.candidates.append(u)
@@ -1464,27 +1481,40 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
     # instance and per-run sentinel drive the suite and the teardown later. Online (Medium A) or no suite:
     # nothing extra is added to the deploy prompt.
     suite_inst = acs_suites.get_instance(prof["suite"]) if prof.get("suite") else None
+    # The primary app's URL name (Medium): the harness selects the primary BY NAME so the concurrently
+    # provisioned second site (same token, different name) is never mistaken for it. Shared with drive_suite
+    # (second-site naming) and the readiness poll via prof.
+    primary_name = (getattr(suite_inst, "primary_url_name", "") or None) if suite_inst is not None else None
+    prof["primary_url_name"] = primary_name or ""
+    prof["second_site_url_name"] = (
+        (getattr(suite_inst, "second_site_url_name", "") or "") if suite_inst is not None else "")
     task_prompt = prof["task_prompt"] + NAMING_INSTRUCTION.format(token=run_token)
     if suite_inst is not None and getattr(suite_inst, "plan_upfront", False):
+        # DISCLOSED (Medium B): full_plan_preamble already pins BOTH site names and the plan.
         task_prompt = task_prompt + acs_suite.full_plan_preamble(suite_inst, run_token)
+    elif primary_name:
+        # ONLINE (Medium A) or any suite that names its primary: pin the primary's hostname so it can be
+        # selected by name; the second site, named at its later provision op, is then unambiguously not it.
+        task_prompt = task_prompt + f" Use '{primary_name}-{run_token}' as this first app's public hostname."
     _log(f"agent: deploying (session A)...  [{'microVM + ' if sandbox else ''}external readiness poller]  "
          f"run-token={run_token} (only a hostname carrying it is this run's deployment)")
     t0 = time.monotonic()
     t0_epoch = time.time()
     sub_re = prof.get("substrate_hosts")
     poller = ReadinessPoller(t0, t0_epoch, transcript_dir_for(cwd), prof["url_re"], substrate_re=sub_re,
-                             bootlog_path=boot_log, require_token=run_token)
+                             bootlog_path=boot_log, require_token=run_token, primary_name=primary_name)
     poller.start()
     dep = _claude(task_prompt, cwd=cwd, mcp=prof["mcp_config"], model=model,
                   sandbox=sandbox, boot_log=boot_log)
     agent_end_s = time.monotonic() - t0
     sid = dep.get("session_id")
-    upick = pick_url(dep.get("result", ""), prof["url_re"], sub_re, require_token=run_token)
+    upick = pick_url(dep.get("result", ""), prof["url_re"], sub_re, require_token=run_token, primary_name=primary_name)
     url_source = "final-message"
     if not upick["url"] and sid:                       # the URL may be only in a tool result
         tx_early = find_transcript(sid)
         if tx_early:
-            upick = pick_url(all_text(acs._load_rows(tx_early)), prof["url_re"], sub_re, require_token=run_token)
+            upick = pick_url(all_text(acs._load_rows(tx_early)), prof["url_re"], sub_re,
+                             require_token=run_token, primary_name=primary_name)
             url_source = "transcript" if upick["url"] else "none"
     if not upick["url"] and poller.candidates:
         upick = {"url": poller.candidates[0], "candidates": list(poller.candidates),
@@ -1547,7 +1577,8 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
                           model=model, resume=sid, sandbox=sandbox, boot_log=rep_boot,
                           resume_transcript=(find_transcript(sid) if sandbox else None))
             rounds.append({"round": rnd + 1, "cost": rep.get("total_cost_usd")})
-            url = pick_url(rep.get("result", ""), prof["url_re"], sub_re, require_token=run_token)["url"] or url
+            url = pick_url(rep.get("result", ""), prof["url_re"], sub_re,
+                           require_token=run_token, primary_name=primary_name)["url"] or url
         outcome = ("SUCCESS" if first_attempt_success else
                    ("SUCCESS-after-repair" if reached_healthy else "FAILURE-never-served"))
     poller.stop()

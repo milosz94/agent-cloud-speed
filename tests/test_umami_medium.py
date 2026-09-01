@@ -359,5 +359,41 @@ class WiringPropagationPoll(unittest.TestCase):
         self.assertIn("missing", r.detail)
 
 
+class TestWiringDualHostname(unittest.TestCase):
+    """Cloud Run serves ONE service at two public URLs. A snippet pointing at umami via its OTHER URL is
+    still correct wiring; matching by service identity (name+token) must accept it, while still rejecting
+    the second site (different name) and a foreign run's umami (different token). This reproduces the
+    Medium-B integrate false-negative: agent wired umami via the hash URL, verify pinned the number URL."""
+
+    TOKEN = "acsafb99b67"
+    HASH_URL = f"https://umami-{TOKEN}-aggnv775ja-uc.a.run.app"          # Cloud Run form 1
+    NUM_URL = f"https://umami-{TOKEN}-299813327652.us-central1.run.app"  # Cloud Run form 2
+
+    def _snippet(self, umami_url, wid="w-1"):
+        return f'<html><head><script src="{umami_url}/script.js" data-website-id="{wid}"></script></head></html>'
+
+    def test_service_key_is_name_plus_token_from_either_url(self):
+        key = f"umami-{self.TOKEN}"
+        self.assertEqual(um._service_key(um._host(self.HASH_URL), self.TOKEN), key)
+        self.assertEqual(um._service_key(um._host(self.NUM_URL), self.TOKEN), key)
+        self.assertEqual(um._service_key(um._host(self.HASH_URL), None), "")   # no token -> no key (falls back)
+
+    def test_wiring_accepts_umami_via_its_OTHER_cloud_run_url(self):
+        key = um._service_key(um._host(self.NUM_URL), self.TOKEN)   # verify pinned the number URL
+        ok, wid = um._wiring_ok(self._snippet(self.HASH_URL), um._host(self.NUM_URL), key)  # agent used the hash URL
+        self.assertTrue(ok, "a snippet pointing at the same umami via its other Cloud Run URL must be accepted")
+        self.assertEqual(wid, "w-1")
+        # and the exact-host fallback (no key) is what USED to reject it -> proves the fix is load-bearing
+        ok_old, _ = um._wiring_ok(self._snippet(self.HASH_URL), um._host(self.NUM_URL))
+        self.assertFalse(ok_old)
+
+    def test_wiring_still_rejects_second_site_and_foreign_umami(self):
+        key = um._service_key(um._host(self.NUM_URL), self.TOKEN)
+        siteb = f"https://siteb-{self.TOKEN}-299813327652.us-central1.run.app"      # different NAME
+        foreign = "https://umami-acsffffffff-aggnv775ja-uc.a.run.app"               # different TOKEN
+        self.assertFalse(um._wiring_ok(self._snippet(siteb), um._host(self.NUM_URL), key)[0])
+        self.assertFalse(um._wiring_ok(self._snippet(foreign), um._host(self.NUM_URL), key)[0])
+
+
 if __name__ == "__main__":
     unittest.main()

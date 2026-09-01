@@ -210,6 +210,14 @@ class TierInstance:
     # M_online - M_disclosed is the VALUE OF PLAN LOOKAHEAD (Part-3 Sec-5 clairvoyance gap), reported as a
     # tier-level companion; it is NOT the Sec-4 selection excess (M_twin - F_C), which stays reported per run.
     plan_upfront: bool = False
+    # Medium has TWO public sites (the primary app and a second site) that both carry this run's token, so a
+    # token-only URL picker cannot tell them apart when they come up at once (Medium B provisions them
+    # concurrently). The fix is names: the agent is told to name each site '<name>-<token>', and the harness
+    # selects the PRIMARY by ``primary_url_name`` (positively, by its own name), so the second site is never
+    # mistaken for it. App-specific, so it lives here, not in autorun. Both empty for a single-deployment tier
+    # (Easy), where the generic token-only naming applies and there is nothing to disambiguate.
+    primary_url_name: str = ""
+    second_site_url_name: str = ""
 
     def __post_init__(self) -> None:
         if not self.operations:
@@ -345,10 +353,20 @@ def full_plan_preamble(instance: TierInstance, token: str = "") -> str:
     if instance.durability is not None:
         lines.append(f"  {len(instance.operations) + 1}. {instance.durability.task.strip()}")
     plan = "\n".join(lines)
-    naming = ("" if not token else
-              "\n\nEvery resource you provision for this run (the app, its datastore, the second site) must "
-              "carry this run's token '" + token + "' in its public hostname, so this run's resources are "
-              "uniquely identified and torn down cleanly.")
+    primary = getattr(instance, "primary_url_name", "") or ""
+    second = getattr(instance, "second_site_url_name", "") or ""
+    if not token:
+        naming = ""
+    elif primary and second:
+        naming = ("\n\nName the first app's public hostname '" + primary + "-" + token + "' and the second "
+                  "site's public hostname '" + second + "-" + token + "' (each site's own name followed by "
+                  "this run's token '" + token + "'). Every resource you provision must carry this run's "
+                  "token in its public hostname, so this run's resources are uniquely identified and torn "
+                  "down cleanly.")
+    else:
+        naming = ("\n\nEvery resource you provision for this run (the app, its datastore, the second site) "
+                  "must carry this run's token '" + token + "' in its public hostname, so this run's "
+                  "resources are uniquely identified and torn down cleanly.")
     return (
         "\n\nYOU ARE GIVEN THE COMPLETE PLAN UP FRONT. This deployment will require ALL of the following, "
         "and you know every one of them now (each will be checked afterward):\n\n" + plan +

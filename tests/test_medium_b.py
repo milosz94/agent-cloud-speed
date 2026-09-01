@@ -56,6 +56,21 @@ class TestMediumB(unittest.TestCase):
         pre = full_plan_preamble(b)   # no token
         self.assertNotIn("carry this run's token", pre)
 
+    def test_preamble_pins_both_site_names(self):
+        # the disclosed prompt names each site '<name>-<token>' so the concurrently provisioned primary and
+        # second site never collide; the harness then selects the primary by name.
+        b = acs_suites.get_instance("umami-medium-b")
+        pre = full_plan_preamble(b, token="acsdeadbeef")
+        self.assertIn("umami-acsdeadbeef", pre)
+        self.assertIn("alcove-acsdeadbeef", pre)
+
+    def test_both_medium_regimes_name_both_sites(self):
+        # both regimes carry the two URL names, so online (A) and disclosed (B) disambiguate the same way.
+        for nm in ("umami-medium", "umami-medium-b"):
+            inst = acs_suites.get_instance(nm)
+            self.assertEqual(inst.primary_url_name, "umami")
+            self.assertEqual(inst.second_site_url_name, "alcove")
+
 
 if __name__ == "__main__":
     unittest.main()

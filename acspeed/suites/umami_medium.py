@@ -299,9 +299,27 @@ def _r3_site_b_serves(ctx: OpContext) -> VerifyResult:
 _SCRIPT_RE = re.compile(r"<script\b[^>]*>", re.IGNORECASE)
 
 
-def _wiring_ok(html: str, umami_host: str) -> tuple:
+def _service_key(host: str, token: Optional[str]) -> str:
+    """The stable service identity shared by a provider's ALTERNATE hostnames for ONE service: the
+    '<name>-<token>' leading label. Cloud Run serves a single service at TWO public URLs
+    (umami-<token>-<hash>-<region>.a.run.app and umami-<token>-<projnum>.<region>.run.app); both carry
+    '<name>-<token>' but neither host is a substring of the other, so a full-host match wrongly rejects
+    a snippet that points at the same umami via its other URL. Matching '<name>-<token>' accepts either
+    URL yet still rejects the second site (different name) and a foreign run's umami (different token).
+    Returns '' when the token is unknown, so the caller falls back to the full-host match."""
+    if not host or not token:
+        return ""
+    i = host.find(token)
+    if i < 0:
+        return ""
+    return host[: i + len(token)]  # '<name>-<token>', invariant across a provider's alternate URLs
+
+
+def _wiring_ok(html: str, umami_host: str, umami_key: str = "") -> tuple:
     """Does site B's served HTML carry the umami tracker snippet, pointing at THIS run's umami and
-    carrying a non-empty website id? Returns (ok, website_id_or_empty)."""
+    carrying a non-empty website id? Returns (ok, website_id_or_empty). The umami match is by service
+    IDENTITY (``umami_key`` = '<name>-<token>') when known, so either of Cloud Run's two URLs for the
+    one umami service is accepted; it falls back to the full host only when the key is unknown."""
     for tag in _SCRIPT_RE.findall(html):
         low = tag.lower()
         if UMAMI_TRACKER_FILE not in low:
@@ -310,8 +328,12 @@ def _wiring_ok(html: str, umami_host: str) -> tuple:
         wid = re.search(r'data-website-id\s*=\s*["\']([^"\']+)["\']', tag, re.IGNORECASE)
         if not src or not wid:
             continue
-        if umami_host and umami_host not in _host(src.group(1)):
-            continue  # points at some other umami, not this run's
+        src_host = _host(src.group(1))
+        if umami_key:
+            if umami_key not in src_host:
+                continue  # not THIS run's umami service (by name+token), under EITHER of its URLs
+        elif umami_host and umami_host not in src_host:
+            continue  # no key known: exact-host fallback (points at some other umami, not this run's)
         if wid.group(1).strip():
             return True, wid.group(1).strip()
     return False, ""
@@ -323,10 +345,11 @@ def _r4_wiring_present(ctx: OpContext) -> VerifyResult:
         return VerifyResult(False, "no site B url to read wiring from")
     uu = _umami_url(ctx)
     umami_host = _host(uu) if uu else ""
+    umami_key = _service_key(umami_host, ctx.state.get("run_token"))  # match by service identity, not exact host
     code, text, _ = http("GET", sb, timeout_s=20)
     if code is None:
         return VerifyResult(False, "site B did not answer for the wiring read")
-    ok, wid = _wiring_ok(text, umami_host)
+    ok, wid = _wiring_ok(text, umami_host, umami_key)
     if ok:
         ctx.state["site_b_website_id"] = wid
     return VerifyResult(ok, f"site B HTML {'carries' if ok else 'missing'} umami wiring"
@@ -600,4 +623,8 @@ def build(probe: Optional[dict] = None, durability_max_iters: int = 4,
         operations=ops, durability=durability, plan_upfront=plan_upfront,
         teardown_hint=("the umami application, its managed database, and the second website you deployed "
                        "for the analytics integration"),
+        # The two public sites' URL names, so the agent names each '<name>-<token>' and the harness picks the
+        # PRIMARY by name (never the second site). The second site's name is the app's own name (its marker).
+        primary_url_name="umami",
+        second_site_url_name=SITE_B_MARKER.split(",")[0].strip(),  # "alcove"
     )
