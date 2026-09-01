@@ -1,0 +1,277 @@
+{
+  "files": [
+    {
+      "bytes_in": 374316,
+      "bytes_out": 374043,
+      "lines": 153,
+      "name": "0ced0ce4-9864-42ba-be24-c0ea601cfc89.jsonl",
+      "redactions": {
+        "infra": 2,
+        "infra-host": 30,
+        "ip": 33,
+        "keyed": 3,
+        "value": 18
+      },
+      "residue": 0,
+      "source": "0ced0ce4-9864-42ba-be24-c0ea601cfc89.jsonl"
+    },
+    {
+      "bytes_in": 83036,
+      "bytes_out": 82871,
+      "lines": 61,
+      "name": "14acd50f-0044-4d15-ab7a-85a6b7383cba.jsonl",
+      "redactions": {
+        "ip": 27
+      },
+      "residue": 0,
+      "source": "14acd50f-0044-4d15-ab7a-85a6b7383cba.jsonl"
+    },
+    {
+      "bytes_in": 349134,
+      "bytes_out": 348759,
+      "lines": 144,
+      "name": "1c7537ce-0a3e-4a37-b715-aad9389b26e5.jsonl",
+      "redactions": {
+        "infra": 2,
+        "infra-host": 30,
+        "ip": 24,
+        "keyed": 3,
+        "value": 18
+      },
+      "residue": 0,
+      "source": "1c7537ce-0a3e-4a37-b715-aad9389b26e5.jsonl"
+    },
+    {
+      "bytes_in": 344297,
+      "bytes_out": 343918,
+      "lines": 135,
+      "name": "1d0c8428-70b6-434e-ac29-fab0a1fe71a6.jsonl",
+      "redactions": {
+        "infra": 4,
+        "infra-host": 31,
+        "ip": 36,
+        "keyed": 3,
+        "value": 13
+      },
+      "residue": 0,
+      "source": "1d0c8428-70b6-434e-ac29-fab0a1fe71a6.jsonl"
+    },
+    {
+      "bytes_in": 67399,
+      "bytes_out": 67363,
+      "lines": 52,
+      "name": "23a34cf8-44e4-4371-9fc1-a5514f16b60d.jsonl",
+      "redactions": {
+        "ip": 6
+      },
+      "residue": 0,
+      "source": "23a34cf8-44e4-4371-9fc1-a5514f16b60d.jsonl"
+    },
+    {
+      "bytes_in": 71110,
+      "bytes_out": 70939,
+      "lines": 51,
+      "name": "3d560bc3-d5ae-4402-95f8-d1a2a2ebf507.jsonl",
+      "redactions": {
+        "ip": 27
+      },
+      "residue": 0,
+      "source": "3d560bc3-d5ae-4402-95f8-d1a2a2ebf507.jsonl"
+    },
+    {
+      "bytes_in": 334846,
+      "bytes_out": 334622,
+      "lines": 142,
+      "name": "4056f459-f4db-4daa-bf4d-6bdfda00050c.jsonl",
+      "redactions": {
+        "infra": 2,
+        "infra-host": 25,
+        "ip": 18,
+        "keyed": 3,
+        "value": 19
+      },
+      "residue": 0,
+      "source": "4056f459-f4db-4daa-bf4d-6bdfda00050c.jsonl"
+    },
+    {
+      "bytes_in": 339484,
+      "bytes_out": 339124,
+      "lines": 129,
+      "name": "52909cbc-30a9-401d-9581-ac66e660526a.jsonl",
+      "redactions": {
+        "infra": 2,
+        "infra-host": 28,
+        "ip": 30,
+        "keyed": 3,
+        "value": 22
+      },
+      "residue": 0,
+      "source": "52909cbc-30a9-401d-9581-ac66e660526a.jsonl"
+    },
+    {
+      "bytes_in": 348544,
+      "bytes_out": 348259,
+      "lines": 152,
+      "name": "5a8a7751-dec9-4f2a-867c-82e248fc1d59.jsonl",
+      "redactions": {
+        "infra": 2,
+        "infra-host": 25,
+        "ip": 21,
+        "keyed": 3,
+        "value": 16
+      },
+      "residue": 0,
+      "source": "5a8a7751-dec9-4f2a-867c-82e248fc1d59.jsonl"
+    },
+    {
+      "bytes_in": 86077,
+      "bytes_out": 85915,
+      "lines": 61,
+      "name": "68624618-537e-4722-85ca-ecd8c4568c2b.jsonl",
+      "redactions": {
+        "ip": 27
+      },
+      "residue": 0,
+      "source": "68624618-537e-4722-85ca-ecd8c4568c2b.jsonl"
+    },
+    {
+      "bytes_in": 96036,
+      "bytes_out": 95874,
+      "lines": 70,
+      "name": "701e31cf-adb8-4b4c-a765-026528a61628.jsonl",
+      "redactions": {
+        "ip": 27
+      },
+      "residue": 0,
+      "source": "701e31cf-adb8-4b4c-a765-026528a61628.jsonl"
+    },
+    {
+      "bytes_in": 83127,
+      "bytes_out": 82965,
+      "lines": 62,
+      "name": "735be6d5-f55a-47f7-84f3-dcb1f4ee2074.jsonl",
+      "redactions": {
+        "ip": 27
+      },
+      "residue": 0,
+      "source": "735be6d5-f55a-47f7-84f3-dcb1f4ee2074.jsonl"
+    },
+    {
+      "bytes_in": 104701,
+      "bytes_out": 104494,
+      "lines": 67,
+      "name": "740a742d-810f-424f-a92d-6c219835ad80.jsonl",
+      "redactions": {
+        "infra": 36,
+        "infra-host": 12,
+        "ip": 39
+      },
+      "residue": 0,
+      "source": "740a742d-810f-424f-a92d-6c219835ad80.jsonl"
+    },
+    {
+      "bytes_in": 320618,
+      "bytes_out": 320310,
+      "lines": 125,
+      "name": "7ce9f615-2ddc-4310-a09a-a7e390d34841.jsonl",
+      "redactions": {
+        "infra": 2,
+        "infra-host": 28,
+        "ip": 21,
+        "keyed": 3,
+        "value": 6
+      },
+      "residue": 0,
+      "source": "7ce9f615-2ddc-4310-a09a-a7e390d34841.jsonl"
+    },
+    {
+      "bytes_in": 83378,
+      "bytes_out": 83201,
+      "lines": 60,
+      "name": "84a9c15b-9346-487c-ac8a-044d62938b24.jsonl",
+      "redactions": {
+        "ip": 27
+      },
+      "residue": 0,
+      "source": "84a9c15b-9346-487c-ac8a-044d62938b24.jsonl"
+    },
+    {
+      "bytes_in": 84246,
+      "bytes_out": 84096,
+      "lines": 61,
+      "name": "9bad7709-ed60-44e6-8034-02f942910588.jsonl",
+      "redactions": {
+        "ip": 27
+      },
+      "residue": 0,
+      "source": "9bad7709-ed60-44e6-8034-02f942910588.jsonl"
+    },
+    {
+      "bytes_in": 83546,
+      "bytes_out": 83375,
+      "lines": 60,
+      "name": "af8ac5ca-d3c3-4e11-ab97-e0b8e5bace4a.jsonl",
+      "redactions": {
+        "ip": 27
+      },
+      "residue": 0,
+      "source": "af8ac5ca-d3c3-4e11-ab97-e0b8e5bace4a.jsonl"
+    },
+    {
+      "bytes_in": 331749,
+      "bytes_out": 331476,
+      "lines": 125,
+      "name": "b7bc4aa2-ebc6-4b5e-9bdf-7d7eda416209.jsonl",
+      "redactions": {
+        "infra": 3,
+        "infra-host": 30,
+        "ip": 24,
+        "keyed": 3,
+        "value": 19
+      },
+      "residue": 0,
+      "source": "b7bc4aa2-ebc6-4b5e-9bdf-7d7eda416209.jsonl"
+    },
+    {
+      "bytes_in": 374514,
+      "bytes_out": 374400,
+      "lines": 172,
+      "name": "cd584ffd-5931-447d-9370-1275a71b9c3f.jsonl",
+      "redactions": {
+        "infra": 2,
+        "infra-host": 25,
+        "ip": 18,
+        "keyed": 3,
+        "value": 21
+      },
+      "residue": 0,
+      "source": "cd584ffd-5931-447d-9370-1275a71b9c3f.jsonl"
+    },
+    {
+      "bytes_in": 348850,
+      "bytes_out": 348473,
+      "lines": 147,
+      "name": "f36f82ff-f9c3-4244-b0b3-d72401901ee3.jsonl",
+      "redactions": {
+        "infra": 2,
+        "infra-host": 29,
+        "ip": 27,
+        "keyed": 5,
+        "value": 10
+      },
+      "residue": 0,
+      "source": "f36f82ff-f9c3-4244-b0b3-d72401901ee3.jsonl"
+    }
+  ],
+  "files_with_residue": {},
+  "inputs": 20,
+  "total_redactions": {
+    "infra": 59,
+    "infra-host": 293,
+    "ip": 513,
+    "keyed": 32,
+    "value": 162
+  },
+  "total_redactions_count": 1059,
+  "written": 20
+}

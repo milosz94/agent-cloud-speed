@@ -1,0 +1,26 @@
+{
+  "files": [
+    {
+      "bytes_in": 324763,
+      "bytes_out": 324783,
+      "lines": 247,
+      "name": "e2dad3f6-6358-4ae4-a70d-bc56b5e0ff20.jsonl",
+      "redactions": {
+        "conn-password": 1,
+        "ip": 10,
+        "value": 18
+      },
+      "residue": 0,
+      "source": "e2dad3f6-6358-4ae4-a70d-bc56b5e0ff20.jsonl"
+    }
+  ],
+  "files_with_residue": {},
+  "inputs": 1,
+  "total_redactions": {
+    "conn-password": 1,
+    "ip": 10,
+    "value": 18
+  },
+  "total_redactions_count": 29,
+  "written": 1
+}

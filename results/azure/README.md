@@ -1,0 +1,22 @@
+# azure: Easy-tier umami (2026-08-30)
+
+n=10 (run01-10). The agent chose two different shapes: **7 runs** on Container Apps + managed Postgres Flexible
+Server + an always-on min-replica (serverless: a fixed floor that rises with traffic), and **3 runs** on an
+App Service Plan + managed Postgres (a fixed, flat plan). Each row's cost reflects the shape that run built.
+
+| run | t1 (s) | platform (s) | agent (s) | steps | tokens | agent $ | fixed $/mo | $/mo @ 10k req | $/mo @ 500k req | $/mo @ 10M req |
+|----:|-------:|-------------:|----------:|------:|-------:|--------:|-----------:|---------------:|----------------:|---------------:|
+| 1 | 2170.9 | 672.5 | 286.9 | 47 | 21440 | $2.26 | $40.84 | $40.87 | $42.31 | $70.34 |
+| 2 | 1309.5 | 383.1 | 314.8 | 36 | 29772 | $2.38 | $40.84 | $40.87 | $42.31 | $70.34 |
+| 3 | 1386.7 | 515.8 | 258.4 | 46 | 19240 | $2.22 | $27.67 | $27.67 | $27.67 | $27.67 |
+| 4 | 2016.5 | 530.0 | 288.5 | 46 | 21841 | $2.15 | $39.74 | $39.77 | $41.22 | $69.24 |
+| 5 | 2143.3 | 629.7 | 301.8 | 55 | 26320 | $2.69 | $40.84 | $40.87 | $42.31 | $70.34 |
+| 6 | 2392.9 | 820.1 | 361.4 | 56 | 31077 | $3.18 | $27.01 | $27.01 | $27.01 | $27.01 |
+| 7 | 1460.7 | 571.6 | 277.7 | 45 | 20968 | $2.21 | $27.67 | $27.67 | $27.67 | $27.67 |
+| 8 | 1531.8 | 626.6 | 294.3 | 56 | 25858 | $2.80 | $39.74 | $39.77 | $41.22 | $69.24 |
+| 9 | 1378.7 | 482.0 | 288.0 | 38 | 24426 | $2.12 | $39.74 | $39.77 | $41.22 | $69.24 |
+| 10 | 2149.8 | 323.1 | 255.7 | 51 | 20067 | $2.10 | $39.74 | $39.77 | $41.22 | $69.24 |
+
+`fixed $/mo` is the always-on floor. The serverless runs (Container Apps min-replica idle + managed Postgres) start
+around **$40/mo** and rise with traffic to **~$70/mo at 10M req**; the fixed runs (runs 3, 6, 7: App Service Plan B1
++ Postgres) are flat at **~$27/mo** at any traffic. Redacted transcripts in `sessions/`.
