@@ -65,6 +65,46 @@ class TestRedactText(unittest.TestCase):
         self.assertEqual(one, two)
         self.assertNotIn("]]", two)
 
+    def test_json_keyvalue_secret_in_string(self):
+        # a secret that arrives as JSON key:value inside a tool-output STRING (the quote between key and
+        # colon defeats KEY=value). Both bare quotes (parsed content) and escaped quotes (serialized).
+        bare = '/api/me -> {"token":"BN6a+rif/Nnm5wF4","password":"Acspeed-1669088a-pw"}'
+        s, c = redact.redact_text(bare)
+        self.assertNotIn("BN6a+rif/Nnm5wF4", s)
+        self.assertNotIn("Acspeed-1669088a-pw", s)
+        self.assertIn('"token":', s)               # key + structure kept
+        self.assertIn('"password":', s)
+        self.assertEqual(redact.scan_for_secrets(s), [])   # residue scan agrees
+        esc = 'stdout: "{\\"token\\":\\"c6zVCaWAA/LxfAqQ\\"}"'
+        s2, _ = redact.redact_text(esc)
+        self.assertNotIn("c6zVCaWAA/LxfAqQ", s2)
+        self.assertEqual(redact.scan_for_secrets(s2), [])
+        # a token COUNT key is not a secret (trailing S breaks the match), so its value survives
+        s3, _ = redact.redact_text('{"output_tokens":"1234"}')
+        self.assertIn("1234", s3)
+        # a TRUNCATED tool output: opening quote, no closing quote (stdout cut off mid-token). The parsed
+        # value has no closing quote, but json.dumps adds one on re-serialization -> must still redact.
+        trunc = 'authenticated /api/me:\n{"token":"31KtfERbj+heqhdR3E21G/EpmLJnZ1wtFMUxlAfr+iz39'
+        s4, _ = redact.redact_text(trunc)
+        self.assertNotIn("31KtfERbj", s4)
+        self.assertEqual(redact.scan_for_secrets(s4), [])
+
+    def test_prose_password_harvested_and_stripped_everywhere(self):
+        # an agent-chosen password echoed in prose/markdown/shell has no key:value shape. It is harvested
+        # from one cue-adjacent spot and its literal stripped from EVERY spot (transcript-level pass).
+        txt = ("create an admin user with password 'Umami-w7aAAn2u2O8jJj0H'.\n"
+               "later: ADMIN PW: Umami-w7aAAn2u2O8jJj0H\n"
+               "note: `admin` / `Umami-w7aAAn2u2O8jJj0H`\n"
+               "shell: NEWPW='Umami-w7aAAn2u2O8jJj0H'; curl ...\n")
+        red, c = redact.redact_transcript(txt)
+        self.assertNotIn("Umami-w7aAAn2u2O8jJj0H", red)      # gone from ALL four spots
+        self.assertEqual(redact.scan_for_secrets(red), [])   # residue gate agrees
+        # a kept app URL / UUID that shares a token substring is NOT stripped (no secret cue precedes it)
+        keep = 'deployed at https://umami-acs40e05303-k4ms7bqz.redu.cloud id 76e28485-df97-4cb7-af5e-40f8b98bee81'
+        red2, _ = redact.redact_transcript(keep)
+        self.assertIn("umami-acs40e05303-k4ms7bqz.redu.cloud", red2)
+        self.assertIn("76e28485-df97-4cb7-af5e-40f8b98bee81", red2)
+
 
 class TestRedactObj(unittest.TestCase):
     def test_keyed_value_and_token_count_kept(self):

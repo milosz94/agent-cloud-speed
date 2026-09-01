@@ -53,10 +53,27 @@ _KEYNAME = r"((?:[A-Za-z0-9]+_)*" + _SECRET_WORD + r"(?:_[A-Za-z0-9]+)*)"
 _ASSIGN = re.compile(r"(?i)" + _KEYNAME + r"(\s*[:=]\s*)('|\")?([^\s'\"`,;&\\)}\]]{2,})")
 
 # -- Key layer: a JSON key whose NAME is a secret; its string value is redacted whole ---------------
-_SENSITIVE_KEY = re.compile(
-    r"(?i)(?:^|_)(?:password|passwd|secret|token|apikey|api_?key|access_?key|private_?key|"
+_SENSITIVE_KEY_BODY = (
+    r"(?:password|passwd|secret|token|apikey|api_?key|access_?key|private_?key|"
     r"encryption_?key|client_?secret|refresh_?token|access_?token|auth_?token|app_?key|"
-    r"passphrase|credential|salt|authorization)(?:$|_)"
+    r"passphrase|credential|salt|authorization)"
+)
+_SENSITIVE_KEY = re.compile(r"(?i)(?:^|_)" + _SENSITIVE_KEY_BODY + r"(?:$|_)")
+
+# -- JSON key:value layer: a secret that survives INSIDE a string value ------------------------------
+# When a tool prints its result, the transcript carries the result as one string value that itself holds
+# JSON (``{"token":"..."}``). redact_obj passes that whole string to redact_text, but _ASSIGN cannot see
+# it: in ``"token":"secret"`` a quote sits between the key and the colon, so the KEY=value shape never
+# matches and the secret ships. This catches a sensitive JSON key's string value whether the quotes are
+# bare (``"``, parsed content) or backslash-escaped (``\"``, re-serialized output), replacing only the
+# value. _Q matches an optionally-escaped quote so the same pattern verifies the serialized bundle.
+# The value ends at a closing quote OR end-of-string: a truncated tool output (``"token":"abc<EOF>``,
+# the stdout cut off mid-token) has no closing quote in the parsed value, but json.dumps adds one on
+# re-serialization -- so without the ``$`` branch the redactor would skip what the scanner then flags.
+_Q = r"\\?[\"']"
+_JSON_KV = re.compile(
+    r"(?i)(?P<pre>" + _Q + r"(?:[A-Za-z0-9]+_)*" + _SENSITIVE_KEY_BODY + r"(?:_[A-Za-z0-9]+)*" + _Q +
+    r"\s*:\s*" + _Q + r")(?P<val>[^\"'\\]{2,})(?P<post>" + _Q + r"|$)"
 )
 # structural token-count keys are never secrets; string-only redaction already protects their int
 # values, but skip them by name too for defense in depth.
@@ -77,6 +94,40 @@ def _assign_sub(m: "re.Match") -> str:
     return "%s%s%s%s" % (m.group(1), m.group(2), m.group(3) or "", _ph("value"))
 
 
+def _json_kv_sub(m: "re.Match") -> str:
+    if _MARK in m.group("val"):  # already redacted: idempotent
+        return m.group(0)
+    return m.group("pre") + _ph("value") + m.group("post")
+
+
+# -- Value-harvest layer: an agent-CHOSEN password lands in prose, not a key:value shape -------------
+# A generated app password (``Acspeed-9f1-pw``) or an admin password the agent rotated to (``Umami-x7Q``)
+# is echoed in free text: a task prompt ("... and password 'X'"), a rotation note ("ADMIN PW: X"), a
+# shell line (``NEWPW='X'``), a markdown pair ("`admin` / `X`"), a login probe ("admin/X -> 200"). No
+# fixed key:value shape catches that. So we HARVEST every credential-shaped value that sits next to a
+# password/token/pw/secret/admin cue -- from ANY of those spots -- then strip that literal EVERYWHERE
+# (see redact_transcript). One clean sighting scrubs the value in the prose spots a pattern can't reach.
+_CUE = r"(?i)(?:password|passwd|\bpw\b|new_?pw|secret|token|admin\s*[:/])"
+_HARVEST = re.compile(_CUE + r"[\s:=/'\"`()\-]{0,8}['\"`]?([A-Za-z0-9][A-Za-z0-9_+/.=@!-]{7,})")
+_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+
+def _is_credentialish(v: str) -> bool:
+    """A harvested value worth stripping globally: long, mixed letters+digits (or very long), and not a
+    placeholder or a UUID (session/website ids are KEPT, so never strip a UUID by value)."""
+    if _MARK in v or len(v) < 8 or _UUID.match(v):
+        return False
+    has_alpha = any(c.isalpha() for c in v)
+    has_digit = any(c.isdigit() for c in v)
+    return has_alpha and (has_digit or len(v) >= 20)
+
+
+def harvest_secret_values(text: str) -> set:
+    """Collect credential-shaped values that appear next to a secret cue, so their literal can be
+    stripped everywhere (including prose/markdown/shell spots no key:value pattern reaches)."""
+    return {m.group(1) for m in _HARVEST.finditer(text) if _is_credentialish(m.group(1))}
+
+
 def redact_text(s: str) -> Tuple[str, Counter]:
     """Redact secrets recognizable inside a free string (shell output, an env line, a bearer header).
 
@@ -94,6 +145,9 @@ def redact_text(s: str) -> Tuple[str, Counter]:
         s, n = rx.subn(repl, s)
         if n:
             counts[cat] += n
+    s, n = _JSON_KV.subn(_json_kv_sub, s)  # secret inside a "key":"value" string (tool output)
+    if n:
+        counts["value"] += n
     s, n = _ASSIGN.subn(_assign_sub, s)
     if n:
         counts["value"] += n
@@ -247,13 +301,20 @@ def redact_transcript(text: str, substrate: bool = False, rules: "Rules | None" 
     """Redact a whole JSONL transcript string. With ``substrate=True`` also hides the infrastructure
     setup (per ``rules``, default the loaded private denylist). Returns the redacted text and counts."""
     counts: Counter = Counter()
+    secrets = harvest_secret_values(text)  # harvest literal secret VALUES from the ORIGINAL text first
     out_lines: List[str] = []
     for line in text.splitlines():
         red, c = redact_line(line, substrate, rules)
         out_lines.append(red)
         counts.update(c)
     trailing = "\n" if text.endswith("\n") else ""
-    return "\n".join(out_lines) + trailing, counts
+    out = "\n".join(out_lines) + trailing
+    for v in sorted(secrets, key=len, reverse=True):  # strip each harvested value everywhere it appears
+        if v in out:
+            n = out.count(v)
+            out = out.replace(v, _ph("value"))
+            counts["value"] += n
+    return out, counts
 
 
 # -- Verification: prove the OUTPUT holds no residue ------------------------------------------------
@@ -272,4 +333,9 @@ def scan_for_secrets(text: str) -> List[Tuple[str, str]]:
     for m in _ASSIGN.finditer(text):
         if _MARK not in m.group(4):
             hits.append(("value", m.group(0)[:32]))
+    for m in _JSON_KV.finditer(text):
+        if _MARK not in m.group("val"):
+            hits.append(("value", m.group(0)[:40]))
+    for v in harvest_secret_values(text):  # a credential-shaped value still sitting next to a cue
+        hits.append(("value", v[:32]))
     return hits
