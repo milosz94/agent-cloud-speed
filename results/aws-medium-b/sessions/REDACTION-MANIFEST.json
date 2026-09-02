@@ -1,0 +1,87 @@
+{
+  "files": [
+    {
+      "bytes_in": 597147,
+      "bytes_out": 587870,
+      "lines": 303,
+      "name": "238c894e-0741-4f09-859a-5faf0cbea298.jsonl",
+      "redactions": {
+        "conn-password": 11,
+        "value": 74,
+        "vendor-token": 8
+      },
+      "residue": 0,
+      "source": "238c894e-0741-4f09-859a-5faf0cbea298.jsonl"
+    },
+    {
+      "bytes_in": 656592,
+      "bytes_out": 634140,
+      "lines": 369,
+      "name": "3dc49408-b4b4-45f3-81f8-6fb1972e378f.jsonl",
+      "redactions": {
+        "conn-password": 7,
+        "ip": 6,
+        "value": 149,
+        "vendor-token": 16
+      },
+      "residue": 0,
+      "source": "3dc49408-b4b4-45f3-81f8-6fb1972e378f.jsonl"
+    },
+    {
+      "bytes_in": 725314,
+      "bytes_out": 722607,
+      "lines": 366,
+      "name": "65712527-02d0-43eb-926f-5f692c43ed71.jsonl",
+      "redactions": {
+        "conn-password": 8,
+        "ip": 11,
+        "jwt": 2,
+        "value": 60,
+        "vendor-token": 2
+      },
+      "residue": 0,
+      "source": "65712527-02d0-43eb-926f-5f692c43ed71.jsonl"
+    },
+    {
+      "bytes_in": 708410,
+      "bytes_out": 703687,
+      "lines": 370,
+      "name": "a1a0c504-dc73-49bb-81de-5ce9b2399055.jsonl",
+      "redactions": {
+        "conn-password": 3,
+        "ip": 90,
+        "private-key": 7,
+        "value": 55
+      },
+      "residue": 0,
+      "source": "a1a0c504-dc73-49bb-81de-5ce9b2399055.jsonl"
+    },
+    {
+      "bytes_in": 385549,
+      "bytes_out": 382346,
+      "lines": 199,
+      "name": "e8120e45-8dd7-43b9-adca-ce63fce381cd.jsonl",
+      "redactions": {
+        "conn-password": 10,
+        "ip": 6,
+        "keyed": 3,
+        "value": 76
+      },
+      "residue": 0,
+      "source": "e8120e45-8dd7-43b9-adca-ce63fce381cd.jsonl"
+    }
+  ],
+  "files_with_residue": {},
+  "inputs": 5,
+  "total_redactions": {
+    "conn-password": 39,
+    "ip": 113,
+    "jwt": 2,
+    "keyed": 3,
+    "private-key": 7,
+    "value": 414,
+    "vendor-token": 26
+  },
+  "total_redactions_count": 604,
+  "written": 5
+}

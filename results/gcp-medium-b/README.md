@@ -1,36 +1,39 @@
 # gcp (medium tier B, DISCLOSED regime): umami + second site + integration + durability (2026-09-02)
 
-n=5 (run01-05). This is **Medium B**, the DISCLOSED (plan-upfront) regime: the agent is handed the full
-operation plan at deploy time and may schedule with lookahead, versus **Medium A** (`umami-medium`) where
-the operations are revealed one at a time (online). Same five operations, verifies, durability goal and
-gold; only the information regime differs. The makespan difference between the two regimes is the *value of
-plan lookahead* (Part 3, clairvoyance), reported as a tier companion, not the per-run selection excess.
+n=10 (run01-10). **Medium B** is the DISCLOSED (plan-upfront) regime: the agent is handed the full operation
+plan at deploy time and may schedule with lookahead, versus **Medium A** (`umami-medium`) where the
+operations are revealed one at a time. Same five operations, verifies, durability goal and gold; only the
+information regime differs. The makespan gap between the regimes is the *value of plan lookahead* (Part 3,
+clairvoyance), a tier companion, not the per-run selection excess.
 
-The **Medium** workload is five operations, not just a deploy: **deploy-serve** (umami provisions and
-serves), **register** (a probe admin user exists), **deploy-site-b** (a standardized second site, a real
-Node app, serves), **integrate** (umami tracking is wired into the second site and a REAL headless-browser
-visit records a pageview on a unique sentinel path, 0 -> 1), then a **restart-durability** goal (restart,
-and require every durable effect to survive). Architecture: serverless (Cloud Run) umami + managed Postgres
-(Cloud SQL) + a second Cloud Run site.
+The **Medium** workload is five operations: **deploy-serve** (umami provisions and serves), **register** (a
+probe admin user exists), **deploy-site-b** (a standardized second site serves), **integrate** (umami
+tracking is wired into the second site and a REAL headless-browser visit records a pageview on a unique
+sentinel path, 0 -> 1), then a **restart-durability** goal (restart, every durable effect must survive).
+Architecture: serverless (Cloud Run) umami + managed Postgres (Cloud SQL) + a second Cloud Run site.
 
-**All five runs pass all five operations clean (5/5), completed, first-attempt live, content-verified**
-(real umami app content). Every run's primary was selected by name (`umami-<token>-...`, url not ambiguous)
-and the second site stood up under its own name (`alcove-<token>-...`).
+**All 10 runs pass all five operations clean (5/5), completed, first-attempt live, content-verified,
+unambiguous umami primary, 0 orphans** (teardown cloud-API verified: 0 Cloud Run / Cloud SQL / Artifact
+Registry for every token).
 
-## Overview (total wall = all operations; agent $ = the whole workflow, incl. deprovision)
+## Overview (total wall = all operations; agent $ = whole workflow incl. deprovision)
 
-| run | total wall (s) | agent $ | $/mo @ 10k req | tier |
-|----:|---------------:|--------:|---------------:|:----:|
+| run | total wall (s) | agent $ | $/mo (low traffic) | tier |
+|----:|---------------:|--------:|-------------------:|:----:|
 | 1 | 1438 | $4.57 | $139.12 | 5/5 |
 | 2 | 699 | $3.74 | $53.74 | 5/5 |
 | 3 | 699 | $6.84 | $139.12 | 5/5 |
 | 4 | 703 | $4.43 | $60.31 | 5/5 |
 | 5 | 1518 | $5.37 | $42.42 | 5/5 |
+| 6 | 889 | $5.61 | $47.18 | 5/5 |
+| 7 | 1015 | $6.20 | $42.42 | 5/5 |
+| 8 | 692 | $4.08 | $53.74 | 5/5 |
+| 9 | 726 | $4.40 | $121.23 | 5/5 |
+| 10 | 970 | $6.28 | $29.28 | 5/5 |
 
-Cost is **usage-metered** (Cloud Run) and reads roughly flat per run across 10k to 10M req/mo, because a
-Cloud SQL instance plus a min-allocated compute floor dominates the usage terms; the per-run figure varies
-($42 to $139/mo) with the min-instance / SQL configuration the agent chose that run. Captured 2026-09-02;
-egress estimated at a 50 KB average response; provisioned floor + active per-second compute folded in.
+Cost is **usage-metered** (Cloud Run) and reads roughly flat per run ($29 to $139/mo across the traffic
+grid), dominated by a Cloud SQL instance plus the min-allocated compute floor the agent chose that run.
+Captured 2026-09-02; egress estimated at a 50 KB average response.
 
 ## Per operation (wall seconds)
 
@@ -41,44 +44,42 @@ egress estimated at a 50 KB average response; provisioned floor + active per-sec
 | 3 | 326 | 65 | 97 | 68 | 142 | 699 |
 | 4 | 361 | 44 | 56 | 57 | 185 | 703 |
 | 5 | 500 | 53 | 91 | 94 | 780 | 1518 |
+| 6 | 469 | 51 | 119 | 78 | 172 | 889 |
+| 7 | 580 | 50 | 125 | 72 | 189 | 1015 |
+| 8 | 346 | 56 | 61 | 61 | 168 | 692 |
+| 9 | 375 | 52 | 84 | 69 | 146 | 726 |
+| 10 | 518 | 50 | 120 | 81 | 201 | 970 |
 
-**Disclosed-regime note (read before comparing to Medium A).** In the plan-upfront regime the agent
-front-loads the provisioning into the DEPLOY turn (for run01, the agent deploy-turn wall was **652.7s**), so
-the register / site-b / integrate walls above are the harness's post-hoc CONFIRM windows, not the agent
-doing that work in separate serialized turns. The durability op dominates the two long runs (768s and 780s,
-mostly platform: restarting the managed Cloud SQL instance is the long pole). A Medium-A-vs-B *value of plan
-lookahead* comparison must therefore use the deploy-turn wall, not a naive sum of these per-op confirm walls.
+**Disclosed-regime note.** In the plan-upfront regime the agent front-loads provisioning into the DEPLOY
+turn, so register / site-b / integrate walls are the harness's post-hoc CONFIRM windows, not serialized
+agent work. Durability dominates the long runs (restarting the managed Cloud SQL instance is the long pole).
+A Medium-A-vs-B *value of plan lookahead* comparison must use the deploy-turn wall, not a naive sum of these
+per-op confirm walls.
 
-## Provision spine (Part 1/2, the deploy-serve operation only)
+## Provision spine (Part 1/2, deploy-serve only)
 
-Time-to-serving `t1` (external concurrent poll, first HTTP status < 500): **326 to 500s** across the five
-runs (mean ~395s, n=5, no CI), = critical_platform + critical_agent (overlap 0). First-attempt liveness
-**5/5**, content-verified **5/5**, no ambiguous URL on any run. Capability C is **DEFERRED** (Cloud Run is
-shell-less, so the off-clock micro-probes do not apply). Efficiency (Part 3) is **DEFERRED** (no
-reference-optimal gold authored for this platform).
+Time-to-serving `t1`: **326 to 580s** across the 10 runs (mean ~426s, n=10, no CI). First-attempt liveness
+**10/10**, content-verified **10/10**, no ambiguous URL. Capability C **DEFERRED** (Cloud Run is shell-less).
+Efficiency (Part 3) **DEFERRED** (no reference-optimal gold authored).
 
-Teardown: every run reported `orphan_warning: false`. run01 + run02 were additionally **cloud-API verified**
-after the run (0 Cloud Run services, Cloud SQL instances, or Artifact Registry repos for their tokens);
-run03-05 rest on the harness reaper's own check.
+Teardown: every run `orphan_warning: false`; the full batch verified 0 Cloud Run services, Cloud SQL
+instances, or Artifact Registry repos on the cloud API.
 
-Redacted, infrastructure-neutral transcripts (one resumed session per run, covering all operations and the
-teardown) are in `sessions/`; see `sessions/REDACTION-MANIFEST.json` (residue 0, n=5).
+Redacted transcripts (one resumed session per run, all operations + teardown) are in `sessions/`; see
+`sessions/REDACTION-MANIFEST.json` (residue 0, n=10).
 
 ## Run independence and token note
 
-run01 (`acs7ef2cc38`) and run02 (`acs24148869`) carry distinct per-run tokens. run03-05 share the token
-**`acs0874f3ab`**: they came from one `acspeed-run --n 3` batch, and at the time the `--n` loop minted a
-single run token and reused it across the batch's runs (a harness bug, since fixed so each batch run mints
-its own token). These three are still independent measurements: they ran strictly sequentially (finished
-23:11, 23:33, 00:08), each tore its resources down before the next started, and each t1 is fresh-deploy
-scale (326 / 361 / 500s) rather than the near-zero a poller would report if a later run had latched a
-leftover service. So the isolation guarantee was weaker for run03-05, but the deploys were genuinely fresh.
+run01, run02, and run06-10 carry distinct per-run tokens. run03-05 share the token **`acs0874f3ab`**: they
+came from one `acspeed-run --n 3` batch before the `--n` loop was fixed to mint a fresh token per batch run
+(fixed 2026-09-02; run06-10 confirm the fix with 5 distinct tokens). run03-05 are still independent
+measurements: they ran strictly sequentially, each tore down before the next, and each t1 is fresh-deploy
+scale (not the near-zero a poller would report on a latched leftover). The shared token weakened only the
+isolation guarantee for those three, and it was verified to have no measurable speed effect.
 
 ## Provenance
 
-These runs validated two harness fixes that a prior gcp Medium B run (2026-09-01) surfaced: (1) the primary
-URL is selected by the app's own name, so the concurrently provisioned second site can never be timed as the
-app; (2) the umami wiring check matches umami by service identity (`umami-<token>`), so a snippet pointing at
-the app via either of Cloud Run's two URLs for one service is accepted (the unfakeable headless visit still
-has to record a real pageview to score). Under these fixes every run is a clean 5/5 with an unambiguous
-umami primary.
+These runs validated two harness fixes: (1) the primary URL is selected by the app's own name, so the
+concurrently provisioned second site is never timed as the app; (2) the umami wiring check matches umami by
+service identity (`umami-<token>`), so a snippet pointing at the app via either of Cloud Run's two URLs is
+accepted (the unfakeable headless visit still must record a real pageview to score).

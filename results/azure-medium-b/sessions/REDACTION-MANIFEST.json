@@ -1,0 +1,114 @@
+{
+  "files": [
+    {
+      "bytes_in": 404047,
+      "bytes_out": 390909,
+      "lines": 259,
+      "name": "3fd7cf1c-73aa-40c7-9cdb-04391b7f6a53.jsonl",
+      "redactions": {
+        "conn-password": 6,
+        "jwt": 6,
+        "value": 65
+      },
+      "residue": 0,
+      "source": "3fd7cf1c-73aa-40c7-9cdb-04391b7f6a53.jsonl"
+    },
+    {
+      "bytes_in": 664193,
+      "bytes_out": 663118,
+      "lines": 406,
+      "name": "432c2ee4-af12-4663-adfd-f9ac0abe1f97.jsonl",
+      "redactions": {
+        "conn-password": 1,
+        "infra": 2,
+        "infra-host": 4,
+        "ip": 6,
+        "value": 39
+      },
+      "residue": 0,
+      "source": "432c2ee4-af12-4663-adfd-f9ac0abe1f97.jsonl"
+    },
+    {
+      "bytes_in": 585911,
+      "bytes_out": 584789,
+      "lines": 386,
+      "name": "4e6d51a7-e9bb-43fb-bc6d-4e014a96c16d.jsonl",
+      "redactions": {
+        "conn-password": 1,
+        "infra": 2,
+        "infra-host": 4,
+        "ip": 8,
+        "value": 41
+      },
+      "residue": 0,
+      "source": "4e6d51a7-e9bb-43fb-bc6d-4e014a96c16d.jsonl"
+    },
+    {
+      "bytes_in": 639123,
+      "bytes_out": 636135,
+      "lines": 395,
+      "name": "98719f54-9d16-4aa2-8d3e-bcb388f2d84c.jsonl",
+      "redactions": {
+        "conn-password": 1,
+        "infra": 2,
+        "infra-host": 4,
+        "ip": 10,
+        "value": 42
+      },
+      "residue": 0,
+      "source": "98719f54-9d16-4aa2-8d3e-bcb388f2d84c.jsonl"
+    },
+    {
+      "bytes_in": 510957,
+      "bytes_out": 509747,
+      "lines": 352,
+      "name": "ac400b33-9458-4253-bc89-12795570e2ba.jsonl",
+      "redactions": {
+        "conn-password": 1,
+        "value": 37
+      },
+      "residue": 0,
+      "source": "ac400b33-9458-4253-bc89-12795570e2ba.jsonl"
+    },
+    {
+      "bytes_in": 477727,
+      "bytes_out": 476095,
+      "lines": 313,
+      "name": "aef838ba-e144-4389-944c-1a6748656441.jsonl",
+      "redactions": {
+        "conn-password": 2,
+        "value": 35
+      },
+      "residue": 0,
+      "source": "aef838ba-e144-4389-944c-1a6748656441.jsonl"
+    },
+    {
+      "bytes_in": 761744,
+      "bytes_out": 748195,
+      "lines": 437,
+      "name": "ca89af8f-f311-42a5-9187-46d9487971a0.jsonl",
+      "redactions": {
+        "conn-password": 1,
+        "infra": 2,
+        "infra-host": 4,
+        "ip": 13,
+        "jwt": 6,
+        "value": 90
+      },
+      "residue": 0,
+      "source": "ca89af8f-f311-42a5-9187-46d9487971a0.jsonl"
+    }
+  ],
+  "files_with_residue": {},
+  "inputs": 7,
+  "total_redactions": {
+    "conn-password": 13,
+    "infra": 8,
+    "infra-host": 16,
+    "ip": 37,
+    "jwt": 12,
+    "value": 349
+  },
+  "total_redactions_count": 435,
+  "written": 7
+}
