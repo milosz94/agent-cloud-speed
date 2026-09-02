@@ -16,7 +16,7 @@ re-verifies each effect survived (CP7 durability).
 
 - [redu-medium-a](redu-medium-a/) - deploy, mutate:register, integrate, restart, terminal durability re-verify (n=1; fresh post-fix run, supersedes the 08-31 baseline)
 - [aws-medium-a](aws-medium-a/) - deploy, mutate:register, integrate, restart, terminal durability re-verify (n=10)
-- [gcp-medium-a](gcp-medium-a/) - deploy, mutate:register, integrate, restart, terminal durability re-verify (n=10; run05 resolved by the second-site naming fix)
+- [gcp-medium-a](gcp-medium-a/) - deploy, mutate:register, integrate, restart, terminal durability re-verify (n=9; run05 resolved by the second-site naming fix)
 
 Each easy table is `run | t1 (s) | platform (s) | agent (s) | steps | tokens | agent $ | fixed $/mo | $/mo @ 10k
 / 500k / 10M req`. `fixed $/mo` is the flat floor: for a VM it stays flat at any traffic; a serverless front
