@@ -2070,6 +2070,11 @@ def main() -> None:
         _log(f"append mode: {start - 1} existing run(s) in {prof['out_dir']}; starting at run{start:02d} "
              "(pass --start 1 to overwrite from run01)")
     for i in range(start, start + a.n):
+        if i > start:
+            # each batch run must mint its OWN run token: run_once persists prof["run_token"] for its own
+            # drive_suite + reaper, and without this the NEXT run would reuse it, so a whole --n batch shared
+            # one token/URL (isolation defeated). The first run keeps any caller-pinned token (tests/repro).
+            prof.pop("run_token", None)
         try:
             run_once(i, prof, a.model, a.max_rounds)
         except KeyboardInterrupt:            # backstop; the signal handler normally hard-exits first
