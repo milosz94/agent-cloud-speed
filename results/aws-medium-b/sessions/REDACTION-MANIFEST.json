@@ -43,6 +43,20 @@
       "source": "65712527-02d0-43eb-926f-5f692c43ed71.jsonl"
     },
     {
+      "bytes_in": 1313146,
+      "bytes_out": 1310443,
+      "lines": 693,
+      "name": "a0bf606b-edd6-4aa7-a0de-02fe0367d629.jsonl",
+      "redactions": {
+        "conn-password": 3,
+        "ip": 24,
+        "jwt": 2,
+        "value": 72
+      },
+      "residue": 0,
+      "source": "a0bf606b-edd6-4aa7-a0de-02fe0367d629.jsonl"
+    },
+    {
       "bytes_in": 708410,
       "bytes_out": 703687,
       "lines": 370,
@@ -72,16 +86,16 @@
     }
   ],
   "files_with_residue": {},
-  "inputs": 5,
+  "inputs": 6,
   "total_redactions": {
-    "conn-password": 39,
-    "ip": 113,
-    "jwt": 2,
+    "conn-password": 42,
+    "ip": 137,
+    "jwt": 4,
     "keyed": 3,
     "private-key": 7,
-    "value": 414,
+    "value": 486,
     "vendor-token": 26
   },
-  "total_redactions_count": 604,
-  "written": 5
+  "total_redactions_count": 705,
+  "written": 6
 }
