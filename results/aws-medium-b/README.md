@@ -39,14 +39,18 @@ often rename the tracker script), which is real work the HTTPS-native route most
 ## The failure (run03) is a FAIR agent failure, not an instrument artifact
 
 **run03 (ALB) scored 3/5** and is **included** (not excluded): it is a legitimate failure of the task, kept
-in the cell honestly. Root cause, traced: the agent **could not get the cross-origin tracking beacon to
-work** - 28 CORS errors, and it never renamed the umami tracker script - so the harness's real headless
-visit fired but the beacon was blocked (pageview `0 -> 0`); integrate then failed and durability ground on
-(total wall 5464s / 91 min). run06, the **same ALB route**, configured CORS + renamed the tracker
-(`TRACKER_SCRIPT_NAME`) and the beacon landed (`api/send` 200, pageview `0 -> 1`). The harness behaved
-identically both times (a real-UA headless visit); the difference is the **agent's own umami configuration**.
-Note: run03 actually disabled umami's bot-check more aggressively than the passing runs, so bot-check was not
-the cause - the cross-origin beacon config was. This is agent-skill variance on the harder ALB path.
+in the cell honestly. The agent could not get the harness's unique **sentinel-path pageview to register on
+the umami website the harness reads**, so integrate stayed `0 -> 0` and durability ground on (total wall
+5464s / 91 min). What was verified about the mechanism, and what was NOT: the cross-origin plumbing actually
+WORKED - the CORS preflight to `/api/send` returned HTTP 204 with `Access-Control-Allow-*` headers, the umami
+`script.js` loaded (200), the beacon POST returned 204, and umami even recorded 418 pageviews on a website
+the agent created while testing. But the harness's sentinel-path visit never landed a pageview on the wired
+website-id. run06 (same ALB route) lined it up and the beacon registered (`api/send` 200, sentinel `0 -> 1`).
+So the plumbing was fine; the agent just never got a real sentinel pageview to record where the unfakeable
+check reads it. The exact reason (a website-id/path mismatch, vs a residual server-side filter) is NOT fully
+pinned. It is NOT bot-check (run03 disabled it more than the passing runs) and NOT CORS (preflight 204). It
+is a fair agent failure - the integration did not record where it is verified - not an instrument artifact:
+the harness fired the same real-UA headless visit both times.
 
 ## Provision spine (Part 1/2, deploy-serve only)
 
