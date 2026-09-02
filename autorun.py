@@ -501,6 +501,21 @@ def drive_suite(inst, prof: dict, model: str | None, deploy_sid: str | None, url
                 _log(f"suite op {op.op_id}: no distinct new URL in the agent's report "
                      f"(no SITE_B_URL line; candidates="
                      f"{pick_url(res_text, prof['url_re'], prof.get('substrate_hosts'))['candidates']})")
+        # FOLLOW a site-B re-home on a LATER (non-provision) op: the agent re-fronts site B with TLS during
+        # integrate (aws sslip.io) to make the beacon fire, moving it off the deploy-time URL. Update
+        # site_b_url so the visit + wiring reads target what the agent finalized, not the abandoned URL. Strict
+        # no-op for a single-URL deploy (gcp/azure/redu emit one SITE_B_URL). See _rehomed_site_b.
+        if op.op_id != first_id and op.op_type != acs_op.PROVISION:
+            cand = _rehomed_site_b(r.get("result", ""), ctx.state.get("site_b_url"), url, prof.get("run_token"))
+            if cand:
+                code, ok = is_serving(cand)
+                if ok:
+                    prev = ctx.state.get("site_b_url")
+                    ctx.state["site_b_url"] = cand
+                    _log(f"suite op {op.op_id}: site B re-homed to {cand} (following the agent off {prev})")
+                else:
+                    _log(f"suite op {op.op_id}: agent's new SITE_B_URL {cand} not serving (http {code}); "
+                         f"kept {ctx.state.get('site_b_url')}")
         _log(f"suite op {op.op_id}: agent session={r.get('session_id')} "
              f"is_error={r.get('is_error')} cost=${r.get('total_cost_usd')}")
         return r
@@ -789,6 +804,34 @@ def pick_url(text: str, url_re: str, substrate_re: str | None = None,
         hinted = [u for u in app if APP_HINT.search(u)]
         pool = hinted or app or cands
     return {"url": pool[0] if pool else None, "candidates": cands, "ambiguous": len(pool) > 1}
+
+
+def _rehomed_site_b(result_text: str, current_site_b: str | None, primary_url: str | None,
+                    run_token: str | None) -> str | None:
+    """A LATER op re-homed site B: return the agent's newest SITE_B_URL if it is a real re-home, else None.
+
+    aws ALBs serve HTTP only, so the agent re-fronts site B with TLS (e.g. via sslip.io) DURING integrate to
+    make the tracking beacon fire; that moves site B off its deploy-time URL. If the harness keeps visiting
+    the abandoned URL, the visit never registers (integrate 0->0). This detects the move so the caller can
+    follow it. A re-home is a SITE_B_URL that (a) carries this run's token, (b) is a different host from the
+    PRIMARY app, and (c) is a different host from the CURRENT site B. It is a strict no-op for a single-URL
+    deploy (gcp/azure/redu get HTTPS free and emit one SITE_B_URL, so cand == current -> None). The CALLER
+    must still confirm the returned URL actually serves before switching. Pure/deterministic for tests."""
+    if not (current_site_b and run_token):
+        return None
+    m = re.search(r"(?im)^\s*SITE_B_URL:\s*(https?://\S+)\s*$", str(result_text))
+    if not m:
+        return None
+    cand = m.group(1).strip()
+
+    def _hn(u: str) -> str:
+        return re.sub(r"^https?://", "", str(u)).split("/")[0].lower()
+
+    if (run_token.lower() in cand.lower()
+            and _hn(cand) != _hn(primary_url or "")
+            and _hn(cand) != _hn(current_site_b)):
+        return cand
+    return None
 
 
 SERVING_PREDICATE = "first response from the URL with HTTP status < 500 (000 and 5xx = not serving)"

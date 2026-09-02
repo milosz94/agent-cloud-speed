@@ -9,7 +9,7 @@ adapter, so these tests exercise the mechanism with the real redu regexes.
 """
 import unittest
 
-from autorun import ADAPTERS, pick_url
+from autorun import ADAPTERS, pick_url, _rehomed_site_b
 
 REDU_RE = ADAPTERS["redu"]["url_re"]
 REDU_SUB = ADAPTERS["redu"]["substrate_hosts"]
@@ -89,6 +89,45 @@ class TestTokenTargeting(unittest.TestCase):
         b = pick_url(blob, REDU_RE, REDU_SUB, require_token="acs22222222")
         self.assertEqual(a["url"], "https://umami-acs11111111.redu.cloud")
         self.assertEqual(b["url"], "https://umami-acs22222222.redu.cloud")
+
+
+class TestSiteBRehome(unittest.TestCase):
+    """The harness must follow a site-B re-home so the visit + wiring reads target what the agent finalized.
+    aws ALBs are HTTP-only, so the agent re-fronts site B with TLS (sslip.io) during integrate; without
+    following it, the harness keeps visiting the abandoned HTTP ALB site B and the visit never registers
+    (the real 2026-09-02 aws Medium B failure: integrate pageviews 0 -> 0). It must be a strict no-op for a
+    single-URL deploy (gcp/azure/redu), so it can never disturb the clouds that already pass."""
+
+    TOK = "acsd7cf1999"
+    PRIMARY = "http://umami-acsd7cf1999-922632916.us-east-1.elb.amazonaws.com"
+    ALB = "http://alcove-acsd7cf1999-297890924.us-east-1.elb.amazonaws.com"
+    SSLIP = "https://alcove-acsd7cf1999-174-129-166-66.sslip.io"
+
+    def _out(self, url):
+        return f"...did the wiring and re-fronted with TLS...\n\nSITE_B_URL: {url}\n"
+
+    def test_aws_tls_rehome_is_followed(self):
+        # the exact aws case: agent moved site B off the HTTP ALB to an HTTPS sslip.io front
+        self.assertEqual(_rehomed_site_b(self._out(self.SSLIP), self.ALB, self.PRIMARY, self.TOK), self.SSLIP)
+
+    def test_single_url_is_a_strict_noop(self):
+        # gcp/azure/redu restate the SAME site B url (or a later op emits it again) -> not a re-home
+        self.assertIsNone(_rehomed_site_b(self._out(self.ALB), self.ALB, self.PRIMARY, self.TOK))
+
+    def test_no_site_b_url_line(self):
+        self.assertIsNone(_rehomed_site_b("agent text with no marker at all", self.ALB, self.PRIMARY, self.TOK))
+
+    def test_foreign_token_not_followed(self):
+        foreign = "https://alcove-acsffffffff-1-2-3-4.sslip.io"
+        self.assertIsNone(_rehomed_site_b(self._out(foreign), self.ALB, self.PRIMARY, self.TOK))
+
+    def test_primary_url_not_followed(self):
+        # a SITE_B_URL that is literally the primary app's URL is rejected (never move site B onto umami)
+        self.assertIsNone(_rehomed_site_b(self._out(self.PRIMARY), self.ALB, self.PRIMARY, self.TOK))
+
+    def test_no_current_site_b_yet(self):
+        # before deploy-site-b there is no site B to move off, so nothing to follow
+        self.assertIsNone(_rehomed_site_b(self._out(self.SSLIP), None, self.PRIMARY, self.TOK))
 
 
 if __name__ == "__main__":
