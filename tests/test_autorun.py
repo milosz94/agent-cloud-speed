@@ -573,5 +573,88 @@ class TestVmBootFlakeRetry(unittest.TestCase):
         self.assertEqual(rvj.call_count, autorun.VM_BOOT_RETRIES + 1)   # bounded, does not loop forever
 
 
+class TestEdge4xxOriginCheck(unittest.TestCase):
+    """PAPER p2 s4: 'any adapter whose edge answers 4xx for an unwired host must check response origin.'
+
+    MEASURED 2026-09-03: every AWS Lightsail run in the medium-b batch stopped the clock on the FIRST
+    poll with a 404 (t1 160-250s) while the same workload over an ALB, whose t1 is a real app 200, took
+    436-867s; the off-clock oracle later found the real app in each case. A GCP Cloud Run URL 403s from
+    its IAM edge the same way. The predicate itself is unchanged (a 4xx is still the app answering by
+    default); only a response positively identified as a platform edge is refused."""
+
+    def test_alb_no_upstream_404_is_not_serving(self):
+        with mock.patch.object(autorun, "is_serving", return_value=("404", True)), \
+             mock.patch.object(autorun, "probe_origin",
+                               return_value={"edge": "aws-alb-no-upstream", "server": "awselb/2.0",
+                                             "body_bytes": 0, "body_sample": ""}):
+            code, ok, origin = autorun.is_serving_ex("http://x.elb.amazonaws.com")
+        self.assertEqual(code, "404")
+        self.assertFalse(ok, "an ALB-generated 404 is the edge, not the app")
+        self.assertEqual(origin["edge"], "aws-alb-no-upstream")
+
+    def test_cloud_run_iam_403_is_not_serving(self):
+        with mock.patch.object(autorun, "is_serving", return_value=("403", True)), \
+             mock.patch.object(autorun, "probe_origin",
+                               return_value={"edge": "gcp-iam-forbidden", "server": "Google Frontend",
+                                             "body_bytes": 300, "body_sample": "forbidden"}):
+            _, ok, origin = autorun.is_serving_ex("https://x.run.app")
+        self.assertFalse(ok)
+        self.assertEqual(origin["edge"], "gcp-iam-forbidden")
+
+    def test_a_real_app_4xx_still_serves(self):
+        """Isso answers 400 at '/', a SPA 404s, an API 401s: all are the app answering (unchanged)."""
+        for code in ("400", "401", "404"):
+            with mock.patch.object(autorun, "is_serving", return_value=(code, True)), \
+                 mock.patch.object(autorun, "probe_origin",
+                                   return_value={"edge": None, "server": "nginx",
+                                                 "body_bytes": 120, "body_sample": "<!doctype html>"}):
+                _, ok, origin = autorun.is_serving_ex("https://isso.example")
+            self.assertTrue(ok, f"{code} from the app must still stop the clock")
+            self.assertIsNone(origin["edge"])
+
+    def test_2xx_never_pays_for_an_origin_probe(self):
+        with mock.patch.object(autorun, "is_serving", return_value=("200", True)), \
+             mock.patch.object(autorun, "probe_origin") as po:
+            _, ok, origin = autorun.is_serving_ex("https://x.example")
+        self.assertTrue(ok)
+        self.assertIsNone(origin)
+        po.assert_not_called()
+
+    def test_a_failed_origin_probe_never_fakes_a_t1(self):
+        """If the evidence cannot be gathered, the 4xx keeps its original verdict, disclosed."""
+        with mock.patch.object(autorun, "is_serving", return_value=("404", True)), \
+             mock.patch.object(autorun, "probe_origin", side_effect=RuntimeError("network")):
+            _, ok, origin = autorun.is_serving_ex("https://x.example")
+        self.assertTrue(ok)
+        self.assertEqual(origin, {"edge": None, "error": "origin probe failed"})
+
+    def test_signatures_match_on_header_and_on_body(self):
+        """probe_origin's own matching, over raw curl output (headers, blank line, body)."""
+        alb = "HTTP/1.1 404 Not Found\r\nServer: awselb/2.0\r\nContent-Length: 0\r\n\r\n"
+        gcp = ("HTTP/2 403\r\nserver: Google Frontend\r\n\r\n"
+               "<html><title>403 Forbidden</title>Your client does not have permission</html>")
+        app = "HTTP/1.1 400 Bad Request\r\nServer: nginx\r\n\r\n<html>missing ?uri= parameter</html>"
+        for raw, expect in ((alb, "aws-alb-no-upstream"), (gcp, "gcp-iam-forbidden"), (app, None)):
+            with mock.patch.object(autorun.subprocess, "run",
+                                   return_value=mock.Mock(stdout=raw, returncode=0)):
+                self.assertEqual(autorun.probe_origin("https://x.example")["edge"], expect)
+
+    def test_poller_records_every_4xx_verdict(self):
+        """The rejections are kept too, so the decision is auditable from the run json."""
+        p = autorun.ReadinessPoller(time.monotonic(), time.time(), tempfile.mkdtemp(),
+                                    r"https://[a-z0-9.-]+\.example", interval_s=0.05)
+        codes = iter([("404", False, {"edge": "aws-alb-no-upstream", "server": "awselb/2.0"}),
+                      ("200", True, None)])
+        with mock.patch.object(autorun, "is_serving_ex",
+                               side_effect=lambda u: next(codes, ("200", True, None))):
+            p.candidates.append("https://app.example")
+            p.start()
+            p.join(timeout=3)
+        self.assertEqual(p.rejected_edge_4xx, 1)
+        self.assertEqual(len(p.origin_checks), 1)
+        self.assertEqual(p.origin_checks[0]["edge"], "aws-alb-no-upstream")
+        self.assertEqual(p.code, "200", "the clock stops on the app's 200, not the edge 404")
+
+
 if __name__ == "__main__":
     unittest.main()

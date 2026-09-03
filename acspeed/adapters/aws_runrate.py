@@ -27,6 +27,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
+import shlex
 import time
 from typing import Callable, List, Optional
 from urllib.parse import urlparse
@@ -39,6 +40,9 @@ HOURS_PER_MONTH = 730.0
 McpCall = Callable[[str], dict]
 
 _AWS_MCP_ENDPOINT = "https://aws-mcp.us-east-1.api.aws/mcp"
+# Pinned: see _default_mcp_call. 1.6.5 (2026-09-01) is the release that replaced the cli_command tool
+# with the run_script/boto3 sandbox this module now targets.
+_AWS_MCP_VERSION = "1.6.5"
 _REGION_RE = re.compile(r"\.([a-z]{2}-[a-z]+-\d)\.")
 
 
@@ -88,9 +92,152 @@ def _unwrap(result: object) -> dict:
     return json.loads(text) if text else {}
 
 
+# --- the MCP transport: CLI string -> boto3 via aws___run_script -----------------------------------------
+#
+# mcp-proxy-for-aws 1.6.5 (2026-09-01) REMOVED the generic `aws___call_aws` (cli_command) tool; the
+# surviving programmatic path is `aws___run_script`, which executes Python with an async
+# ``call_boto3(service_name=, operation_name=, region_name=, params=)``. Every cost run after that release
+# failed with "Unknown tool: 'aws___call_aws'" and priced nothing.
+#
+# The CLI-string seam (``McpCall``) is KEPT: it is what every call site and every test injects. Only the
+# transport behind it changed, so a translation is needed from the seven command shapes this module issues
+# to their boto3 (service, operation, params) form. The table is EXPLICIT rather than a general CLI parser:
+# an unknown command raises instead of silently mistranslating into a wrong price.
+#
+# ``params`` naming follows each API's own casing (ECS is lowerCamel, Pricing/CloudControl/RGT are Upper),
+# which is what boto3 expects and what the CLI mapped to anyway, so response shapes are unchanged.
+_CLI_TO_BOTO3 = {
+    # (service, cli-operation): (Boto3Operation, {cli flag: param name}, list-valued params, json-valued params)
+    ("cloudcontrol", "get-resource"):
+        ("GetResource", {"--type-name": "TypeName", "--identifier": "Identifier"}, (), ()),
+    ("ecs", "describe-services"):
+        ("DescribeServices", {"--cluster": "cluster", "--services": "services"}, ("services",), ()),
+    ("ecs", "describe-task-definition"):
+        ("DescribeTaskDefinition", {"--task-definition": "taskDefinition"}, (), ()),
+    ("resourcegroupstaggingapi", "get-resources"):
+        ("GetResources", {}, (), ()),
+    ("pricing", "get-products"):
+        ("GetProducts", {"--service-code": "ServiceCode", "--filters": "Filters"}, (), ("Filters",)),
+    ("lightsail", "get-container-services"):
+        ("GetContainerServices", {}, (), ()),
+    ("lightsail", "get-container-service-powers"):
+        ("GetContainerServicePowers", {}, (), ()),
+}
+
+# Flags that carry no boto3 parameter: the region is call_boto3's own argument, the output format is a CLI
+# concept, and pagination is automatic in the sandbox.
+_IGNORED_FLAGS = {"--output", "--no-paginate", "--max-items"}
+
+
+def _cli_to_boto3(cli: str) -> tuple:
+    """``aws <service> <op> --flag value ...`` -> ``(service, Boto3Operation, params, region)``.
+    Raises on any command not in the explicit table: a mistranslated call would produce a wrong number,
+    which this module never does silently."""
+    parts = shlex.split(cli)
+    if len(parts) < 3 or parts[0] != "aws":
+        raise RuntimeError(f"aws MCP: uninterpretable command {cli[:120]!r}")
+    service, operation = parts[1], parts[2]
+    spec = _CLI_TO_BOTO3.get((service, operation))
+    if not spec:
+        raise RuntimeError(f"aws MCP: no boto3 translation for 'aws {service} {operation}' "
+                           f"(add it to _CLI_TO_BOTO3)")
+    op_name, flag_map, list_params, json_params = spec
+    params: dict = {}
+    region: Optional[str] = None
+    i = 3
+    while i < len(parts):
+        flag = parts[i]
+        if flag == "--region" and i + 1 < len(parts):
+            region = parts[i + 1]
+            i += 2
+            continue
+        if flag in _IGNORED_FLAGS:
+            i += 2 if (i + 1 < len(parts) and not parts[i + 1].startswith("--")) else 1
+            continue
+        if flag in flag_map and i + 1 < len(parts):
+            key, value = flag_map[flag], parts[i + 1]
+            params[key] = json.loads(value) if key in json_params else (
+                [value] if key in list_params else value)
+            i += 2
+            continue
+        raise RuntimeError(f"aws MCP: unmapped flag {flag!r} for 'aws {service} {operation}'")
+    return service, op_name, params, region
+
+
+# Runs inside the MCP sandbox. It returns the boto3 response JSON-safe (datetimes and Decimals do not
+# serialize) and drops ResponseMetadata, so the dict handed back matches what the CLI used to print.
+_SCRIPT = '''
+import json, datetime, decimal
+
+def _safe(o):
+    if isinstance(o, dict):
+        return {k: _safe(v) for k, v in o.items() if k != "ResponseMetadata"}
+    if isinstance(o, (list, tuple)):
+        return [_safe(v) for v in o]
+    if isinstance(o, (datetime.datetime, datetime.date)):
+        return o.isoformat()
+    if isinstance(o, decimal.Decimal):
+        return float(o)
+    if isinstance(o, bytes):
+        return o.decode("utf-8", "replace")
+    return o
+
+_params = json.loads(__PARAMS__)
+_region = json.loads(__REGION__)
+_resp = await call_boto3(service_name=__SERVICE__, operation_name=__OPERATION__,
+                         region_name=_region, params=(_params or None))
+result = _safe(_resp)
+result
+'''
+
+
+def _build_script(service: str, operation: str, params: dict, region: Optional[str]) -> str:
+    """Substitution is literal replacement, NOT str.format: the script body contains dict comprehensions,
+    whose braces format() would try to interpret."""
+    return (_SCRIPT
+            .replace("__PARAMS__", repr(json.dumps(params)))
+            .replace("__REGION__", repr(json.dumps(region)))
+            .replace("__SERVICE__", repr(service))
+            .replace("__OPERATION__", repr(operation)))
+
+
+def _unwrap_script(result: object) -> dict:
+    """``aws___run_script`` result -> the boto3 response dict. Raises on an MCP error, a non-success script
+    status, or any failed inner API call (the tool's own guidance: verify api_calls before trusting
+    return_value). A failure is disclosed as an exception, never returned as an empty price."""
+    if isinstance(result, dict) and result.get("isError"):
+        raise RuntimeError(f"aws MCP isError: {str(result)[:200]}")
+    payload = None
+    if isinstance(result, dict) and isinstance(result.get("structuredContent"), dict):
+        payload = result["structuredContent"]
+    if payload is None:
+        text = ""
+        if isinstance(result, dict):
+            for part in (result.get("content") or []):
+                if isinstance(part, dict) and part.get("type") == "text":
+                    text += part.get("text", "")
+        payload = json.loads(text) if text else {}
+    if not isinstance(payload, dict):
+        return {}
+    status = payload.get("status")
+    if status is not None and status != "success":
+        raise RuntimeError(f"aws MCP run_script status={status}: "
+                           f"{str(payload.get('stderr') or payload.get('stdout'))[:200]}")
+    for c in (payload.get("api_calls") or []):
+        if isinstance(c, dict) and c.get("status") not in (None, "success"):
+            raise RuntimeError(f"aws MCP api_call {c.get('service')}.{c.get('operation')} "
+                               f"failed: {str(c.get('error') or c.get('status'))[:200]}")
+    rv = payload.get("return_value")
+    return rv if isinstance(rv, dict) else {}
+
+
 def _default_mcp_call(profile: Optional[str] = None) -> McpCall:
     from .mcp_client import MCPClient, StdioTransport
-    args = ["uvx", "mcp-proxy-for-aws@latest", _AWS_MCP_ENDPOINT, "--metadata", "INSTALL_SOURCE=aws-cli"]
+    # PINNED, not @latest: an unpinned proxy silently changed its tool surface under a running study
+    # (1.6.5 dropped aws___call_aws), which is an instrument change mid-measurement. Upstream's own
+    # README recommends pinning. Bump deliberately, with a re-test, never implicitly.
+    args = ["uvx", f"mcp-proxy-for-aws=={_AWS_MCP_VERSION}", _AWS_MCP_ENDPOINT,
+            "--metadata", "INSTALL_SOURCE=aws-cli"]
     if profile:
         args += ["--profile", profile]
     client = MCPClient(StdioTransport(args))
@@ -100,10 +247,12 @@ def _default_mcp_call(profile: Optional[str] = None) -> McpCall:
         # Retry a transient MCP/network error a few times with backoff so one blip does not zero the cost.
         # An auth/permission error just exhausts the retries and raises (same as before) - use a static IAM
         # key for a batch so aws auth cannot lapse mid-run.
+        service, operation, params, region = _cli_to_boto3(cli)
+        code = _build_script(service, operation, params, region)
         last: Optional[Exception] = None
         for attempt in range(4):
             try:
-                return _unwrap(client.call_tool("aws___call_aws", {"cli_command": cli}))
+                return _unwrap_script(client.call_tool("aws___run_script", {"code": code}))
             except Exception as e:  # noqa: BLE001
                 last = e
                 time.sleep(min(2.0 * (attempt + 1), 8.0))

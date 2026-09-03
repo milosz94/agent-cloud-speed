@@ -851,6 +851,57 @@ def serving_predicate(code: str) -> bool:
     return code.isdigit() and len(code) == 3 and code != "000" and int(code) < 500
 
 
+# --- response-origin check for a 4xx (PAPER p2 s4) -------------------------------------------------
+#
+# serving_predicate's 4xx branch rests on one measured assumption: "an unknown hostname fails TLS (000),
+# it never 4xxs, so a 4xx can only originate at the app". That was measured on ONE edge and does not hold
+# on every cloud. MEASURED 2026-09-03 across the batch data: an AWS Lightsail container-service hostname
+# answers 404 from the moment DNS exists, so all four Lightsail runs stopped the clock on the FIRST poll
+# (t1 160-250s) while the same workload over an ALB, whose t1 is a real app 200, took 436-867s; a GCP
+# Cloud Run URL answers 403 from its IAM edge the same way. In each case the off-clock oracle later found
+# the real app. The paper already requires the fix: "any adapter whose edge answers 4xx for an unwired
+# host must check response origin."
+#
+# The table is an explicit DENYLIST of edge-generated 4xx bodies/headers. The default is unchanged
+# ("a 4xx is the app answering"), so Isso's 400, an API's 401 and a SPA's 404 still stop the clock; only a
+# response positively identified as a platform edge is rejected. Every 4xx's evidence is recorded in the
+# run json (serving.origin), so an edge NOT in this table surfaces in the data instead of silently
+# becoming a fast t1.
+EDGE_4XX_SIGNATURES: tuple[tuple[str, str | None, str | None], ...] = (
+    # (label, lowercased header substring, lowercased body substring)
+    ("aws-alb-no-upstream", "server: awselb", None),
+    ("gcp-iam-forbidden", None, "your client does not have permission"),
+    ("gcp-frontend-error", None, "error 403 (forbidden)"),
+    ("azure-app-unavailable", None, "web app - unavailable"),
+    ("azure-app-error", None, ":( application error"),
+)
+
+
+def probe_origin(url: str) -> dict:
+    """Headers + a small body sample for a response, so a 4xx can be attributed to the app or to the
+    platform edge. Off the critical path in effect: it runs only when a 4xx appears."""
+    p = subprocess.run(
+        ["bash", "-c",
+         f'curl -sS -D - -o - --max-time 20 "{url}/" 2>/dev/null | head -c 4000 || true'],
+        capture_output=True, text=True, timeout=40)
+    raw = (p.stdout or "")
+    head, _, body = raw.partition("\r\n\r\n")
+    if not body:
+        head, _, body = raw.partition("\n\n")
+    low_head, low_body = head.lower(), body.lower()
+    edge = None
+    for label, hdr, bdy in EDGE_4XX_SIGNATURES:
+        if hdr and hdr in low_head and (not bdy or bdy in low_body):
+            edge = label
+            break
+        if bdy and not hdr and bdy in low_body:
+            edge = label
+            break
+    return {"edge": edge, "server": next((l.split(":", 1)[1].strip() for l in head.split("\n")
+                                          if l.lower().startswith("server:")), None),
+            "body_bytes": len(body), "body_sample": body[:200]}
+
+
 def is_serving(url: str) -> tuple[str, bool]:
     """One external probe of the URL: the status of the FIRST response (no redirect following; a 3xx
     is already the app answering). No app-specific endpoint, no credentials."""
@@ -859,6 +910,22 @@ def is_serving(url: str) -> tuple[str, bool]:
         capture_output=True, text=True, timeout=40)
     code = (p.stdout or "").strip()[-3:] or "000"
     return code, serving_predicate(code)
+
+
+def is_serving_ex(url: str) -> tuple[str, bool, dict | None]:
+    """`is_serving` plus the response-origin check on a 4xx: (status, serving?, origin evidence).
+    Delegates the probe to `is_serving`, which stays the single probe seam. A 4xx that a platform edge
+    generated is NOT serving; anything else keeps `is_serving`'s verdict."""
+    code, ok = is_serving(url)
+    origin = None
+    if ok and code.isdigit() and 400 <= int(code) < 500:
+        try:
+            origin = probe_origin(url)
+        except Exception:  # noqa: BLE001 - a failed origin probe must never fake a t1; keep the 4xx
+            origin = {"edge": None, "error": "origin probe failed"}
+        if origin.get("edge"):
+            ok = False        # the platform edge answered, not the app: keep polling
+    return code, ok, origin
 
 
 def wait_until_serving(url: str, timeout_s: float, interval_s: float | None = None) -> tuple[bool, float, str]:
@@ -937,6 +1004,8 @@ class ReadinessPoller(threading.Thread):
         self.polls = 0
         self.served_on_first_poll = False
         self.last_codes: dict[str, str] = {}
+        self.origin_checks: list[dict] = []   # every 4xx's response-origin evidence (PAPER p2 s4)
+        self.rejected_edge_4xx = 0            # 4xx responses attributed to the platform edge, not the app
 
     def _source_text(self) -> str:
         if self.bootlog_path:
@@ -965,9 +1034,16 @@ class ReadinessPoller(threading.Thread):
             for u in list(self.candidates):
                 if self._halt.is_set():
                     return
-                code, ok = is_serving(u)
+                code, ok, origin = is_serving_ex(u)
                 self.polls += 1
                 self.last_codes[u] = code
+                if origin is not None:
+                    # Every 4xx's origin verdict is kept, including the rejections, so a run whose clock
+                    # was NOT stopped by an edge 4xx still carries the evidence for that decision.
+                    self.origin_checks.append({"url": u, "code": code,
+                                               "t_s": round(time.monotonic() - self.t0_mono, 1), **origin})
+                    if origin.get("edge"):
+                        self.rejected_edge_4xx += 1
                 if ok:
                     self.served_url, self.code = u, code
                     self.t_serving_s = time.monotonic() - self.t0_mono
@@ -1641,6 +1717,11 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
         "served_on_first_poll": poller.served_on_first_poll,
         "candidates_polled": list(poller.candidates),
         "last_codes": dict(poller.last_codes),
+        # Response-origin evidence for every 4xx seen (PAPER p2 s4). `rejected_edge_4xx` counts the ones
+        # attributed to the platform edge, whose clock-stop was refused; an empty `origin` list means no
+        # 4xx was ever seen, not that the check did not run.
+        "origin": list(poller.origin_checks),
+        "rejected_edge_4xx": poller.rejected_edge_4xx,
     }
 
     # 5. measure the deploy(+repair) transcript (A) and route the SPLIT through acspeed (the paper's
