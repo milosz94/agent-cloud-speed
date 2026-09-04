@@ -116,6 +116,15 @@ _CLI_TO_BOTO3 = {
         ("DescribeTaskDefinition", {"--task-definition": "taskDefinition"}, (), ()),
     ("resourcegroupstaggingapi", "get-resources"):
         ("GetResources", {}, (), ()),
+    # The two tag-INDEPENDENT enumerators. They were never added in the 1.6.5 port from the cli_command tool,
+    # which silently disabled Resource Explorer 2 AND Config: an untranslatable command raises, the enumerator
+    # catches it and falls through, so the WHOLE study ran on the tag-gated RGT alone and an untagged ALB/RDS
+    # was missed, biasing the run-rate LOW (aws-medium-b run11/12 ALBs, run14 RDS). Verified 2026-09-05: RE is
+    # enabled in the account and `search` returns the complete tag-independent set.
+    ("resource-explorer-2", "search"):
+        ("Search", {"--query-string": "QueryString"}, (), ()),
+    ("configservice", "select-resource-config"):
+        ("SelectResourceConfig", {"--expression": "Expression"}, (), ()),
     ("pricing", "get-products"):
         ("GetProducts", {"--service-code": "ServiceCode", "--filters": "Filters"}, (), ("Filters",)),
     ("lightsail", "get-container-services"):
@@ -123,6 +132,10 @@ _CLI_TO_BOTO3 = {
     ("lightsail", "get-container-service-powers"):
         ("GetContainerServicePowers", {}, (), ()),
 }
+
+# The AWS CLI service name usually equals the boto3 client name; the few that differ are remapped here so
+# call_boto3 gets a valid client. AWS Config: CLI `configservice`, boto3 client `config`.
+_BOTO3_SERVICE = {"configservice": "config"}
 
 # Flags that carry no boto3 parameter: the region is call_boto3's own argument, the output format is a CLI
 # concept, and pagination is automatic in the sandbox.
@@ -161,7 +174,7 @@ def _cli_to_boto3(cli: str) -> tuple:
             i += 2
             continue
         raise RuntimeError(f"aws MCP: unmapped flag {flag!r} for 'aws {service} {operation}'")
-    return service, op_name, params, region
+    return _BOTO3_SERVICE.get(service, service), op_name, params, region
 
 
 # Runs inside the MCP sandbox. It returns the boto3 response JSON-safe (datetimes and Decimals do not
@@ -575,6 +588,24 @@ def _enumerate(mcp_call: McpCall, url: str, region: str) -> List[dict]:
     return []
 
 
+def _price_enumerated(mcp_call: McpCall, resources: List[dict], url: str, region: str, capture_date: str,
+                      unpriced_out: Optional[List[str]] = None) -> Optional[RunRate]:
+    """Price an ALREADY-enumerated resource list via the shared Price List / dimension engine (aws_cost.py),
+    with NO completeness note (the caller owns disclosure). Used by the general path and by the Lightsail
+    branch, which prices its container's co-provisioned resources (an RDS/volume the short-circuit skipped)."""
+    def get_products(service_code, filters):
+        flt = json.dumps(filters).replace("'", "\\'")
+        return mcp_call(f"aws pricing get-products --service-code {service_code} "
+                        f"--filters '{flt}' --region us-east-1 --output json")
+    adapter = aws_cost.AwsRunRateAdapter(
+        enumerate_resources=lambda _ref: resources,
+        get_products=get_products)
+    rr = adapter.run_rate(url, capture_date=capture_date)
+    if unpriced_out is not None:                                  # disclosed by type, never silently dropped
+        unpriced_out.extend(adapter.unpriced_resources)
+    return rr
+
+
 def _general_run_rate(mcp_call: McpCall, url: str, region: str, capture_date: str,
                       disclosures: Optional[List[str]] = None,
                       unpriced_out: Optional[List[str]] = None,
@@ -591,17 +622,7 @@ def _general_run_rate(mcp_call: McpCall, url: str, region: str, capture_date: st
     note = _completeness_note(resources, url)
     if note and disclosures is not None:
         disclosures.append(note)
-
-    def get_products(service_code, filters):
-        flt = json.dumps(filters).replace("'", "\\'")
-        return mcp_call(f"aws pricing get-products --service-code {service_code} "
-                        f"--filters '{flt}' --region us-east-1 --output json")
-    adapter = aws_cost.AwsRunRateAdapter(
-        enumerate_resources=lambda _ref: resources,
-        get_products=get_products)
-    rr = adapter.run_rate(url, capture_date=capture_date)
-    if unpriced_out is not None:                                  # disclosed by type, never silently dropped
-        unpriced_out.extend(adapter.unpriced_resources)
+    rr = _price_enumerated(mcp_call, resources, url, region, capture_date, unpriced_out)
     if rr is not None and note:
         rr = dataclasses.replace(rr, price_source=f"{rr.price_source} | NOTE: {note}")
     return rr
@@ -797,9 +818,31 @@ class AwsRunRateAdapter:
         call = self._mcp_call or _default_mcp_call(self._profile)
         host = (urlparse(url if "://" in url else f"https://{url}").hostname or "").lower()
         if "cs.amazonlightsail.com" in host:             # AWS-forced enumeration exception, live-priced
-            return _lightsail_run_rate(call, url, reg, capture_date)
+            return self._lightsail_with_backends(call, url, reg, capture_date)
         code, name = _usage_front(host)                  # CloudFront/App Runner/Lambda/API Gateway
         if code:                                         # usage-metered -> a per-usage SCHEDULE, not $/hr
             return _usage_rate(call, url, reg, capture_date, code, name)
         return _general_run_rate(call, url, reg, capture_date, disclosures=self.disclosures,
                                  unpriced_out=self.unpriced_resources, enumerate_resources=self._enumerate)
+
+    def _lightsail_with_backends(self, call: McpCall, url: str, region: str, capture_date: str
+                                 ) -> Optional[RunRate]:
+        """Lightsail's container is not in the uniform inventory, so it is live-priced on its own; but a
+        co-provisioned RDS / volume / other billed resource IS in Resource Explorer / tags, and the old
+        short-circuit skipped it (aws-medium-b run14's RDS priced $0). Price the container, ALSO enumerate and
+        price the co-provisioned resources (anchored on the run token carried in the service name), and merge.
+        No double count: the container never appears in RE/RGT, and any lightsail-service ARN the inventory does
+        return is dropped from the merge (it is priced by the live path)."""
+        ls = _lightsail_run_rate(call, url, region, capture_date)
+        enum = self._enumerate or _enumerate
+        backends = [r for r in enum(call, url, region) if r.get("service") != "lightsail"]
+        extra = (_price_enumerated(call, backends, url, region, capture_date, self.unpriced_resources)
+                 if backends else None)
+        if ls is None:
+            return extra                                 # container unpriceable; still surface any backends
+        if extra is None or not extra.components:
+            return ls
+        return compose_run_rate(list(ls.components) + list(extra.components), provider="aws", region=region,
+                                flavor=ls.flavor, capture_date=capture_date,
+                                price_source=f"{ls.price_source} + co-provisioned via inventory "
+                                             f"({extra.price_source})")
