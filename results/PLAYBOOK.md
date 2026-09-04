@@ -3,6 +3,20 @@
 How to turn a raw `acspeed-run` output directory into a published entry in this folder. Everything here is
 off-clock (it never affects a measured number). Do it after each run or batch.
 
+## Layout
+
+One folder per cloud, one subfolder per **cell** (a cloud x tier x regime cut). A cell is the unit that
+carries its own README, its own `sessions/` bundle, and its own n.
+
+```
+results/<cloud>/<cloud>-easy/       README.md + sessions/
+results/<cloud>/<cloud>-medium-a/   ONLINE regime (the agent discovers the next operation as it goes)
+results/<cloud>/<cloud>-medium-b/   DISCLOSED regime (the whole plan is stated upfront)
+```
+
+The cell folder name matches the raw staging directory the runs came from, so a published cell maps
+one-to-one onto `acspeed-results/<cell>/`. Below, `<cell>` means that name.
+
 ## 0. What a run produces
 
 `acspeed-run --adapter <cloud> --model claude-opus-5` writes to `<app-dir>/acspeed-results/<cloud>/`:
@@ -59,17 +73,18 @@ and REFUSES to write if a secret survives. Run it per fair run, pointing `--in` 
 ```bash
 python3 -m acspeed.cli sessions \
   --in  /path/to/acspeed-results/<cloud>/run01_sessions/projects/-home-agent-app \
-  --out results/<cloud>/sessions
+  --out results/<cloud>/<cell>/sessions
 ```
 
 It prints `inputs / written / total_redactions / residue`. **`residue` MUST be 0** - if not, do not
 publish; the redactor found something it could not scrub. (Add `--keep-substrate` only for an internal
-bundle; never for a public one.) For n>1, redact each fair run's sessions into the same `results/<cloud>/
-sessions` (it writes a `REDACTION-MANIFEST.json`).
+bundle; never for a public one.) For n>1, redact each fair run's sessions into the same
+`results/<cloud>/<cell>/sessions` (it writes a `REDACTION-MANIFEST.json`).
 
-## 4. Write the cloud's ONE table
+## 4. Write the cell's ONE table
 
-Each cloud has ONE table in `results/<cloud>/README.md`, one row per fair run, merging performance and cost:
+Each cell has ONE table in `results/<cloud>/<cell>/README.md`, one row per fair run, merging
+performance and cost:
 `run | t1 (s) | platform (s) | agent (s) | steps | tokens | agent $ | fixed $/mo | $/mo @ 10k req | $/mo @
 500k req | $/mo @ 10M req`. `fixed $/mo` is the flat / always-on floor from `cost_run_rate`; the `$/mo @ N
 req` columns are the traffic estimates (total monthly cost at that volume). A fixed VM is flat, so its three
@@ -82,7 +97,7 @@ a `$` sign. One table + a one-line note (architecture + how the cost behaves wit
 # no em-dashes anywhere (the repo test bans them)
 grep -rlP $'\x{2014}|\x{2013}|\x{2015}' results/ && echo "DASH FOUND - fix" || echo "dash-clean"
 # no secret residue in any redacted bundle
-grep -rl '"residue": [^0]' results/*/sessions/REDACTION-MANIFEST.json && echo "RESIDUE - do not publish"
+grep -rl '"residue": [^0]' results/*/*/sessions/REDACTION-MANIFEST.json && echo "RESIDUE - do not publish"
 cd .. && python3 -m unittest discover -s tests -q   # suite still green
 ```
 

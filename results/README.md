@@ -3,26 +3,42 @@
 An agent deploys the umami app + its database to a public URL on each cloud; `acspeed` measures each run
 externally. App: umami. Model: `claude-opus-5`. How runs land here: `PLAYBOOK.md`.
 
-Each cloud has its own one-table result:
+## Layout
 
-- [redu](redu/) - fixed VM + managed Postgres (n=10)
-- [aws](aws/) - Fargate/EC2 + ALB + RDS + public IPv4 (n=10)
-- [gcp](gcp/) - Cloud Run (min-instances=1) + Cloud SQL + public IPv4 (n=12)
-- [azure](azure/) - App Service or Container Apps (agent's choice) + managed Postgres (n=10)
+One folder per cloud, one subfolder per **cell**. A cell is one cloud x tier x regime cut, and it is the
+unit that carries its own README, its own `sessions/` bundle, and its own n. Processing a run into a cell:
+`PLAYBOOK.md`. Known defects in the published numbers: `DATA-DEFECTS.md`.
+
+**Easy tier** is the deploy alone: the app and its database provision and serve a public URL.
 
 **Medium tier** goes past "did it deploy": it operates on the live app (register, deploy a second site,
-integrate, restart) and re-verifies each effect survived.
+integrate, restart) and re-verifies each effect survived. Medium A is the ONLINE regime (the agent
+discovers the next operation as it goes); Medium B is the DISCLOSED regime (the whole plan is stated
+upfront).
 
-Medium A is the ONLINE regime (the agent discovers the next operation as it goes); Medium B is the
-DISCLOSED regime (the whole plan is stated upfront).
+### [aws/](aws/) - Fargate/EC2 + ALB + RDS + public IPv4
 
-- [redu-medium-a](redu-medium-a/) - n=10, all 5/5. The only cell with the VM-to-VM network axis populated (n=2 of the 10)
-- [aws-medium-a](aws-medium-a/) - n=10
-- [gcp-medium-a](gcp-medium-a/) - n=10 (run11 excluded, disclosed: first-poll 403)
-- [aws-medium-b](aws-medium-b/) - n=6 fair (runs 1, 2, 4, 7 excluded, disclosed: first-poll 404 from the Lightsail edge)
-- [gcp-medium-b](gcp-medium-b/) - n=10
-- [azure-medium-b](azure-medium-b/) - n=10 (spine computed over the 9 schema-conformant runs)
-- [redu-medium-b](redu-medium-b/) - n=10
+- [aws-easy](aws/aws-easy/) - n=10
+- [aws-medium-a](aws/aws-medium-a/) - n=10
+- [aws-medium-b](aws/aws-medium-b/) - n=6 fair (runs 1, 2, 4, 7 excluded, disclosed: first-poll 404 from the Lightsail edge)
+
+### [gcp/](gcp/) - Cloud Run (min-instances=1) + Cloud SQL + public IPv4
+
+- [gcp-easy](gcp/gcp-easy/) - n=12
+- [gcp-medium-a](gcp/gcp-medium-a/) - n=10 (run11 excluded, disclosed: first-poll 403)
+- [gcp-medium-b](gcp/gcp-medium-b/) - n=10
+
+### [azure/](azure/) - App Service or Container Apps (agent's choice) + managed Postgres
+
+- [azure-easy](azure/azure-easy/) - n=10
+- [azure-medium-a](azure/azure-medium-a/) - n=10
+- [azure-medium-b](azure/azure-medium-b/) - n=10 (spine computed over the 9 schema-conformant runs)
+
+### [redu/](redu/) - fixed VM + managed Postgres
+
+- [redu-easy](redu/redu-easy/) - n=10
+- [redu-medium-a](redu/redu-medium-a/) - n=10, all 5/5. The only cell with the VM-to-VM network axis populated (n=2 of the 10)
+- [redu-medium-b](redu/redu-medium-b/) - n=10
 
 Each easy table is `run | t1 (s) | platform (s) | agent (s) | steps | tokens | agent $ | $/mo @ 10k
 / 500k / 10M req`. A standing VM cost stays flat at any traffic; a usage-metered serverless front rises
