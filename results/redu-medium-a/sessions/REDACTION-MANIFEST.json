@@ -1,30 +1,32 @@
 {
   "files": [
     {
-      "bytes_in": 929910,
-      "bytes_out": 926177,
-      "lines": 416,
-      "name": "5c8d930c-4a9a-41f9-b5da-9534545993fc.jsonl",
+      "bytes_in": 820613,
+      "bytes_out": 818497,
+      "lines": 396,
+      "name": "822f7785-dc35-4b19-8e07-0e7a9bbaddc5.jsonl",
       "redactions": {
-        "infra": 5,
-        "infra-host": 107,
-        "ip": 331,
-        "keyed": 6,
-        "value": 52
+        "infra": 2,
+        "infra-host": 52,
+        "ip": 86,
+        "keyed": 10,
+        "ssh-key": 6,
+        "value": 100
       },
       "residue": 0,
-      "source": "5c8d930c-4a9a-41f9-b5da-9534545993fc.jsonl"
+      "source": "822f7785-dc35-4b19-8e07-0e7a9bbaddc5.jsonl"
     }
   ],
   "files_with_residue": {},
   "inputs": 1,
   "total_redactions": {
-    "infra": 5,
-    "infra-host": 107,
-    "ip": 331,
-    "keyed": 6,
-    "value": 52
+    "infra": 2,
+    "infra-host": 52,
+    "ip": 86,
+    "keyed": 10,
+    "ssh-key": 6,
+    "value": 100
   },
-  "total_redactions_count": 501,
+  "total_redactions_count": 256,
   "written": 1
 }
