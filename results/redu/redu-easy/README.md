@@ -1,8 +1,5 @@
 # redu: Easy-tier umami (2026-08-29)
 
-n=10 (run01-10, a serial batch through the corrected cost tool). Architecture: fixed VM (m1.medium) + managed
-Postgres.
-
 | run | t1 (s) | platform (s) | agent (s) | steps | tokens | agent $ | fixed $/mo | $/mo @ 10k req | $/mo @ 500k req | $/mo @ 10M req |
 |----:|-------:|-------------:|----------:|------:|-------:|--------:|-----------:|---------------:|----------------:|---------------:|
 | 1 | 249.4 | 135.4 | 108.8 | 24 | 18537 | $1.97 | $44.82 | $44.82 | $44.82 | $44.82 |
@@ -15,6 +12,3 @@ Postgres.
 | 8 | 237.5 | 134.2 | 99.2 | 26 | 16056 | $1.85 | $44.82 | $44.82 | $44.82 | $44.82 |
 | 9 | 258.6 | 166.2 | 88.0 | 24 | 15052 | $1.82 | $44.82 | $44.82 | $44.82 | $44.82 |
 | 10 | 222.6 | 143.0 | 74.5 | 25 | 14653 | $1.75 | $44.82 | $44.82 | $44.82 | $44.82 |
-
-`fixed $/mo` is the flat price of the VM + database. It is a fixed VM, so the bill stays **$44.82/mo at any
-traffic** (the three traffic columns are equal). Redacted transcripts in `sessions/`.
