@@ -119,6 +119,13 @@ class TierOperation:
     # detail, so the agent can adapt (e.g. redeploy an immutable second site whose served page did not yet
     # carry the tracking snippet). Default 1 = one shot. The op's wall spans all attempts (honest cost).
     max_attempts: int = 1
+    # When set, the RUNNER performs this operation itself and NO agent turn is taken (no session, no agent
+    # cost). It exists for the operations the spec requires the harness to own rather than the agent: the
+    # Hard tier's capacity layer is bulk-loaded "from an off-cloud driver" with an exact expected count, and
+    # its serverless fault fallback is "a boundary fault the harness controls". Using an agent turn for
+    # those would make the ground truth agent-reported, which is exactly what the observe primitive forbids.
+    # The callable receives the context and returns the same dict shape a turn would (``{}`` is fine).
+    harness_action: Optional[Callable[["OpContext"], dict]] = None
 
     def __post_init__(self) -> None:
         if self.op_type not in OPERATION_TYPES:
@@ -413,12 +420,23 @@ def run_tier(
                     task=(op.task + f"\n\nYOUR PREVIOUS ATTEMPT DID NOT SATISFY THE CHECK: "
                           f"{result.detail}. Fix exactly that and complete the operation."),
                     verify=op.verify)
-            log(f"operation {op.op_id} ({op.op_type}): agent turn "
-                f"(resume={use_sid or 'new'}, attempt {attempt}/{op.max_attempts})")
-            agent = run_agent(run_op, ctx, use_sid) or {}
-            sid = agent.get("session_id")
-            if sid and resume_sid is None:
-                resume_sid = sid
+            if op.harness_action is not None:
+                # Runner-owned operation: no agent turn, so the ground truth it establishes is the
+                # harness's own, off-cloud, and never agent-reported.
+                log(f"operation {op.op_id} ({op.op_type}): HARNESS action "
+                    f"(no agent turn, attempt {attempt}/{op.max_attempts})")
+                try:
+                    agent = op.harness_action(ctx) or {}
+                except Exception as e:  # noqa: BLE001 - a driver failure is a failed op, never a crash
+                    agent = {"harness_error": repr(e)}
+                    log(f"operation {op.op_id}: harness action raised {e!r}")
+            else:
+                log(f"operation {op.op_id} ({op.op_type}): agent turn "
+                    f"(resume={use_sid or 'new'}, attempt {attempt}/{op.max_attempts})")
+                agent = run_agent(run_op, ctx, use_sid) or {}
+                sid = agent.get("session_id")
+                if sid and resume_sid is None:
+                    resume_sid = sid
             url = agent.get("url")
             if url:
                 ctx.url = url
