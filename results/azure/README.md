@@ -5,7 +5,7 @@
 | [easy](azure-easy/) | 1.8x | [1.6, 2.1] | 10 | 984.0 | [984.0, 1309.5] = x1.331 | provision-deploy/1.1.0 |
 
 - **floor-ratio**: mean deploy time / F_C; deploy time = seconds until the app's public URL first answers (polled externally)
-- **F_C**: fastest platform-only time observed (cloud provisioning and boot waits; no agent can go below it)
 - **95% CI**: bootstrap over the n runs
+- **F_C**: fastest platform-only time observed (cloud provisioning and boot waits; no agent can go below it)
 - **bracket**: [F_C, best observed run]; the true optimum lies inside, x = its width
 - **gold**: version of the reference definition; compare ratios only within one version
