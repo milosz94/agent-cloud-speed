@@ -3,6 +3,7 @@
 | tier | floor-ratio | 95% CI | n | F_C (s) | bracket (s) | gold |
 |:-----|------------:|:-------|--:|--------:|:------------|:-----|
 | [easy](gcp-easy/) | 3.0x | [2.5, 3.7] | 12 | 264.2 | [264.2, 478.7] = x1.812 | provision-deploy/1.1.0 |
+| [medium-a](gcp-medium-a/) | 2.6x | [2.5, 2.7] | 10 | 161.6 | [161.6, 330.6] = x2.046 | provision-deploy/1.1.0 |
 
 - **floor-ratio**: mean deploy time / F_C; deploy time = seconds until the app's public URL first answers (polled externally)
 - **95% CI**: bootstrap over the n runs

@@ -3,6 +3,7 @@
 | tier | floor-ratio | 95% CI | n | F_C (s) | bracket (s) | gold |
 |:-----|------------:|:-------|--:|--------:|:------------|:-----|
 | [easy](azure-easy/) | 1.8x | [1.6, 2.1] | 10 | 984.0 | [984.0, 1309.5] = x1.331 | provision-deploy/1.1.0 |
+| [medium-a](azure-medium-a/) | 13.7x | [10.8, 16.5] | 9 | 123.6 | [123.6, 728.4] = x5.893 | provision-deploy/1.1.0 |
 
 - **floor-ratio**: mean deploy time / F_C; deploy time = seconds until the app's public URL first answers (polled externally)
 - **95% CI**: bootstrap over the n runs
