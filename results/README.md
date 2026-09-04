@@ -16,6 +16,13 @@ integrate, restart) and re-verifies each effect survived. Medium A is the ONLINE
 discovers the next operation as it goes); Medium B is the DISCLOSED regime (the whole plan is stated
 upfront).
 
+In the medium tables every time is a **critical-path** second (Part 1's spine: platform-time and
+agent-time do not add, they interleave; off-path work is free in wall-clock and shows up on the cost axis,
+never the time axis). Each per-operation column is that operation's critical path, and **total = M**, the
+per-task critical-path wall-clock summed over the operations, so the row's operation columns sum to its
+total. This is one definition for both regimes: online has no cross-operation overlap so M equals the
+serial sum, disclosed does not, which is what makes the A-vs-B comparison honest.
+
 ### [aws/](aws/)
 
 - [aws-easy](aws/aws-easy/) - n=10
