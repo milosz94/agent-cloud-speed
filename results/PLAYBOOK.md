@@ -89,7 +89,13 @@ performance and cost:
 500k req | $/mo @ 10M req`. `fixed $/mo` is the flat / always-on floor from `cost_run_rate`; the `$/mo @ N
 req` columns are the traffic estimates (total monthly cost at that volume). A fixed VM is flat, so its three
 `$/mo` columns all equal its `fixed $/mo`; a serverless front rises with traffic. Every money value carries
-a `$` sign. One table + a one-line note (architecture + how the cost behaves with traffic), nothing else.
+a `$` sign.
+
+**One composition, same on every cloud (decided 2026-09-04):** `platform`/`agent` are the current tool's
+critical-path split (C6: the post-handoff platform wait is inside `platform`, so `platform + agent = t1` on
+every row); `steps`, `tokens` and `agent $` are the DEPLOY LANE ONLY (the task being measured; teardown is
+harness bookkeeping and stays out); `fixed $/mo` is `cost_run_rate.monthly_usd` verbatim, and `-` when the
+record has none (usage-metered) - never a derived or intercept figure. Same columns on every cloud.
 
 ## 5. Verify before committing
 
