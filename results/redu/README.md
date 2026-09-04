@@ -4,9 +4,7 @@
 |:-----|------------:|:-------|--:|--------:|:------------|:-----|
 | [easy](redu-easy/) | 1.7x | [1.7, 1.8] | 10 | 134.6 | [134.6, 214.4] = x1.593 | provision-deploy/1.1.0 |
 
-t1 = seconds until the deployed app's public URL first answers (polled externally).
-
-- **floor-ratio**: mean t1 / F_C
+- **floor-ratio**: mean deploy time / F_C; deploy time = seconds until the app's public URL first answers (polled externally)
 - **F_C**: fastest platform-only time observed (cloud provisioning and boot waits; no agent can go below it)
 - **95% CI**: bootstrap over the n runs
 - **bracket**: [F_C, best observed run]; the true optimum lies inside, x = its width
