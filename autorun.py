@@ -1081,7 +1081,9 @@ class ReadinessPoller(threading.Thread):
                 if ok:
                     t_s = time.monotonic() - self.t0_mono
                     fp = fingerprint_response(u)
-                    self.poll_log.append({"t_s": round(t_s, 1), "url": u, "code": code,
+                    # t_s at full-ish precision so a clean run's durable t1 (derived here) equals the
+                    # first-serve time to within rounding, and the recorded served_at_s cannot shift.
+                    self.poll_log.append({"t_s": round(t_s, 3), "url": u, "code": code,
                                           "bytes": fp["bytes"], "sig": fp["sig"]})
                     if self.t_serving_s is None:       # FIRST serve: recorded for transparency + fallback
                         self.served_url, self.code = u, code
