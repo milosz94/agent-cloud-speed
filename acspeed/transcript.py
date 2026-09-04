@@ -65,8 +65,17 @@ _EPS = 1e-9
 
 HUMAN = "human"
 IDLE = "idle"
-DEFAULT_IDLE_CAP = 300.0  # seconds; a longer NON-platform gap is held-out idle, charged to no lane
+DEFAULT_IDLE_CAP = 300.0  # seconds; a longer HUMAN gap is held-out idle, charged to no lane
                           # (a platform-ending gap is a blocking cloud call's latency: platform, no cap)
+MAX_GEN_GAP = 60.0        # seconds; a gap that ENDS in an agent turn but is longer than this is NOT model
+                          # generation and is the agent sitting IDLE while the operation's platform work
+                          # proceeds (measured: clean-run agent gaps top out ~36s; idle-waits are 64-191s).
+                          # Idle-while-the-cloud-works is platform critical-path time, not agent time: the
+                          # split must not reward an agent that blocks in one long poll command (already
+                          # platform) over one that pauses and re-polls in the next turn (was agent) for the
+                          # SAME real cloud wait. Measured cause: azure-medium-a run10 idled 191s ("I'll wait
+                          # for the completion notification") -> charged to agent -> platform read 124s and
+                          # became a false floor. This is the operational form of the Part 1 overlap limit.
 ASK_TOOL = "AskUserQuestion"
 _KEEP_TYPES = ("assistant", "user")
 _USAGE_KEYS = ("input_tokens", "output_tokens",
@@ -155,7 +164,8 @@ def clip_rows(rows: Sequence[dict], until_epoch: Optional[float],
 
 def trace_from_transcript(path: str, cap: float = DEFAULT_IDLE_CAP,
                           until_epoch: Optional[float] = None,
-                          since_epoch: Optional[float] = None) -> List[Span]:
+                          since_epoch: Optional[float] = None,
+                          idle_is_platform: bool = False) -> List[Span]:
     """Reconstruct the run as a linear chain of gap-spans, each owned by the lane of the event that
     ends it. A gap longer than ``cap`` is held-out idle (owner ``"idle"``) UNLESS it ends in a platform
     event (a blocking cloud call's observed latency, which is platform-time at any length); either way
@@ -164,10 +174,10 @@ def trace_from_transcript(path: str, cap: float = DEFAULT_IDLE_CAP,
     with fewer than two timed events.
     """
     rows = clip_rows(_load_rows(path), until_epoch, since_epoch)
-    return _spans_from_rows(rows, cap)
+    return _spans_from_rows(rows, cap, idle_is_platform)
 
 
-def _spans_from_rows(rows: Sequence[dict], cap: float) -> List[Span]:
+def _spans_from_rows(rows: Sequence[dict], cap: float, idle_is_platform: bool = False) -> List[Span]:
     if len(rows) < 2:
         return []
     tool_names = _tool_names(rows)
@@ -178,17 +188,25 @@ def _spans_from_rows(rows: Sequence[dict], cap: float) -> List[Span]:
         if gap < 0:
             gap = 0.0
         lane = lane_of(cur, tool_names)
-        # The idle cap holds out a long gap as un-owned idle, BUT a gap that ends in a platform event is
-        # the client-observed latency of a blocking cloud call (a provisioning/readiness poll that blocks
-        # for minutes), which the method defines as platform critical-path time -- platform is a ceiling
-        # (see the module docstring). Capping it to idle would drop real provisioning wall from makespan
-        # (measured: serverless deploys under-reported ~2.5x). So the cap applies only to non-platform
-        # gaps (a genuine agent/human pause); a platform-ending gap is charged to platform at any length.
-        if gap > cap and lane != PLATFORM:
-            owner, kind = IDLE, ""
-        else:
-            owner = lane
-            kind = "inference" if owner == AGENT else ""
+        # A platform-ending gap is the client-observed latency of a blocking cloud call (a
+        # provisioning/readiness poll that blocks for minutes): platform critical-path time at ANY length
+        # (platform is a ceiling; capping it dropped real provisioning wall by ~2.5x). An agent-ending gap
+        # up to MAX_GEN_GAP is model generation (agent). A LONGER agent-ending gap is the agent sitting idle
+        # -- but that only means "the cloud is doing the work" INSIDE a single provisioning operation
+        # window (`idle_is_platform`, set by the per-operation split); across a raw multi-op trace the same
+        # gap is an inter-operation pause and stays held-out idle. A human (ask-tool) gap over the idle cap
+        # is a genuine person-pause, always held out.
+        if lane == PLATFORM:
+            owner, kind = PLATFORM, ""
+        elif lane == AGENT:
+            if idle_is_platform and gap > MAX_GEN_GAP:
+                owner, kind = PLATFORM, ""          # idle-while-the-cloud-works, inside an operation window
+            elif gap > cap:
+                owner, kind = IDLE, ""               # a very long agent gap outside an op window: held out
+            else:
+                owner, kind = AGENT, "inference"
+        else:  # HUMAN
+            owner, kind = (IDLE, "") if gap > cap else (HUMAN, "")
         sid = "g%d" % i
         spans.append(Span(id=sid, duration=gap, owner=owner,
                           deps=() if prev_id is None else (prev_id,), kind=kind))
@@ -196,7 +214,8 @@ def _spans_from_rows(rows: Sequence[dict], cap: float) -> List[Span]:
     return spans
 
 
-def _agent_first_token_split(rows: Sequence[dict], cap: float) -> Dict[str, float]:
+def _agent_first_token_split(rows: Sequence[dict], cap: float,
+                             idle_is_platform: bool = False) -> Dict[str, float]:
     """Within the agent lane, time before the FIRST block of a turn is round-trip latency
     (first-token); the rest is visible streaming. Never called 'thinking'."""
     tool_names = _tool_names(rows)
@@ -206,9 +225,13 @@ def _agent_first_token_split(rows: Sequence[dict], cap: float) -> Dict[str, floa
         if rid and rid not in first_uuid:
             first_uuid[rid] = r.get("uuid")
     ft = st = 0.0
+    # Inside an operation window an agent gap over MAX_GEN_GAP is idle-while-the-cloud-works (platform in
+    # the main split), not generation, so it must be excluded here too or the agent sub-breakdown would
+    # not reconcile with the owner split.
+    limit = MAX_GEN_GAP if idle_is_platform else cap
     for prev, cur in zip(rows, rows[1:]):
         gap = _epoch(cur) - _epoch(prev)
-        if gap < 0 or gap > cap:
+        if gap < 0 or gap > limit:
             continue
         if lane_of(cur, tool_names) == AGENT:
             rid = cur.get("requestId")
@@ -219,7 +242,8 @@ def _agent_first_token_split(rows: Sequence[dict], cap: float) -> Dict[str, floa
     return {"first-token": round(ft, 1), "streaming": round(st, 1)}
 
 
-def lane_summary(path: str, cap: float = DEFAULT_IDLE_CAP) -> Optional[dict]:
+def lane_summary(path: str, cap: float = DEFAULT_IDLE_CAP,
+                 idle_is_platform: bool = False) -> Optional[dict]:
     """The agent-vs-platform split of one run's wall-clock, over WALL (not attributed).
 
     Returns lane seconds and percent-of-wall for agent/platform/human, held-out idle, the agent
@@ -229,7 +253,7 @@ def lane_summary(path: str, cap: float = DEFAULT_IDLE_CAP) -> Optional[dict]:
     rows = _load_rows(path)
     if len(rows) < 2:
         return None
-    spans = _spans_from_rows(rows, cap)
+    spans = _spans_from_rows(rows, cap, idle_is_platform)
     split = owner_split(spans)
     makespan = split["makespan"]  # == wall for a chain that includes the idle spans
     owners = split["owners"]
@@ -245,7 +269,7 @@ def lane_summary(path: str, cap: float = DEFAULT_IDLE_CAP) -> Optional[dict]:
         "attributed_s": round(sum(lanes.values()), 1),
         "lanes": lanes,
         "lane_pct_of_wall": pct,
-        "agent_split": _agent_first_token_split(rows, cap),
+        "agent_split": _agent_first_token_split(rows, cap, idle_is_platform),
         "events": len(rows),
         # agent is a floor and platform a ceiling: see the module docstring.
         "agent_is_floor": True,

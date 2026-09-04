@@ -1321,7 +1321,10 @@ def op_window_split(tx: str | None, started_at: float | None, verified_at: float
     holds no timed events."""
     if not tx or started_at is None or verified_at is None:
         return None
-    spans = acs.trace_from_transcript(tx, since_epoch=started_at, until_epoch=verified_at)
+    # idle_is_platform: inside a single operation's window, an agent gap too long to be model generation
+    # is the agent idle while the cloud does the operation's work -> platform, not agent (PAPER C24/C5).
+    spans = acs.trace_from_transcript(tx, since_epoch=started_at, until_epoch=verified_at,
+                                      idle_is_platform=True)
     if not spans:
         return None
     split = _owner_split(spans)
@@ -1352,7 +1355,9 @@ def build_op_split(tx: str | None, time_to_serving_s: float | None,
     if not tx:
         return None
     rows = acs.clip_rows(acs._load_rows(tx), serving_epoch)
-    spans = list(acs.trace_from_transcript(tx, until_epoch=serving_epoch))
+    # idle_is_platform: before the app serves, an agent gap too long to be model generation is the agent
+    # idle while the cloud provisions -> platform, not agent (PAPER C24/C5; fixes the run10 false floor).
+    spans = list(acs.trace_from_transcript(tx, until_epoch=serving_epoch, idle_is_platform=True))
     if not spans:
         return None
     if serving_epoch is not None and rows:

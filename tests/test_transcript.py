@@ -82,7 +82,8 @@ class TestLabellerPositiveControls(unittest.TestCase):
 
 
 class TestTraceReconstruction(unittest.TestCase):
-    """A synthetic run with known gaps: 5s platform, 3s agent, 12s human, 5s platform, 400s idle."""
+    """A synthetic run with known gaps: 5s platform, 3s agent, 12s human, 5s platform, then a 400s gap
+    that ends in an agent poll -- the agent idle while the cloud provisions, so it is platform, not idle."""
 
     def setUp(self):
         rows = [
@@ -91,7 +92,7 @@ class TestTraceReconstruction(unittest.TestCase):
             _assistant(8, "r2", "u2", [_tool_use("t2", "AskUserQuestion")]),  # gap 5->8 ends on assistant: agent
             _tool_result(20, "t2", uuid="u3"),                      # gap 8->20 ends on Ask result: human
             _bg_notification(25),                                   # gap 20->25 ends on task-notification: platform
-            _assistant(425, "r3", "u5", [_tool_use("t3", "get_deployment")]),  # gap 25->425 > cap: idle
+            _assistant(425, "r3", "u5", [_tool_use("t3", "get_deployment")]),  # gap 25->425 > MAX_GEN_GAP: idle-wait -> platform
         ]
         self.path = _write(rows)
 
@@ -99,14 +100,14 @@ class TestTraceReconstruction(unittest.TestCase):
         os.unlink(self.path)
 
     def test_owner_durations(self):
-        spans = trace_from_transcript(self.path, cap=300.0)
+        spans = trace_from_transcript(self.path, cap=300.0, idle_is_platform=True)
         by_owner = {}
         for s in spans:
             by_owner[s.owner] = by_owner.get(s.owner, 0.0) + s.duration
-        self.assertAlmostEqual(by_owner[PLATFORM], 10.0, places=6)  # 5 + 5
+        self.assertAlmostEqual(by_owner[PLATFORM], 410.0, places=6)  # 5 + 5 + the 400s agent idle-wait
         self.assertAlmostEqual(by_owner[AGENT], 3.0, places=6)
         self.assertAlmostEqual(by_owner[HUMAN], 12.0, places=6)
-        self.assertAlmostEqual(by_owner[IDLE], 400.0, places=6)
+        self.assertAlmostEqual(by_owner.get(IDLE, 0.0), 0.0, places=6)  # no held-out idle: it was cloud-wait
 
     def test_makespan_equals_wall_including_idle(self):
         spans = trace_from_transcript(self.path, cap=300.0)
@@ -177,18 +178,46 @@ class TestTrapRegressions(unittest.TestCase):
         finally:
             os.unlink(path)
 
-    def test_idle_cap_holds_out_long_gap(self):
+    def test_long_agent_gap_is_platform_idle_wait(self):
+        # A gap that ends in an agent turn but is far longer than model generation is the agent sitting
+        # idle while the cloud provisions: platform, not agent, and never held-out idle. (Was the run10
+        # leak: 191s idle charged to agent deflated platform to 124s and became a false floor.)
         rows = [_assistant(0, "r1", "u0", [_tool_use("t1", "x")]),
-                _assistant(500, "r2", "u1", [_tool_use("t2", "y")])]  # 500s > cap
+                _assistant(500, "r2", "u1", [_tool_use("t2", "y")])]  # 500s > MAX_GEN_GAP
         path = _write(rows)
         try:
-            s = lane_summary(path, cap=300.0)
-            self.assertAlmostEqual(s["idle_s"], 500.0, places=1)
+            s = lane_summary(path, cap=300.0, idle_is_platform=True)
+            self.assertAlmostEqual(s["lanes"][PLATFORM], 500.0, places=1)
             self.assertAlmostEqual(s["lanes"][AGENT], 0.0, places=1)
-            # below the cap, the same gap is agent generation, not idle.
-            s2 = lane_summary(path, cap=600.0)
-            self.assertAlmostEqual(s2["idle_s"], 0.0, places=1)
-            self.assertAlmostEqual(s2["lanes"][AGENT], 500.0, places=1)
+            self.assertAlmostEqual(s["idle_s"], 0.0, places=1)
+            # OUTSIDE an operation window (default) the same gap is an inter-op pause: held-out idle.
+            s2 = lane_summary(path, cap=300.0)
+            self.assertAlmostEqual(s2["idle_s"], 500.0, places=1)
+            self.assertAlmostEqual(s2["lanes"][PLATFORM], 0.0, places=1)
+        finally:
+            os.unlink(path)
+
+    def test_short_agent_gap_is_generation(self):
+        # A gap within MAX_GEN_GAP that ends in an agent turn is genuine model generation: agent (either mode).
+        rows = [_tool_result(0, "t0", uuid="u0"),
+                _assistant(40, "r2", "u1", [_tool_use("t2", "y")])]  # 40s <= MAX_GEN_GAP
+        path = _write(rows)
+        try:
+            s = lane_summary(path, cap=300.0, idle_is_platform=True)
+            self.assertAlmostEqual(s["lanes"][AGENT], 40.0, places=1)
+            self.assertAlmostEqual(s["lanes"][PLATFORM], 0.0, places=1)
+        finally:
+            os.unlink(path)
+
+    def test_long_human_gap_is_still_held_out_idle(self):
+        # A long HUMAN (ask-tool) pause is a person, not the cloud: held out as idle even in an op window.
+        rows = [_assistant(0, "r1", "u0", [_tool_use("t1", "AskUserQuestion")]),
+                _tool_result(500, "t1", uuid="u1")]  # ends on an Ask result (human), 500s > cap
+        path = _write(rows)
+        try:
+            s = lane_summary(path, cap=300.0, idle_is_platform=True)
+            self.assertAlmostEqual(s["idle_s"], 500.0, places=1)
+            self.assertAlmostEqual(s["lanes"][PLATFORM], 0.0, places=1)
         finally:
             os.unlink(path)
 
