@@ -38,7 +38,12 @@ _PROVISIONED = "provisioned"
 # plan the same way, AI Magazine 2024). Bump this when the floor-estimation rule or the graph structure
 # changes; the per-run floor itself is data-derived (min-observed) and moves WITHIN a version, disclosed
 # as ``floor_estimated_from_n`` and re-attributed by the refutation protocol.
-GOLD_VERSION = "provision-deploy/1.0.0"
+# 1.1.0 (2026-09-04): the first-poll exclusion was refined from "any first-poll run" to "a first-poll run
+# whose clock was stopped by a 4xx/5xx, or whose served URL does not carry its own run token". Under 1.0.0
+# a cloud whose deploy call returns only once the service is live had EVERY run excluded from the floor and
+# the frontier, so an entire architecture class contributed nothing to the Part 3 bracket at any n. Floors
+# and ratios computed under 1.0.0 are not comparable to 1.1.0 ones.
+GOLD_VERSION = "provision-deploy/1.1.0"
 
 # Floor-sensitivity perturbation (literature P0: the competitive ratio is only as trustworthy as F_C, an
 # ESTIMATED denominator; report how the ratio moves under +/- this fraction so "revised down if undercut"
@@ -81,19 +86,50 @@ def _reached_goal(rec: dict) -> bool:
 
 
 def _is_suspect(rec: dict) -> bool:
-    """A run flagged served_on_first_poll is suspect: the URL answered on the very first poll, which
-    may be a LEFTOVER deployment or a false-early t1 (the acknowledged concurrent-poller instrument
-    defect, same class as the isso re-run). Its clipped split gives an artificially low
-    critical-platform that would drag the global-min floor down and inflate every floor ratio, so it is
-    not a clean 'valid trace that reached the goal' and is excluded from the floor and the frontier."""
-    return bool((rec.get("serving") or {}).get("served_on_first_poll"))
+    """Is this run's t1 unusable as a 'valid trace that reached the goal'?
+
+    Serving on the very FIRST poll is the trigger, but it is not by itself the defect. Two structurally
+    different things produce it, and only one is a measurement error:
+
+    (a) A platform EDGE answered before the app did (a container-service hostname 404ing the moment DNS
+        exists, an IAM 403 on an unwired route). t1 then measures 'when the name appeared', is
+        false-early, and its clipped split would drag the global-min floor down and inflate every floor
+        ratio. EXCLUDE.
+    (b) The deploy call does not hand back the URL until the service is ALREADY serving, so the poller
+        cannot observe a not-yet-serving state however early it starts. t1 is then an honest UPPER bound
+        on time-to-serving, and the run is a perfectly valid trace. INCLUDE: excluding it drops an
+        entire architecture class (every serverless-container run) from the Part 3 floor and frontier
+        rather than measuring it, which is a far larger error than the loose bound it avoids.
+
+    The discriminator is the status that STOPPED THE CLOCK: a 4xx is (a) -- the same signature the live
+    edge-origin check in ``autorun.is_serving_ex`` now refuses -- and a 2xx/3xx is (b).
+
+    A LEFTOVER deployment from an earlier run would also answer on the first poll, and it is a real
+    hazard. It is ruled out separately: resources are named per run, so the run's own token appearing in
+    the served URL means the URL cannot belong to an earlier run. When the token is absent from the URL
+    (a custom domain, a proxy) the leftover cannot be ruled out, so the run stays suspect."""
+    serving = rec.get("serving") or {}
+    if not serving.get("served_on_first_poll"):
+        return False
+    code = serving.get("http_code")
+    try:
+        code_i = int(code)
+    except (TypeError, ValueError):
+        return True  # cannot tell what stopped the clock -> stay conservative
+    if 400 <= code_i < 600:
+        return True  # (a) an edge, or an error, answered before the app
+    token = rec.get("run_token")
+    url = rec.get("url") or ""
+    if not token or token not in url:
+        return True  # cannot rule out a leftover deployment
+    return False  # (b) structurally first-poll: a valid trace with an upper-bound t1
 
 
 def _provision_weights(records: Sequence[dict]):
     """Pull (floor, [(run, makespan, platform), ...], n_excluded_suspect) from acspeed run records,
     over CLEAN goal-reaching runs only. floor = min-observed critical-platform-time; a run's realized
     weight = its critical-path makespan (split.makespan_s, falling back to time_to_serving_s). Runs
-    that never served, are flagged suspect (first-poll), or lack a usable split are skipped."""
+    that never served, are flagged suspect (see ``_is_suspect``), or lack a usable split are skipped."""
     platforms: List[float] = []
     runs = []
     excluded = 0
