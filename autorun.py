@@ -49,6 +49,7 @@ import json
 import os
 import re
 import shutil
+import hashlib
 import subprocess
 import sys
 import tempfile
@@ -928,6 +929,38 @@ def is_serving_ex(url: str) -> tuple[str, bool, dict | None]:
     return code, ok, origin
 
 
+def fingerprint_response(url: str, timeout_s: int = 15) -> dict:
+    """A cheap body signature for one serving response: (bytes, sig). No redirect follow, so it matches
+    `is_serving`'s view of '/'. Used by the durable-serve rule (PAPER C24) to tell one response from
+    another WITHOUT knowing the app or the cloud: an edge placeholder and the real app differ in this
+    signature. `sig` is a hash of a stable body prefix (forensic only; matching uses code + size)."""
+    try:
+        p = subprocess.run(["bash", "-c", f'curl -s -m {timeout_s} "{url}/" | head -c 65536'],
+                           capture_output=True, text=True, timeout=timeout_s + 5)
+        body = p.stdout or ""
+    except Exception:  # noqa: BLE001 - a fingerprint failure must never break the poll loop
+        return {"bytes": 0, "sig": None}
+    return {"bytes": len(body),
+            "sig": hashlib.sha1(body[:2048].encode("utf-8", "replace")).hexdigest()[:12]}
+
+
+def durable_serving(poll_log: list[dict]) -> tuple[float | None, str | None]:
+    """PAPER C24: from the log of SERVING polls, return (t_s, code) of the earliest poll whose response
+    matches the app's stable FINAL response (the last serving poll). A transient edge placeholder that
+    preceded the app differs in (code, body size) and is skipped; a stable app response (even a 4xx at
+    root) matches its own final response, so its first poll stands. Match = same status code AND body
+    size within tolerance (dynamic content such as CSRF tokens moves the size a little, an edge page moves
+    it a lot). Returns (None, None) for an empty log."""
+    if not poll_log:
+        return None, None
+    app = poll_log[-1]                                   # still serving at the end = the app
+    tol = max(256, int(0.05 * max(app.get("bytes", 0), 1)))
+    for p in poll_log:
+        if p.get("code") == app.get("code") and abs(p.get("bytes", 0) - app.get("bytes", 0)) <= tol:
+            return p.get("t_s"), p.get("code")
+    return app.get("t_s"), app.get("code")               # unreachable (app matches itself), defensive
+
+
 def wait_until_serving(url: str, timeout_s: float, interval_s: float | None = None) -> tuple[bool, float, str]:
     """Blocking poll until the URL first serves or the readiness budget runs out. Used only when the
     concurrent poller has not already seen the app serve by the time the agent hands off. Returns
@@ -1006,6 +1039,7 @@ class ReadinessPoller(threading.Thread):
         self.last_codes: dict[str, str] = {}
         self.origin_checks: list[dict] = []   # every 4xx's response-origin evidence (PAPER p2 s4)
         self.rejected_edge_4xx = 0            # 4xx responses attributed to the platform edge, not the app
+        self.poll_log: list[dict] = []        # every SERVING poll {t_s, url, code, bytes, sig} (PAPER C24)
 
     def _source_text(self) -> str:
         if self.bootlog_path:
@@ -1045,11 +1079,18 @@ class ReadinessPoller(threading.Thread):
                     if origin.get("edge"):
                         self.rejected_edge_4xx += 1
                 if ok:
-                    self.served_url, self.code = u, code
-                    self.t_serving_s = time.monotonic() - self.t0_mono
-                    self.serving_epoch = time.time()
-                    self.served_on_first_poll = self.polls == 1
-                    return
+                    t_s = time.monotonic() - self.t0_mono
+                    fp = fingerprint_response(u)
+                    self.poll_log.append({"t_s": round(t_s, 1), "url": u, "code": code,
+                                          "bytes": fp["bytes"], "sig": fp["sig"]})
+                    if self.t_serving_s is None:       # FIRST serve: recorded for transparency + fallback
+                        self.served_url, self.code = u, code
+                        self.t_serving_s = t_s
+                        self.serving_epoch = time.time()
+                        self.served_on_first_poll = self.polls == 1
+                    # PAPER C24: do NOT return on the first serve. Keep polling so a later real-app
+                    # response can supersede a transient edge placeholder; the durable t1 is derived
+                    # from poll_log after the poller is halted at the end of the deploy turn.
             self._halt.wait(self.interval_s)
 
     def stop(self) -> None:
@@ -1702,10 +1743,30 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
                    ("SUCCESS-after-repair" if reached_healthy else "FAILURE-never-served"))
     poller.stop()
     poller.join(timeout=45)
+    # PAPER C24: the durable-serve clock. The poller ran to the end of the deploy turn and logged every
+    # serving poll; t1 is the earliest poll whose response matches the app's stable final response, so a
+    # transient edge placeholder that stopped the first-serve clock early is superseded by the first real
+    # app response. When the first serve WAS the app (74 of 78 published runs), the durable time equals
+    # the first-serve time and nothing moves. Only applied when the poller actually logged a serve; the
+    # post-handoff blocking-poll path keeps its own value.
+    first_serve_s = round(poller.t_serving_s, 1) if poller.t_serving_s is not None else None
+    first_serve_code = poller.code
+    t1_method = "first-serve"
+    if poller.poll_log and time_to_serving_s is not None and poller.t_serving_s is not None:
+        d_t, d_code = durable_serving(poller.poll_log)
+        if d_t is not None:
+            time_to_serving_s = d_t
+            health_code = d_code or health_code
+            t1_method = "durable-serve/1.0"
     serving_epoch = (t0_epoch + time_to_serving_s) if time_to_serving_s is not None else None
     serving = {                                            # the external clock, in the record
         "predicate": SERVING_PREDICATE,
         "http_code": health_code,
+        "t1_method": t1_method,                            # PAPER C24: first-serve vs durable-serve
+        "first_serve_at_s": first_serve_s,                 # the earliest <500, kept for transparency
+        "first_serve_code": first_serve_code,
+        "poll_log": list(poller.poll_log)[:60],            # serving polls {t_s,url,code,bytes,sig}, capped
+        "poll_log_len": len(poller.poll_log),              # full length (derivation used all of them)
         "url_first_seen_s": round(poller.t_url_seen_s, 1) if poller.t_url_seen_s is not None else None,
         "served_at_s": round(time_to_serving_s, 1) if time_to_serving_s is not None else None,
         "agent_finished_at_s": round(agent_end_s, 1),

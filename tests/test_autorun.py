@@ -388,13 +388,28 @@ class TestReadinessPoller(unittest.TestCase):
         self.dir = tempfile.mkdtemp()
         self.t0 = time.monotonic()
         self.t0_epoch = time.time()
+        # C24: the poller fingerprints each serving poll and origin-probes each 4xx with real curls;
+        # keep the tests offline and deterministic.
+        self._fp = mock.patch.object(autorun, "fingerprint_response",
+                                     return_value={"bytes": 9673, "sig": "app"})
+        self._po = mock.patch.object(autorun, "probe_origin", return_value={"edge": None})
+        self._fp.start()
+        self._po.start()
+        self._pollers: list = []
 
     def tearDown(self):
+        for p in self._pollers:                 # C24: the poller no longer self-terminates on serve
+            p.stop()
+            p.join(timeout=3)
+        self._po.stop()
+        self._fp.stop()
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def _poller(self, **kw):
-        return autorun.ReadinessPoller(self.t0, self.t0_epoch, self.dir, self.URL_RE,
-                                       interval_s=kw.pop("interval_s", 0.05), **kw)
+        p = autorun.ReadinessPoller(self.t0, self.t0_epoch, self.dir, self.URL_RE,
+                                    interval_s=kw.pop("interval_s", 0.05), **kw)
+        self._pollers.append(p)      # tearDown stops every poller (they no longer self-terminate: C24)
+        return p
 
     def test_t1_is_caught_while_the_agent_is_still_working(self):
         codes = iter(["000", "502", "400"])          # boot: nothing, gateway, then the app answers 400
@@ -406,14 +421,17 @@ class TestReadinessPoller(unittest.TestCase):
             self.assertIsNone(p.t_url_seen_s)
             with open(os.path.join(self.dir, "s1.jsonl"), "w") as fh:
                 fh.write(_row("Deployment created: https://isso-abc123.redu.cloud is booting"))
-            p.join(timeout=3)                         # the agent 'keeps working'; the poller returns on its own
+            time.sleep(0.3)                           # C24: the poller keeps polling past the first serve
+            p.stop()                                  # the caller halts it at the end of the deploy turn
+            p.join(timeout=3)
             self.assertFalse(p.is_alive())
             self.assertEqual(p.served_url, "https://isso-abc123.redu.cloud")
-            self.assertEqual(p.code, "400")           # Isso's documented 400 counts as serving
+            self.assertEqual(p.code, "400")           # Isso's documented 400 counts as serving (first serve)
             self.assertIsNotNone(p.t_serving_s)
             self.assertGreaterEqual(p.t_serving_s, p.t_url_seen_s)
-            self.assertEqual(p.polls, 3)
+            self.assertGreaterEqual(p.polls, 3)       # at least the 3 boot polls; more after (keeps polling)
             self.assertFalse(p.served_on_first_poll)
+            self.assertTrue(p.poll_log and p.poll_log[0]["code"] == "400")   # serving polls are logged
             self.assertAlmostEqual(p.serving_epoch, self.t0_epoch + p.t_serving_s, delta=0.5)
 
     def test_stale_hostname_from_a_config_file_is_polled_but_harmless(self):
@@ -646,14 +664,52 @@ class TestEdge4xxOriginCheck(unittest.TestCase):
         codes = iter([("404", False, {"edge": "aws-alb-no-upstream", "server": "awselb/2.0"}),
                       ("200", True, None)])
         with mock.patch.object(autorun, "is_serving_ex",
-                               side_effect=lambda u: next(codes, ("200", True, None))):
+                               side_effect=lambda u: next(codes, ("200", True, None))), \
+             mock.patch.object(autorun, "fingerprint_response", return_value={"bytes": 9673, "sig": "app"}):
             p.candidates.append("https://app.example")
             p.start()
+            time.sleep(0.3)               # C24: the poller keeps polling; let it see the 404 then the 200
+            p.stop()
             p.join(timeout=3)
         self.assertEqual(p.rejected_edge_4xx, 1)
         self.assertEqual(len(p.origin_checks), 1)
         self.assertEqual(p.origin_checks[0]["edge"], "aws-alb-no-upstream")
         self.assertEqual(p.code, "200", "the clock stops on the app's 200, not the edge 404")
+
+
+class DurableServing(unittest.TestCase):
+    """PAPER C24: t1 is the earliest poll matching the app's stable FINAL response, so a transient edge
+    placeholder is superseded and a stable app response (even a 4xx root) stops the clock at its first
+    poll."""
+
+    def test_clean_200_run_t1_is_the_first_poll(self):
+        # the first serve WAS the app: durable t1 == first-serve t1 (the 74/78 already-published case)
+        log = [{"t_s": 300.0, "url": "u", "code": "200", "bytes": 9673, "sig": "a"},
+               {"t_s": 305.0, "url": "u", "code": "200", "bytes": 9673, "sig": "a"}]
+        self.assertEqual(autorun.durable_serving(log), (300.0, "200"))
+
+    def test_edge_404_blip_then_app_200_t1_is_the_200(self):
+        # Lightsail-style: a 404 edge stopped the first-serve clock at 160s; the real app 200 came at 900s
+        log = [{"t_s": 160.0, "url": "u", "code": "404", "bytes": 250, "sig": "e"},
+               {"t_s": 900.0, "url": "u", "code": "200", "bytes": 9673, "sig": "a"},
+               {"t_s": 905.0, "url": "u", "code": "200", "bytes": 9673, "sig": "a"}]
+        self.assertEqual(autorun.durable_serving(log), (900.0, "200"),
+                         "the transient edge 404 must be skipped; t1 is the first real-app 200")
+
+    def test_stable_app_4xx_root_keeps_its_first_poll(self):
+        # Isso answers 400 at '/' forever: it matches its own final response, so t1 is its first poll
+        log = [{"t_s": 120.0, "url": "u", "code": "400", "bytes": 512, "sig": "i"},
+               {"t_s": 125.0, "url": "u", "code": "400", "bytes": 512, "sig": "i"}]
+        self.assertEqual(autorun.durable_serving(log), (120.0, "400"))
+
+    def test_dynamic_body_size_within_tolerance_still_matches(self):
+        # a CSRF token moves the body a few bytes between polls; same code + near-size must still match
+        log = [{"t_s": 200.0, "url": "u", "code": "200", "bytes": 9670, "sig": "a"},
+               {"t_s": 400.0, "url": "u", "code": "200", "bytes": 9673, "sig": "b"}]
+        self.assertEqual(autorun.durable_serving(log), (200.0, "200"))
+
+    def test_empty_log_returns_none(self):
+        self.assertEqual(autorun.durable_serving([]), (None, None))
 
 
 if __name__ == "__main__":
