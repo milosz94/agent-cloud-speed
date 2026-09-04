@@ -1,8 +1,7 @@
 # gcp
 
-## Easy tier: efficiency (Part 3)
+| tier | floor-ratio | 95% CI | n | F_C (s) | bracket (s) | selection excess | gold |
+|:-----|------------:|:--------|--:|--------:|:------------|:-----------------|:-----|
+| [easy](gcp-easy/) | 3.0x | [2.5, 3.7] | 12 | 264.2 | [264.2, 478.7] = x1.812 | 0 (1-op suite) | provision-deploy/1.1.0 |
 
-floor-ratio 3.0x [95% CI 2.5, 3.7]  (n=12)  (F_C=264.2s min-platform floor, n=12; bracket [264.2, 478.7]s = x1.812; selection-excess 0, 1-op suite; gold provision-deploy/1.1.0)
-
-The ratio reads against this cloud's own observed floor (execution efficiency), not cross-cloud
-speed; competitive ratio is an interval [M/best, M/F_C], never a point. Per-run table: [gcp-easy](gcp-easy/).
+floor-ratio = M / F_C, where M is the mean time-to-serving (t1) over the cell's fair runs and F_C is the minimum observed critical-platform time among them. The competitive ratio is the interval [M / best-achieved, M / F_C], never a point.
