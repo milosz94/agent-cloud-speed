@@ -16,28 +16,28 @@ integrate, restart) and re-verifies each effect survived. Medium A is the ONLINE
 discovers the next operation as it goes); Medium B is the DISCLOSED regime (the whole plan is stated
 upfront).
 
-### [aws/](aws/) - Fargate/EC2 + ALB + RDS + public IPv4
+### [aws/](aws/)
 
 - [aws-easy](aws/aws-easy/) - n=10
 - [aws-medium-a](aws/aws-medium-a/) - n=10
 - [aws-medium-b](aws/aws-medium-b/) - n=6 fair (runs 1, 2, 4, 7 excluded, disclosed: first-poll 404 from the Lightsail edge)
 
-### [gcp/](gcp/) - Cloud Run (min-instances=1) + Cloud SQL + public IPv4
+### [gcp/](gcp/)
 
 - [gcp-easy](gcp/gcp-easy/) - n=12
-- [gcp-medium-a](gcp/gcp-medium-a/) - n=10 (run11 excluded, disclosed: first-poll 403)
+- [gcp-medium-a](gcp/gcp-medium-a/) - n=10
 - [gcp-medium-b](gcp/gcp-medium-b/) - n=10
 
-### [azure/](azure/) - App Service or Container Apps (agent's choice) + managed Postgres
+### [azure/](azure/)
 
 - [azure-easy](azure/azure-easy/) - n=10
 - [azure-medium-a](azure/azure-medium-a/) - n=10
-- [azure-medium-b](azure/azure-medium-b/) - n=10 (spine computed over the 9 schema-conformant runs)
+- [azure-medium-b](azure/azure-medium-b/) - n=10
 
-### [redu/](redu/) - fixed VM + managed Postgres
+### [redu/](redu/)
 
 - [redu-easy](redu/redu-easy/) - n=10
-- [redu-medium-a](redu/redu-medium-a/) - n=10, all 5/5. The only cell with the VM-to-VM network axis populated (n=2 of the 10)
+- [redu-medium-a](redu/redu-medium-a/) - n=10
 - [redu-medium-b](redu/redu-medium-b/) - n=10
 
 Each easy table is `run | t1 (s) | platform (s) | agent (s) | steps | tokens | agent $ | $/mo @ 10k
