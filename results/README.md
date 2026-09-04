@@ -27,7 +27,7 @@ serial sum, disclosed does not, which is what makes the A-vs-B comparison honest
 
 - [aws-easy](aws/aws-easy/) - n=10
 - [aws-medium-a](aws/aws-medium-a/) - n=10
-- [aws-medium-b](aws/aws-medium-b/) - n=6 fair (runs 1, 2, 4, 7 excluded, disclosed: first-poll 404 from the Lightsail edge)
+- [aws-medium-b](aws/aws-medium-b/) - n=7 fair (excluded, see DATA-DEFECTS: 1/2/4/7 first-poll 404 Lightsail edge; 11/12/14 unpriced billable resource)
 
 ### [gcp/](gcp/)
 
