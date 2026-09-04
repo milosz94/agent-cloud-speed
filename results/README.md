@@ -40,8 +40,9 @@ upfront).
 - [redu-medium-a](redu/redu-medium-a/) - n=10
 - [redu-medium-b](redu/redu-medium-b/) - n=10
 
-Each easy table is `run | t1 (s) | platform (s) | agent (s) | steps | tokens | agent $ | $/mo @ 10k
-/ 500k / 10M req`. A standing VM cost stays flat at any traffic; a usage-metered serverless front rises
+Each easy table is `run | t1 (s) | platform (s) | agent (s) | steps | tokens | agent $ | fixed $/mo |
+$/mo @ 10k / 500k / 10M req` (same columns on every cloud; a usage-metered front with no standing
+rate shows `-` for `fixed $/mo`). A standing VM cost stays flat at any traffic; a usage-metered serverless front rises
 with it. The cost line-item audit is in `COST-COVERAGE-AUDIT.md`; every transcript is credential- and
 infrastructure-redacted (`acspeed sessions`, residue 0).
 
