@@ -1,48 +1,79 @@
-# aws (medium tier B, DISCLOSED regime): umami + second site + integration + durability (2026-09-02)
+# AWS (medium tier, variant B): umami + second site + integration + durability (2026-09-04)
 
-n=5 (run01-05), **all 5/5 pass**. **Medium B** is the DISCLOSED (plan-upfront) regime (see the gcp-medium-b
-README for the regime and workload). Five operations: deploy-serve, register, deploy-site-b, integrate
-(headless-browser visit records a pageview 0 -> 1), and a restart-durability goal. Distinct per-run tokens.
+n=6 fair (run03, run05, run06 2026-09-02; run08, run09, run10 2026-09-04). Four further runs are
+**excluded and disclosed below**, not deleted. This table replaces the earlier n=5 one, which pooled
+three runs now known to be contaminated by a platform-edge defect.
 
-aws is the **most variable** cloud, and the route the agent picks dominates everything:
+Architecture is **not constant in this cell**, and that is a real result rather than a nuisance: on
+run03, run05, run06 and run08 the agent built **EC2 behind an ALB with RDS**, and on run09 and run10 it
+built a **Lightsail container service**. The two cost more than 4x apart, so the rows are kept separate
+rather than averaged into a single cost figure.
 
-## Overview (total wall = all operations; agent $ = whole workflow incl. deprovision)
+## Result (n=6 fair)
 
-| run | total wall (s) | agent $ | $/mo (low) | route | tier |
-|----:|---------------:|--------:|-----------:|:------|:----:|
-| 1 | 824 | $7.64 | $10.00 | Lightsail + Amplify | 5/5 |
-| 2 | 939 | $3.65 | $40.00 | Lightsail + Amplify | 5/5 |
-| 3 | 703 | $6.49 | $10.00 | Lightsail + Amplify | 5/5 |
-| 4 | 2046 | $4.96 | $66.42 | ALB + RDS | 5/5 |
-| 5 | 2624 | $7.76 | $68.02 | ALB + RDS | 5/5 |
+| run | tier | total wall (s) | agent $ | fixed $/mo | deploy t1 (s) | architecture |
+|----:|:----:|---------------:|--------:|-----------:|--------------:|:-------------|
+| 3 | 3/5 | 5616 | $8.92 | $65.62 | 867 | EC2 + ALB + RDS |
+| 5 | 5/5 | 2212 | $4.22 | $66.42 | 551 | EC2 + ALB + RDS |
+| 6 | 5/5 | 2747 | $7.21 | $68.02 | 436 | EC2 + ALB + RDS |
+| 8 | 5/5 | 3208 | $13.16 | $81.06 | 1300 | EC2 + ALB + RDS |
+| 9 | 5/5 | 2930 | $5.23 | $15.00 | 1544 | Lightsail container |
+| 10 | 5/5 | 2257 | $6.04 | $15.00 | 1362 | Lightsail container |
 
-Cost is a **standing** run-rate. **HTTPS-native services** (Lightsail container for umami + Amplify for site
-B) are cheap ($10-40/mo) and fast; the **ALB + RDS** route is pricier ($66-68/mo) and far slower to
-integrate. Captured 2026-09-02.
+`agent $` is the whole workflow (deploy + operations + durability + teardown). Cost is a standing
+**run-rate** on both architectures, so it does not move with traffic: the four EC2+ALB+RDS runs sit at
+**$65.62 to $81.06/mo** and the two Lightsail runs at **$15.00/mo**, at every traffic level (dated AWS
+public list prices, captured per run; egress reported separately).
+
+**run03 scored 3/5.** It is kept, not dropped: Part 5's scoring is checkpoint partial credit, so a run
+that provisions and wires but misses a later checkpoint still scores and locates the break point.
+Dropping it would bias the cell toward its successes.
 
 ## Per operation (wall seconds)
 
 | run | deploy (t1) | register | deploy-site-b | integrate | durability | total |
 |----:|------------:|---------:|--------------:|----------:|-----------:|------:|
-| 1 | 160 | 39 | 65 | 48 | 511 | 824 |
-| 2 | 216 | 27 | 50 | 48 | 598 | 939 |
-| 3 | 250 | 28 | 31 | 42 | 352 | 703 |
-| 4 | 551 | 26 | 52 | 1246 | 171 | 2046 |
-| 5 | 436 | 25 | 46 | 1803 | 314 | 2624 |
+| 3 | 867 | 67 | 84 | 1223 | 3222 | 5616 |
+| 5 | 551 | 26 | 52 | 1246 | 171 | 2212 |
+| 6 | 436 | 25 | 46 | 1803 | 314 | 2747 |
+| 8 | 1300 | 33 | 77 | 1419 | 149 | 3208 |
+| 9 | 1544 | 61 | 45 | 43 | 476 | 2930 |
+| 10 | 1362 | 42 | 47 | 43 | 221 | 2257 |
 
-The ALB runs carry **integrate walls of 1246-1803s** vs ~45s for the Lightsail runs: on the ALB route the
-agent has to make the cross-origin umami tracking beacon fire (configure CORS, disable umami's bot-check,
-often rename the tracker script), which is real work the HTTPS-native route mostly skips.
+`integrate` splits sharply by architecture: 1223 to 1803s on the four EC2+ALB+RDS runs against 43s on
+both Lightsail runs. run03's 3222s durability cycle is where it lost its two checkpoints.
 
-## Provision spine (Part 1/2, deploy-serve only)
+## Provision spine (Part 1/2, the deploy-serve operation only)
 
-Time-to-serving `t1`: **160 to 551s** across the 5 runs (mean ~323s) - Lightsail fast (160-250s), ALB slower
-(436-551s). First-attempt liveness **5/5**, content-verified **5/5**, no ambiguous URL. Capability C and
-Efficiency (Part 3) **DEFERRED**.
+Time-to-serving `t1` mean **1009.9s** [95% CI 670.8, 1329.7] (n=6), = critical_platform **559.5s**
+[257.4, 915.2] + critical_agent **389.4s** [319.9, 462.6], overlap 0. First-attempt liveness 6/6,
+content-verified 6/6.
 
-Teardown: run04 flagged `orphan_warning: true` (a bare target group + stale Lightsail from an older run);
-removed post-run and the account re-verified 0 across Lightsail / ELB / RDS / EC2 / ECS / target groups /
-Amplify. The reaper does not enumerate Lightsail or Amplify, so those hosts rely on the agent's own teardown.
+Efficiency (Part 3): floor-ratio **6.0x** [95% CI 3.9, 8.1] against F_C = 158.3s (min observed
+critical-platform floor, n=6); bracket [158.3, 427.3]s = 2.699x wide. Floor sensitivity 2.454 to 2.999
+at F_C(1 +/- 0.1). Selection excess 0 by construction (one-operation provision gold). Gold
+`provision-deploy/1.1.0`.
 
-Redacted transcripts (one resumed session per run) are in `sessions/`; see `sessions/REDACTION-MANIFEST.json`
-(residue 0, n=5).
+## Excluded runs, and why (stated, not hidden)
+
+| run | t1 (s) | why excluded |
+|----:|-------:|:-------------|
+| 1 | 160.5 | HTTP 404 on the **first poll** from the Lightsail container hostname |
+| 2 | 215.5 | same |
+| 4 | 250.5 | same |
+| 7 | 220.5 | same, **and** the cost tool priced nothing (`cost_run_rate` absent) |
+
+A Lightsail container-service hostname answers 404 the moment DNS exists, before the app serves, so
+these four `t1` values measure when the name appeared rather than when the app came up. They average
+211.8s against 1009.9s for the six fair runs, so pooling them would have made this cloud look roughly
+4x faster than it is. Runs 1, 2 and 4 were published in the earlier n=5 table before the defect was
+found on 2026-09-03; they are withdrawn from the headline here and kept on record above.
+
+The harness now refuses this class of stop at measurement time (`autorun.is_serving_ex` runs a
+response-origin check on any 4xx against an explicit edge denylist), and `gold.py` 1.1.0 excludes a
+first-poll run whose clock was stopped by a 4xx from the Part 3 floor and frontier while admitting one
+that stopped on a real 2xx. Run07 is additionally unpriced: it fell in the window when an unpinned
+`mcp-proxy-for-aws` dropped the tool the cost path used.
+
+Redacted, infrastructure-neutral transcripts are in `sessions/`; see
+`sessions/REDACTION-MANIFEST.json` (residue 0).
