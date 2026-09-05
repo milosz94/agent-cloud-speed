@@ -1,32 +1,30 @@
 {
   "files": [
     {
-      "bytes_in": 1747101,
-      "bytes_out": 1739195,
-      "lines": 849,
-      "name": "34c7e294-d3a9-4228-8cbd-52b332c071b3.jsonl",
+      "bytes_in": 1514167,
+      "bytes_out": 1509068,
+      "lines": 816,
+      "name": "3eaf6819-7aad-4e52-9c0b-ba330f9e3542.jsonl",
       "redactions": {
-        "conn-password": 7,
-        "ip": 98,
-        "jwt": 2,
-        "keyed": 1,
-        "private-key": 3,
-        "value": 67
+        "conn-password": 9,
+        "ip": 135,
+        "private-key": 4,
+        "ssh-key": 2,
+        "value": 91
       },
       "residue": 0,
-      "source": "34c7e294-d3a9-4228-8cbd-52b332c071b3.jsonl"
+      "source": "3eaf6819-7aad-4e52-9c0b-ba330f9e3542.jsonl"
     }
   ],
   "files_with_residue": {},
   "inputs": 1,
   "total_redactions": {
-    "conn-password": 7,
-    "ip": 98,
-    "jwt": 2,
-    "keyed": 1,
-    "private-key": 3,
-    "value": 67
+    "conn-password": 9,
+    "ip": 135,
+    "private-key": 4,
+    "ssh-key": 2,
+    "value": 91
   },
-  "total_redactions_count": 178,
+  "total_redactions_count": 241,
   "written": 1
 }

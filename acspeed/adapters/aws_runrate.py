@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import re
 import shlex
 import time
@@ -588,6 +589,51 @@ def _enumerate(mcp_call: McpCall, url: str, region: str) -> List[dict]:
     return []
 
 
+# Regions a run's resources can land in. The agent picks freely, and it does not have to keep the whole
+# bundle in one place: aws-medium-b run17 put its container in us-east-2 and its RDS in us-east-1, which a
+# single-region enumeration cannot see. Enumeration therefore sweeps the candidate set and deduplicates by
+# ARN. Override with ACSPEED_AWS_REGIONS (comma separated) when a study uses other regions.
+_CANDIDATE_REGIONS = tuple(
+    r.strip() for r in os.environ.get("ACSPEED_AWS_REGIONS", "us-east-1,us-east-2,us-west-2").split(",")
+    if r.strip()
+)
+
+
+def _is_lightsail_container(resource: dict) -> bool:
+    """True for a Lightsail CONTAINER SERVICE, the one Lightsail thing the live path prices itself.
+
+    Everything else under Lightsail (a relational database above all) is a separately billed resource that
+    the live path never touches, so it must NOT be dropped from the co-provisioned merge."""
+    rt = str(resource.get("resource_type") or "").lower()
+    arn = str(resource.get("arn") or "").lower()
+    return "containerservice" in rt.replace("-", "").replace("_", "") or ":containerservice/" in arn
+
+
+def _enumerate_all_regions(enum, mcp_call: McpCall, url: str, primary_region: str) -> List[dict]:
+    """Enumerate in the primary region first, then every other candidate region, deduplicated by ARN.
+
+    The primary region leads so its results win on ties and the common single-region case is unchanged. A
+    region that errors or is not enabled contributes nothing, exactly as a failed source does in
+    ``_enumerate``; enumeration is off-clock, so the extra calls cost no measured time."""
+    seen, out = set(), []
+    regions = [primary_region] + [r for r in _CANDIDATE_REGIONS if r != primary_region]
+    for reg in regions:
+        try:
+            resources = enum(mcp_call, url, reg) or []
+        except Exception:  # noqa: BLE001 - a region we cannot reach must never break pricing
+            continue
+        for r in resources:
+            # ARN-less rows (synthesized IPv4 / inline EBS, and injected test lists) must dedup WITHOUT the
+            # region, or an enumerator that ignores region would return one copy per region swept.
+            key = r.get("arn") or (r.get("service"), r.get("resource_type"), str(r.get("attrs")),
+                                   r.get("quantity"), r.get("count"))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(r)
+    return out
+
+
 def _price_enumerated(mcp_call: McpCall, resources: List[dict], url: str, region: str, capture_date: str,
                       unpriced_out: Optional[List[str]] = None) -> Optional[RunRate]:
     """Price an ALREADY-enumerated resource list via the shared Price List / dimension engine (aws_cost.py),
@@ -618,7 +664,7 @@ def _general_run_rate(mcp_call: McpCall, url: str, region: str, capture_date: st
     ``unpriced_out`` when a list is given, so a brand-new type is surfaced, never silently dropped. An
     ``enumerate_resources`` override injects a complete resource list directly (offline tests)."""
     enum = enumerate_resources or _enumerate
-    resources = enum(mcp_call, url, region)
+    resources = _enumerate_all_regions(enum, mcp_call, url, region)
     note = _completeness_note(resources, url)
     if note and disclosures is not None:
         disclosures.append(note)
@@ -855,11 +901,31 @@ class AwsRunRateAdapter:
         co-provisioned RDS / volume / other billed resource IS in Resource Explorer / tags, and the old
         short-circuit skipped it (aws-medium-b run14's RDS priced $0). Price the container, ALSO enumerate and
         price the co-provisioned resources (anchored on the run token carried in the service name), and merge.
-        No double count: the container never appears in RE/RGT, and any lightsail-service ARN the inventory does
-        return is dropped from the merge (it is priced by the live path)."""
+        No double count: the container never appears in RE/RGT, and the lightsail CONTAINER SERVICE the
+        inventory may return is dropped from the merge (the live path already priced it).
+
+        Two defects this method previously had, both measured on 2026-09-05 in aws-medium-b:
+          * run17: the container ran in us-east-2 while its RDS lived in us-east-1, and enumeration only ever
+            looked in the container's own region, so the datastore was invisible and the run priced $10.00/mo.
+            Enumeration is therefore over ALL candidate regions now, deduplicated by ARN.
+          * run19: the datastore was a LIGHTSAIL RELATIONAL DATABASE, and the old filter dropped every
+            ``service == "lightsail"`` row on the theory that the live path prices it. The live path prices
+            container services ONLY, so a Lightsail database fell through both and the run priced $15.00/mo.
+            Only the container service is dropped now; anything else Lightsail is priced if the dimension
+            engine can, and otherwise recorded in ``unpriced_resources`` so the run is FLAGGED, never silently
+            cheap. That last clause is the general guard: a service family nobody anticipated is disclosed
+            rather than dropped."""
         ls = _lightsail_run_rate(call, url, region, capture_date)
         enum = self._enumerate or _enumerate
-        backends = [r for r in enum(call, url, region) if r.get("service") != "lightsail"]
+        found = _enumerate_all_regions(enum, call, url, region)
+        backends = []
+        for r in found:
+            if r.get("service") != "lightsail":
+                backends.append(r)
+                continue
+            if _is_lightsail_container(r):
+                continue                                  # already priced live, dropping avoids a double count
+            backends.append(r)                            # e.g. a Lightsail relational database: price or flag
         extra = (_price_enumerated(call, backends, url, region, capture_date, self.unpriced_resources)
                  if backends else None)
         if ls is None:
