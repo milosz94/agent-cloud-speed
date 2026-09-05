@@ -72,8 +72,12 @@ from acspeed.cost import RateComponent, RunRate, compose_run_rate, HOURS_PER_MON
 # The default is inverted instead: EVERY successful create is a candidate, and the PUBLISHED DISCLOSURE
 # decides. If the resource's own words find a SKU, it bills and is priced; if they find none, it is
 # reported by name. Nothing needs to be anticipated.
-_CREATE_VERB = re.compile(r"^(Create|Run|Allocate|Provision|Launch|Register|Request)[A-Z]")
-_DELETE_VERB = re.compile(r"^(Delete|Terminate|Release|Deprovision|Deregister|Destroy)[A-Z]")
+# The capital that starts the noun is matched by LOOKAHEAD, never consumed. Consuming it ate the first
+# letter of every kind in the run: CreateRelationalDatabase -> "elationalDatabase", CreateKeyPair ->
+# "eyPair", RunInstances -> "nstances". Delete pairing survived it (both sides were mangled the same
+# way) but the SKU anchor did not, and an anchor of "etworkinterface" is not the noun of anything.
+_CREATE_VERB = re.compile(r"^(Create|Run|Allocate|Provision|Launch|Register|Request)(?=[A-Z])")
+_DELETE_VERB = re.compile(r"^(Delete|Terminate|Release|Deprovision|Deregister|Destroy)(?=[A-Z])")
 
 
 def _kind_of(event_name: str) -> str:
@@ -263,6 +267,7 @@ def run_rate_from_cloudtrail(start: str, end: str, run_token: str, capture_date:
     d["discovered_resources"] = [{"kind": r["kind"], "region": r["region"], "event": r["event"]}
                                  for r in resources]
     d["unpriced_resources"] = unpriced
+    d["no_sku_match"] = sorted(set(no_sku))
     d["ok"] = not unpriced                     # FAIL CLOSED: anything unpriced sinks the whole run
     return d
 
@@ -314,10 +319,15 @@ def price_from_index(resource: dict, services: Optional[List[str]] = None) -> di
 
 # --- end to end: discovered resource -> its own words -> the published SKU -> a price ---------------
 
-# Values that describe a SKU rather than name an instance. Names, ids, ARNs and zones are excluded
-# because they never appear in a price list; everything else the create call said is a candidate
-# selector. This is a shape rule, not a service list.
-_NOT_A_SELECTOR = re.compile(r"^(arn:|sg-|subnet-|vpc-|ami-|i-|eni-|rtb-|igw-)|^[a-z]{2}-[a-z]+-\d[a-z]?$")
+# Values that name ONE instance rather than describe a SKU. Every clause is a SHAPE, so a prefix nobody
+# has seen yet is excluded by the same rule as the familiar ones: the previous version listed
+# sg-/subnet-/vpc-/ami-/i-/eni-/rtb-/igw- by hand, which is a vendor list that is wrong the moment AWS
+# ships a ninth prefix.
+_NOT_A_SELECTOR = re.compile(
+    r"^arn:"                                                            # an ARN names one resource
+    r"|^[a-z]{1,8}-[0-9a-f]{8,}$"                                       # any AWS resource id
+    r"|^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"                     # a uuid / client token
+    r"|^[a-z]{2}-[a-z]+-\d[a-z]?$")                                     # a region or availability zone
 
 
 def selectors_for(resource: dict) -> Dict[str, str]:
@@ -332,13 +342,140 @@ def selectors_for(resource: dict) -> Dict[str, str]:
             continue
         if _NOT_A_SELECTOR.match(v):
             continue
-        if k.lower().endswith(("name", "identifier", "id")) and not k.lower().endswith(("bundleid", "blueprintid")):
+        # A name is a label the customer chose and no SKU carries it. An *Id* that survived the shape
+        # rule above is not a resource id, it is a CATALOGUE id (``micro_2_0``, ``postgres_16``), which is
+        # the vendor's name for a specification and can be resolved back into one. The previous version
+        # kept exactly ``bundleid`` and ``blueprintid``, which is the Lightsail vocabulary written into a
+        # module whose whole purpose is not to know any service's vocabulary.
+        if k.lower().endswith(("name", "identifier")):
             continue
         out[k] = v
     return out
 
 
-def price_resource_universal(resource: dict, describe=None) -> dict:
+# How many of the service's catalogue operations to try before giving up on one identifier. Ranking by
+# shared words put the right one 2nd of 31 for the measured case; the cap bounds the in-run cost of an
+# identifier no catalogue happens to contain.
+_CATALOG_TRIES = 6
+
+_SVC_OPS: Dict[str, Tuple[str, List[str]]] = {}
+_CATALOG_MEM: Dict[Tuple[str, str, str, str], Dict[str, object]] = {}
+
+
+def _catalog_ops(src: str) -> Tuple[str, List[str]]:
+    """The read-only, no-argument operations of the service that emitted the event.
+
+    Enumerated from botocore's own published service model and matched on ENDPOINT PREFIX, which is
+    exactly what CloudTrail reports as the eventSource. No operation and no service is named here."""
+    if src in _SVC_OPS:
+        return _SVC_OPS[src]
+    try:
+        import botocore.session
+    except ImportError:
+        _SVC_OPS[src] = ("", [])
+        return _SVC_OPS[src]
+    sess = botocore.session.get_session()
+    found: Tuple[str, List[str]] = ("", [])
+    for name in sess.get_available_services():
+        try:
+            model = sess.get_service_model(name)
+        except Exception:  # noqa: BLE001 - a model that will not load is not the service we want
+            continue
+        if model.endpoint_prefix != src:
+            continue
+        ops = []
+        for op_name in model.operation_names:
+            if op_name[:3] not in ("Get", "Lis", "Des"):
+                continue                       # only readers; never anything that could change state
+            shape = model.operation_model(op_name).input_shape
+            if shape is not None and (shape.metadata.get("required") or []):
+                continue                       # needs an argument this resource cannot supply
+            ops.append(op_name)
+        found = (name, ops)
+        break
+    _SVC_OPS[src] = found
+    return found
+
+
+def _words(text: str) -> set:
+    return {w.lower() for w in re.findall(r"[A-Z]?[a-z]+|[0-9]+", text or "") if len(w) > 2}
+
+
+def resolve_catalog_id(src: str, param: str, value: str, region: str,
+                       profile: Optional[str] = None) -> Dict[str, object]:
+    """Ask the service that created the resource what one of its own identifiers MEANS.
+
+    A create call names things in the vendor's CATALOGUE vocabulary while the price list is keyed on
+    SPECIFICATIONS, and the two never meet. Measured on a Lightsail database: the create says
+    ``relationalDatabaseBundleId: micro_2_0``, that string appears in NO Lightsail SKU (0 hits across all
+    150 products in us-east-1, which are keyed on memory/storage/vcpu), and the resource cannot supply it
+    either -- the published Cloud Control schema for the type exposes the bundle id and NOTHING about the
+    hardware, so even describing the live resource returns the same unmatchable word. The specification
+    exists only in the service's own catalogue, and every service that sells sized things publishes one.
+
+    The catalogue is FOUND, never named. botocore lists the service's read-only no-argument operations;
+    they are tried in order of how many words they share with the PARAMETER that carried the identifier,
+    because the vendor named both after the same thing (``relationalDatabaseBundleId`` ->
+    ``GetRelationalDatabaseBundles``); the first response containing the identifier wins, and its record
+    is the answer. Measured: 31 candidate operations for that service, the right one reached in two
+    calls and 3.3s.
+
+    Returns the catalogue record's own scalar fields, or {} when the service publishes no catalogue that
+    contains this identifier -- never a guess."""
+    memo = (src, param, value, region)
+    if memo in _CATALOG_MEM:
+        return _CATALOG_MEM[memo]
+    cli_name, ops = _catalog_ops(src)
+    _CATALOG_MEM[memo] = {}
+    if not cli_name:
+        return {}
+    pw = _words(param)
+    ranked = sorted(ops, key=lambda o: (-len(pw & _words(o)), o))
+    p = ["--profile", profile] if profile else []
+    for op_name in ranked[:_CATALOG_TRIES]:
+        if not (pw & _words(op_name)):
+            break                              # nothing left that is even about the same thing
+        kebab = re.sub(r"(?<!^)(?=[A-Z])", "-", op_name).lower()
+        doc, _err = _aws([cli_name, kebab, "--region", region, "--output", "json"] + p, timeout=60)
+        if not doc:
+            continue
+        for entry in doc.values():
+            if not isinstance(entry, list):
+                continue
+            for rec in entry:
+                if isinstance(rec, dict) and value in json.dumps(rec, default=str):
+                    # Specifications only. A catalogue record also carries LABELS, and a label is not a
+                    # property of the thing: the bundle's ``name`` is "Micro", which is also the name of a
+                    # container size, and taking it as a selector priced a DATABASE as a container.
+                    # Same rule the create call's own parameters already get.
+                    got = {k: v for k, v in rec.items()
+                           if isinstance(v, (str, int, float)) and not isinstance(v, bool)
+                           and not k.lower().endswith(("name", "identifier", "id"))}
+                    _CATALOG_MEM[memo] = got
+                    return got
+    return {}
+
+
+def _spellings(field: str, value: object, units: set) -> List[str]:
+    """How this service would WRITE that number in a SKU: ``ramSizeInGb: 1.0`` -> ``1GB``.
+
+    THE UNIT COMES FROM THE FIELD, NOT FROM A VOCABULARY. Offering every unit the service uses for every
+    number it publishes is how ``cpuCount: 2`` became "2GB", which is a real memory value, so a database
+    matched a CONTAINER SKU and was priced at $9.81 instead of $14.72. The vendor already declares the
+    unit in the field's own name (``ramSizeInGb``, ``diskSizeInGb``), and a field that declares none
+    (``cpuCount``, ``price``) is not offering one to guess at. The declared unit still has to be one the
+    price list actually writes, which is what the harvested vocabulary is for.
+
+    Bare numbers are never offered: the module's oldest measured rule is that a number is a QUANTITY and
+    selects attributes spuriously (EC2 value ``1`` matches 13 different attributes)."""
+    if isinstance(value, bool) or isinstance(value, str) or not isinstance(value, (int, float)):
+        return [value] if isinstance(value, str) else []
+    tail = re.findall(r"[A-Za-z][a-z]*", field or "")
+    unit = tail[-1].lower() if tail else ""
+    return [f"{value:g}{unit}"] if unit in units else []
+
+
+def price_resource_universal(resource: dict, describe=None, profile: Optional[str] = None) -> dict:
     """Price one discovered resource from the published disclosure. No per-service pricing code.
 
     ``describe`` is an optional callable(resource) -> extra selector dict, used when the create call
@@ -362,39 +499,48 @@ def price_resource_universal(resource: dict, describe=None) -> dict:
     # Narrow to the resource's own service first, purely as an optimisation; fall back to the whole
     # disclosure so a service whose name does not resemble its offer code is still found.
     src = (resource.get("src") or "").lower()
-    guess = [c for c in service_codes() if src and src.replace("-", "") in c.lower()]
+    from acspeed.adapters.aws_price_index import (service_for, unit_vocabulary, value_universe, _norm)
+    guess = service_for(src)
+
+    # An identifier the price list has never heard of selects nothing, and dropping it silently is how a
+    # real billable resource comes out "unpriceable". Resolve it against the service's own catalogue
+    # first, and spell the specification the way this service's SKUs spell numbers.
+    for code in guess:
+        uni, units = value_universe(code, region), unit_vocabulary(code, region)
+        for k, v in list(sel.items()):
+            if not k.lower().endswith("id") or _norm(v) in uni:
+                continue
+            for fk, fv in resolve_catalog_id(src, k, v, region, profile).items():
+                for spelling in _spellings(fk, fv, units):
+                    if _norm(spelling) in uni:
+                        sel[fk] = spelling
+                        break
     for pool in (guess, None):
         hits = []
         for code in (pool if pool is not None else service_codes()):
             try:
-                # Rank the resource's own words by how RARE they are in this service's SKUs, and add them
-                # most-identifying first until exactly one on-demand SKU remains. Requiring all of them at
-                # once left an ALB ambiguous across 13 SKUs on generic words (application, internet-facing,
-                # ipv4) while `operation` alone identifies it. No per-service attribute list.
-                from acspeed.adapters.aws_price_index import selectivity, resolve_one, find_sku_by_words
-                order = sorted(sel.items(), key=lambda kv: selectivity(code, region, [kv[1]]).get(kv[1], 0)
-                               or 10 ** 6)
-                narrowed, best = {}, None
-                for k, v in order:
-                    narrowed[k] = v
-                    got = ondemand_only(find_sku(code, region, narrowed))
-                    if len(got) == 1:
-                        best = got
-                        break
-                    if not got:
-                        narrowed.pop(k)            # this word only removed matches; it is not a selector
-                    else:
-                        best = got
+                # The SKU that accounts for the MOST of what the create call said. Requiring every word
+                # at once left an ALB ambiguous across 13 SKUs on generic words (application,
+                # internet-facing, ipv4); adding them rarest-first and stopping at a single match priced a
+                # DATABASE as $3.00 of storage, because its bundle's monthly transfer quota of 100 GB is
+                # the rarest word it has and one unrelated storage SKU carries it. Neither failure is
+                # about a service, so neither fix is a per-service attribute list.
+                from acspeed.adapters.aws_price_index import (resolve_one, find_sku_by_words,
+                                                              find_sku_by_coverage)
+                noun = _kind_of(resource.get("event") or "")
+                best = ondemand_only(find_sku_by_coverage(code, region, list(sel.values()), anchor=noun))
                 # The resource's own words, plus the NOUN of the event that created it: an ALB's SKU
                 # says "LoadBalancing:Application" where the event says type=application, and the noun
                 # "LoadBalancer" is the other half of that sentence.
-                words = list(sel.values()) + [_kind_of(resource.get("event") or "")]
+                words = list(sel.values()) + [noun]
                 cand = best or []
                 if not cand:
                     # exact matching found NOTHING: the resource and its SKU use different grammar for
                     # the same thing. Fall back to containment, then require the tie-break to single one
                     # out, so a loose match can never quietly become the answer.
-                    cand = resolve_one(ondemand_only(find_sku_by_words(code, region, words)), words)
+                    noun = _kind_of(resource.get("event") or "")
+                    cand = resolve_one(
+                        ondemand_only(find_sku_by_words(code, region, words, anchor=noun)), words)
                     if len(cand) != 1:
                         cand = []
                 hits += [(code, m) for m in resolve_one(cand, words)]
@@ -597,6 +743,7 @@ def run_rate_universal(run_token: str, capture_date: str, regions: Optional[List
         describe = lambda r: describe_live(r, profile)   # noqa: E731 - the default IS the live describe
     comps: List[RateComponent] = []
     unpriced: List[str] = list(unclassified)
+    no_sku: List[str] = []
     priced_detail = []
     for r in resources:
         # ONE create call can stand up SEVERAL billable things. The root EBS volume of an EC2 instance,
@@ -613,7 +760,18 @@ def run_rate_universal(run_token: str, capture_date: str, regions: Optional[List
                                       "region": part["region"], "quantity": qty,
                                       "usagetype": p["usagetype"], "sku": p["sku"]})
             else:
-                unpriced.append(f"{part['kind']}[{part.get('part')}]@{part['region']}: {p.get('reason')}")
+                reason = str(p.get("reason") or "")
+                if reason.startswith("ambiguous"):
+                    # The disclosure HAS a price and we could not pin which: a real problem, and the
+                    # number must not be published until it is settled.
+                    unpriced.append(f"{part['kind']}[{part.get('part')}]@{part['region']}: {reason}")
+                else:
+                    # No SKU carries this resource's words at all. Since the classification list is gone
+                    # and EVERY create is attempted, this is overwhelmingly the free ones (security
+                    # groups, key pairs, IAM roles, subnets). Listed rather than counted, so a genuinely
+                    # billable resource that failed to match is visible instead of silently absent, and
+                    # so it does not make `ok` false on every run.
+                    no_sku.append(f"{part['src']}:{part['event']}@{part['region']}")
     if not comps and not resources:
         return {"ok": False, "error": f"no billable resource recorded for run token {run_token}",
                 "discovery": "cloudtrail", "unpriced_resources": unpriced}
@@ -627,5 +785,6 @@ def run_rate_universal(run_token: str, capture_date: str, regions: Optional[List
     d["discovery"] = "cloudtrail"
     d["priced_resources"] = priced_detail
     d["unpriced_resources"] = unpriced
+    d["no_sku_match"] = sorted(set(no_sku))
     d["ok"] = not unpriced
     return d

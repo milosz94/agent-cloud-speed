@@ -35,12 +35,34 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
+import tempfile
 import urllib.request
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 _BASE = "https://pricing.us-east-1.amazonaws.com"
 _INDEX = f"{_BASE}/offers/v1.0/aws/index.json"
-_CACHE = os.path.expanduser("~/.cache/acspeed-pricing")
+def _cache_dir() -> str:
+    """Where the disclosure is cached. A TEST NEVER WRITES WHERE A REAL RUN READS.
+
+    Measured 2026-09-06: the suite patches `region_offer` with a four-SKU fixture, a summary derived
+    from it was written to the shared cache under the REAL service's name, and the next production pass
+    read that fixture back as Amazon's published price list. Lightsail's value universe came out as 8
+    values instead of 342 and two live container services silently stopped pricing. Running the tests
+    broke production.
+
+    The separation is decided HERE rather than in the test package, because `unittest discover -s tests`
+    imports test modules top-level and never executes `tests/__init__.py`: a guard the test harness has
+    to opt into is a guard that depends on how someone typed the command."""
+    env = os.environ.get("ACSPEED_PRICING_CACHE")
+    if env:
+        return env
+    if "unittest" in sys.modules or "pytest" in sys.modules:
+        return os.path.join(tempfile.gettempdir(), "acspeed-pricing-under-test")
+    return os.path.expanduser("~/.cache/acspeed-pricing")
+
+
+_CACHE = _cache_dir()
 
 
 def _norm(v) -> str:
@@ -77,6 +99,66 @@ def region_offer(service_code: str, region: str) -> dict:
     return _fetch(ent["currentVersionUrl"])
 
 
+_DIGEST_MEM: Dict[str, dict] = {}
+
+
+def _digest(service_code: str, region: str) -> dict:
+    """A few-kB SUMMARY of one service's price list, so a service can be RULED OUT without parsing it.
+
+    Measured 2026-09-06: pricing one run's resources took EIGHT MINUTES of CPU, all of it re-parsing the
+    disclosure. The reason is structural rather than incidental. Since the billable-create list was
+    deleted, every create is a candidate and a FREE resource (a key pair, a security group, an IAM role)
+    can only be shown to be free by asking every service that publishes a price, so the whole-disclosure
+    sweep is the COMMON path, not the rare one. The sweep is right and must stay; what was wrong is
+    paying 394 MB of JSON for each of its answers.
+
+    The digest holds the three things the sweep actually asks of a service: which values it uses (the
+    exact tier), the text its usagetypes and operations are made of (the containment tier), and the units
+    it writes numbers in (turning ``ramSizeInGb: 1.0`` into the ``1GB`` a SKU is keyed on). It is derived
+    from the disclosure itself and keyed on the exact published version URL, so it cannot drift from the
+    prices it summarises the way a hand-maintained list would."""
+    memk = f"{service_code}/{region}"
+    if memk in _DIGEST_MEM:
+        return _DIGEST_MEM[memk]
+    os.makedirs(_CACHE, exist_ok=True)
+    key = os.path.join(_CACHE, "digest_" + re.sub(r"[^A-Za-z0-9]", "_", memk) + ".json")
+    if os.path.exists(key) and os.path.getsize(key) > 0:
+        with open(key) as fh:
+            raw = json.load(fh)
+    else:
+        values, hays, units = set(), set(), set()
+        for prod in (region_offer(service_code, region).get("products") or {}).values():
+            attrs = prod.get("attributes") or {}
+            for v in attrs.values():
+                n = _norm(v)
+                if n:
+                    values.add(n)
+                # "1GB" / "40 GB" / "0.25vCPU": the unit is how this service spells a number, and the
+                # spelling is what a lookup elsewhere has to match. Harvested, never assumed.
+                m = re.fullmatch(r"\s*[0-9]+(?:\.[0-9]+)?\s*([A-Za-z]{1,6})\s*", str(v))
+                if m:
+                    units.add(m.group(1).lower())
+            hays.add(_norm(str(attrs.get("usagetype", "")) + str(attrs.get("operation", "")) +
+                           str(attrs.get("productFamily", "")) + str(attrs.get("group", ""))))
+        raw = {"values": sorted(values), "hay": "|".join(sorted(hays)), "units": sorted(units)}
+        with open(key, "w") as fh:
+            json.dump(raw, fh)
+    got = {"values": set(raw["values"]), "hay": raw["hay"], "units": set(raw["units"])}
+    _DIGEST_MEM[memk] = got
+    return got
+
+
+def value_universe(service_code: str, region: str) -> Set[str]:
+    """Every normalised attribute value this service publishes here. A value outside it is the VENDOR's
+    vocabulary, not the disclosure's, and has to be resolved before it can select anything."""
+    return _digest(service_code, region)["values"]
+
+
+def unit_vocabulary(service_code: str, region: str) -> Set[str]:
+    """The units this service writes numbers in ("gb", "tb", "vcpu"), harvested from its own SKUs."""
+    return _digest(service_code, region)["units"]
+
+
 def find_sku(service_code: str, region: str, selectors: Dict[str, object],
              require: Optional[Dict[str, str]] = None) -> List[dict]:
     """SKUs in ``service_code``/``region`` whose attribute VALUES contain every string selector.
@@ -86,9 +168,6 @@ def find_sku(service_code: str, region: str, selectors: Dict[str, object],
     caller genuinely knows one (e.g. productFamily), and is never needed to make a match happen.
     Returns every match with its price dimensions, so an AMBIGUOUS result is visible to the caller
     rather than silently resolved to the first row."""
-    offer = region_offer(service_code, region)
-    if not offer:
-        return []
     wanted = {_norm(v) for v in selectors.values() if isinstance(v, str) and len(str(v)) > 1}
     if not wanted:
         return []
@@ -98,11 +177,14 @@ def find_sku(service_code: str, region: str, selectors: Dict[str, object],
     # and NEITHER string exists anywhere in the published Lightsail price list, which is keyed on
     # memory/storage. Dropping the unmatchable terms and requiring the rest is what lets the resource's
     # own words find its SKU without a per-vendor translation table.
-    universe = set()
-    for prod in (offer.get("products") or {}).values():
-        universe |= {_norm(v) for v in (prod.get("attributes") or {}).values()}
-    wanted = {w for w in wanted if w in universe}
+    #
+    # Asked of the DIGEST, not the offer file, so a service that cannot match is ruled out for a few kB
+    # instead of a full parse. Most services can never match most resources, so this is the usual answer.
+    wanted = {w for w in wanted if w in value_universe(service_code, region)}
     if not wanted:
+        return []
+    offer = region_offer(service_code, region)
+    if not offer:
         return []
     terms = (offer.get("terms") or {}).get("OnDemand", {})
     out = []
@@ -210,9 +292,11 @@ def selectivity(service_code: str, region: str, values: List[str]) -> Dict[str, 
     Ranking by selectivity is the service-independent way to tell an identifying term from a generic one:
     no list of which attributes matter per service, just how rare each value is in that service's own
     published SKUs."""
-    offer = region_offer(service_code, region)
     counts = {v: 0 for v in values}
-    for prod in (offer.get("products") or {}).values():
+    uni = value_universe(service_code, region)
+    if not any(_norm(v) in uni for v in values):
+        return counts                     # nothing to count; do not parse the offer to learn that
+    for prod in (region_offer(service_code, region).get("products") or {}).values():
         vals = {_norm(x) for x in (prod.get("attributes") or {}).values()}
         for v in values:
             if _norm(v) in vals:
@@ -265,7 +349,59 @@ def _prefer_base_usagetype(matches: List[dict]) -> List[dict]:
     return out or matches
 
 
-def find_sku_by_words(service_code: str, region: str, words: List[str]) -> List[dict]:
+def find_sku_by_coverage(service_code: str, region: str, values: List[str],
+                         anchor: str = "") -> List[dict]:
+    """The SKUs carrying the MOST of the resource's own words, in one pass over the offer.
+
+    Two ways of using the same words were measured to be wrong, both on the same Lightsail database.
+    Requiring ALL of them fails as soon as one word belongs to another SKU's vocabulary. Adding them
+    rarest-first and stopping when exactly one SKU remains picks the RAREST word, which is not the same
+    as the RIGHT one: the bundle carries ``transferPerMonthInGb: 100``, "100GB" appears in exactly one
+    Lightsail SKU -- a storage bundle -- so the database was priced at $3.00/mo as storage, while its own
+    SKU (memory 1GB, storage 40GB) carried TWO of the words and was thrown away.
+
+    Coverage is the evidence: the SKU that accounts for most of what the create call said. The noun of
+    the event breaks the remaining tie but never filters, because a service is free to name a SKU
+    something other than its own resource type (``ContainerSvcUsage`` for a ContainerService), and a
+    filter on the noun would silently drop those."""
+    uni = value_universe(service_code, region)
+    wanted = {_norm(v) for v in values if isinstance(v, str) and len(str(v)) > 1}
+    wanted = {w for w in wanted if w in uni}
+    if not wanted:
+        return []
+    offer = region_offer(service_code, region)
+    terms = (offer.get("terms") or {}).get("OnDemand", {})
+    out = []
+    for sku, prod in (offer.get("products") or {}).items():
+        attrs = prod.get("attributes") or {}
+        vals = {_norm(v) for v in attrs.values()}
+        cov = len(wanted & vals)
+        if not cov:
+            continue
+        dims = []
+        for term in terms.get(sku, {}).values():
+            for dim in (term.get("priceDimensions") or {}).values():
+                dims.append({"unit": dim.get("unit"),
+                             "usd": float(dim.get("pricePerUnit", {}).get("USD", 0) or 0),
+                             "description": dim.get("description", "")})
+        out.append({"sku": sku, "attributes": attrs, "usagetype": attrs.get("usagetype"),
+                    "operation": attrs.get("operation"), "prices": dims, "coverage": cov})
+    if not out:
+        return []
+    best = max(m["coverage"] for m in out)
+    out = [m for m in out if m["coverage"] == best]
+    if anchor and len(out) > 1:
+        a = _norm(anchor)
+        pref = [m for m in out if a in _norm(
+            str(m["attributes"].get("usagetype", "")) + str(m["attributes"].get("operation", "")) +
+            str(m["attributes"].get("productFamily", "")) + str(m["attributes"].get("group", "")))]
+        if pref:
+            out = pref
+    return out
+
+
+def find_sku_by_words(service_code: str, region: str, words: List[str],
+                      anchor: str = "") -> List[dict]:
     """SKUs whose usagetype / operation / family CONTAINS the resource's words.
 
     The exact-value tier answers "which SKU has this attribute", and for most resources that is enough:
@@ -278,11 +414,18 @@ def find_sku_by_words(service_code: str, region: str, words: List[str]) -> List[
     Containment is deliberately the SECOND tier: as a primary filter it is far too loose (a word like
     "application" appears all over a price list), but where exact matching returns nothing it is the
     difference between pricing the largest line on the bill and reporting it unpriceable."""
-    offer = region_offer(service_code, region)
-    if not offer:
-        return []
     ws = [_norm(w) for w in words if isinstance(w, str) and len(str(w)) > 2]
     if not ws:
+        return []
+    # The digest holds every usagetype/operation/family this service publishes, joined. If the anchor is
+    # absent from all of it, no SKU here is about this kind of resource and the offer file is not read.
+    blob = _digest(service_code, region)["hay"]
+    if anchor and _norm(anchor) not in blob:
+        return []
+    if not any(w in blob for w in ws):
+        return []
+    offer = region_offer(service_code, region)
+    if not offer:
         return []
     terms = (offer.get("terms") or {}).get("OnDemand", {})
     out = []
@@ -290,6 +433,14 @@ def find_sku_by_words(service_code: str, region: str, words: List[str]) -> List[
         a = prod.get("attributes") or {}
         hay = _norm(str(a.get("usagetype", "")) + str(a.get("operation", "")) +
                     str(a.get("productFamily", "")) + str(a.get("group", "")))
+        # ANCHOR ON THE RESOURCE'S NOUN. Matching on any word alone let FREE resources find unrelated
+        # SKUs once the billable-create list was removed: a key pair matched on "pem", target groups
+        # matched 14 SKUs on "HTTP" and "instance". The noun of the event that created the thing
+        # ("LoadBalancer", "KeyPair", "TargetGroup") must itself appear, so a resource only matches a SKU
+        # that is about that kind of resource. A key pair then matches nothing, which is correct: it is
+        # free, and it says so by finding no price rather than by being on a list.
+        if anchor and _norm(anchor) not in hay:
+            continue
         if not any(w in hay for w in ws):
             continue
         dims = []
@@ -300,4 +451,51 @@ def find_sku_by_words(service_code: str, region: str, words: List[str]) -> List[
                              "description": dim.get("description", "")})
         out.append({"sku": sku, "attributes": a, "usagetype": a.get("usagetype"),
                     "operation": a.get("operation"), "prices": dims})
+    return out
+
+
+def service_for(event_source: str) -> List[str]:
+    """Offer codes whose PUBLISHED service name is exactly this CloudTrail eventSource, normalised.
+
+    Derived, not mapped. AWS publishes each service's human name, and normalising both sides makes
+    ``elasticloadbalancing`` meet "Elastic Load Balancing" -> AWSELB, which no rule over the offer CODE
+    can do (AWSELB shares no substring with it). Only EXACT normalised equality is accepted: substring
+    matching on service names was measured to return confidently wrong answers (ec2 ->
+    AmazonEC2OCPULicenseFees, s3 -> AmazonS3GlacierDeepArchive, ssm -> AWSIAMAccessAnalyzer).
+
+    An empty result is not a failure; the caller falls back to searching the whole disclosure, which is
+    always correct and merely slower."""
+    if not event_source:
+        return []
+    want = _norm(event_source)
+    names = _service_names()
+    exact = [code for code, nm in names.items() if _norm(nm) == want]
+    if exact:
+        return exact
+    return [c for c in names if want and want in _norm(c)]
+
+
+def _service_names() -> Dict[str, str]:
+    """offer code -> published service name, fetched once and cached on disk."""
+    cache = os.path.join(_CACHE, "_servicenames.json")
+    if os.path.exists(cache):
+        with open(cache) as fh:
+            return json.load(fh)
+    import subprocess
+    out = {}
+    for code in service_codes():
+        r = subprocess.run(["aws", "pricing", "get-attribute-values", "--region", "us-east-1",
+                            "--service-code", code, "--attribute-name", "servicename",
+                            "--max-results", "1"], capture_output=True, text=True)
+        if r.returncode:
+            continue
+        try:
+            vals = json.loads(r.stdout).get("AttributeValues") or []
+        except ValueError:
+            continue
+        if vals:
+            out[code] = vals[0]["Value"]
+    os.makedirs(_CACHE, exist_ok=True)
+    with open(cache, "w") as fh:
+        json.dump(out, fh)
     return out
