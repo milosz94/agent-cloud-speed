@@ -100,3 +100,49 @@ class TestVendorVocabularyDoesNotBlockTheMatch(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# An ALB's create call says type=application / scheme=internet-facing / ipAddressType=ipv4, and NOT ONE
+# of those strings is an attribute value anywhere in AWSELB or AmazonEC2 (measured: 0 exact matches).
+# The SKU that bills it says operation "LoadBalancing:Application". Same thing, different grammar.
+_ELB = _offer({
+    "TS":   ({"usagetype": "TS-LoadBalancerUsage", "operation": "LoadBalancing:Application",
+              "locationType": "AWS Region"}, 0.005),
+    "OUT":  ({"usagetype": "Outposts-LoadBalancerUsage", "operation": "LoadBalancing:Application",
+              "locationType": "AWS Outposts"}, 0.0225),
+    "BASE": ({"usagetype": "LoadBalancerUsage", "operation": "LoadBalancing:Application",
+              "locationType": "AWS Region"}, 0.0225),
+    "NET":  ({"usagetype": "LoadBalancerUsage", "operation": "LoadBalancing:Network",
+              "locationType": "AWS Region"}, 0.0225),
+})
+
+
+class TestGrammarMismatchIsBridgedSafely(unittest.TestCase):
+
+    def test_exact_matching_finds_nothing_for_an_alb(self):
+        """The premise: this is why an ALB was reported unpriceable, not a hypothetical."""
+        with mock.patch.object(px, "region_offer", return_value=_ELB):
+            self.assertEqual(px.find_sku("AWSELB", "us-east-1",
+                                         {"type": "application", "scheme": "internet-facing"}), [])
+
+    def test_containment_plus_tiebreak_resolves_it(self):
+        words = ["application", "internet-facing", "ipv4", "LoadBalancer"]
+        with mock.patch.object(px, "region_offer", return_value=_ELB):
+            got = px.resolve_one(px.ondemand_only(px.find_sku_by_words("AWSELB", "us-east-1", words)),
+                                 words)
+        self.assertEqual(len(got), 1, [g["usagetype"] for g in got])
+        self.assertEqual(got[0]["usagetype"], "LoadBalancerUsage")
+        self.assertAlmostEqual(got[0]["prices"][0]["usd"], 0.0225,
+                               msg="picking TS- would be a 4.5x undercharge")
+
+    def test_outposts_is_not_an_aws_region(self):
+        with mock.patch.object(px, "region_offer", return_value=_ELB):
+            kept = px.ondemand_only(px.find_sku_by_words("AWSELB", "us-east-1", ["LoadBalancer"]))
+        self.assertNotIn("Outposts-LoadBalancerUsage", [k["usagetype"] for k in kept])
+
+    def test_a_qualified_variant_never_beats_its_base(self):
+        """TS-LoadBalancerUsage ENDS WITH LoadBalancerUsage; the base line is the load balancer."""
+        with mock.patch.object(px, "region_offer", return_value=_ELB):
+            got = px._prefer_base_usagetype(px.ondemand_only(
+                px.find_sku_by_words("AWSELB", "us-east-1", ["LoadBalancer"])))
+        self.assertNotIn("TS-LoadBalancerUsage", [g["usagetype"] for g in got])

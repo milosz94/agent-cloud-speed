@@ -162,6 +162,10 @@ _ONDEMAND_PINS = {
     "licenseModel": "No License required",
     "preInstalledSw": "NA",
     "deploymentOption": "Single-AZ",
+    # C19 prices the public AWS REGION. Outposts, Local Zones and Wavelength are different products sold
+    # at different rates, and their SKUs sit in the same offer file: an ALB search returned
+    # Outposts-LoadBalancerUsage and TS-LoadBalancerUsage beside the real LoadBalancerUsage.
+    "locationType": "AWS Region",
 }
 
 
@@ -214,3 +218,86 @@ def selectivity(service_code: str, region: str, values: List[str]) -> Dict[str, 
             if _norm(v) in vals:
                 counts[v] += 1
     return counts
+
+
+def resolve_one(matches: List[dict], words: List[str]) -> List[dict]:
+    """Break a tie between on-demand SKUs using the resource's own words as SUBSTRINGS.
+
+    A resource and its SKU describe the same thing in different grammar: an ALB's create call says
+    ``type: application`` while the SKU says ``operation: LoadBalancing:Application``. Exact value
+    matching cannot bridge that, which is why an ALB came out UNPRICED as ambiguous across 13 SKUs, and
+    substring matching cannot be the PRIMARY filter because a word like "application" appears all over a
+    price list. Used only to choose among SKUs that already survived every exact filter, containment is
+    both safe and sufficient: the winner must be strictly better than every rival, so an unresolvable tie
+    stays a tie rather than silently picking one."""
+    if len(matches) <= 1:
+        return matches
+    ws = [_norm(w) for w in words if isinstance(w, str) and len(w) > 2]
+    if not ws:
+        return matches
+    scored = []
+    for m in matches:
+        a = m.get("attributes") or {}
+        hay = _norm(str(a.get("usagetype", "")) + str(a.get("operation", "")) +
+                    str(a.get("productFamily", "")) + str(a.get("group", "")))
+        scored.append((sum(1 for w in ws if w in hay), m))
+    best = max(s for s, _m in scored)
+    if best == 0:
+        return matches
+    winners = [m for s, m in scored if s == best]
+    return _prefer_base_usagetype(winners)
+
+
+def _prefer_base_usagetype(matches: List[dict]) -> List[dict]:
+    """Drop QUALIFIED variants when the base line is also a candidate.
+
+    AWS qualifies an add-on by prefixing the base usagetype: an ALB search returns both
+    ``LoadBalancerUsage`` ($16.43/mo, the load balancer) and ``TS-LoadBalancerUsage`` ($3.65/mo, its
+    trust store). The qualified one ENDS WITH the base one, which is the shape, not a list of prefixes to
+    know. Picking wrongly here is a 4.5x error, and picking the cheaper would bias every number down."""
+    uts = {str(m.get("usagetype") or "") for m in matches}
+    out = []
+    for m in matches:
+        ut = str(m.get("usagetype") or "")
+        if any(other != ut and ut.endswith(other) for other in uts):
+            continue                       # a qualified variant of another candidate: not the base line
+        out.append(m)
+    return out or matches
+
+
+def find_sku_by_words(service_code: str, region: str, words: List[str]) -> List[dict]:
+    """SKUs whose usagetype / operation / family CONTAINS the resource's words.
+
+    The exact-value tier answers "which SKU has this attribute", and for most resources that is enough:
+    an EC2 instance's ``t3.medium`` IS an attribute value. But a resource and its SKU sometimes describe
+    the same thing in different grammar, and then exact matching finds NOTHING at all. Measured: an
+    ALB's create says ``type: application`` / ``scheme: internet-facing``, and not one of those strings
+    is an attribute value anywhere in AWSELB or AmazonEC2, while the SKU that bills it says
+    ``operation: LoadBalancing:Application``. The word is there, inside a longer one.
+
+    Containment is deliberately the SECOND tier: as a primary filter it is far too loose (a word like
+    "application" appears all over a price list), but where exact matching returns nothing it is the
+    difference between pricing the largest line on the bill and reporting it unpriceable."""
+    offer = region_offer(service_code, region)
+    if not offer:
+        return []
+    ws = [_norm(w) for w in words if isinstance(w, str) and len(str(w)) > 2]
+    if not ws:
+        return []
+    terms = (offer.get("terms") or {}).get("OnDemand", {})
+    out = []
+    for sku, prod in (offer.get("products") or {}).items():
+        a = prod.get("attributes") or {}
+        hay = _norm(str(a.get("usagetype", "")) + str(a.get("operation", "")) +
+                    str(a.get("productFamily", "")) + str(a.get("group", "")))
+        if not any(w in hay for w in ws):
+            continue
+        dims = []
+        for term in terms.get(sku, {}).values():
+            for dim in (term.get("priceDimensions") or {}).values():
+                dims.append({"unit": dim.get("unit"),
+                             "usd": float(dim.get("pricePerUnit", {}).get("USD", 0) or 0),
+                             "description": dim.get("description", "")})
+        out.append({"sku": sku, "attributes": a, "usagetype": a.get("usagetype"),
+                    "operation": a.get("operation"), "prices": dims})
+    return out

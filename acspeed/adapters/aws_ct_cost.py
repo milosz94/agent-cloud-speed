@@ -371,7 +371,7 @@ def price_resource_universal(resource: dict, describe=None) -> dict:
                 # most-identifying first until exactly one on-demand SKU remains. Requiring all of them at
                 # once left an ALB ambiguous across 13 SKUs on generic words (application, internet-facing,
                 # ipv4) while `operation` alone identifies it. No per-service attribute list.
-                from acspeed.adapters.aws_price_index import selectivity
+                from acspeed.adapters.aws_price_index import selectivity, resolve_one, find_sku_by_words
                 order = sorted(sel.items(), key=lambda kv: selectivity(code, region, [kv[1]]).get(kv[1], 0)
                                or 10 ** 6)
                 narrowed, best = {}, None
@@ -385,9 +385,38 @@ def price_resource_universal(resource: dict, describe=None) -> dict:
                         narrowed.pop(k)            # this word only removed matches; it is not a selector
                     else:
                         best = got
-                hits += [(code, m) for m in (best or [])]
+                # The resource's own words, plus the NOUN of the event that created it: an ALB's SKU
+                # says "LoadBalancing:Application" where the event says type=application, and the noun
+                # "LoadBalancer" is the other half of that sentence.
+                words = list(sel.values()) + [_kind_of(resource.get("event") or "")]
+                cand = best or []
+                if not cand:
+                    # exact matching found NOTHING: the resource and its SKU use different grammar for
+                    # the same thing. Fall back to containment, then require the tie-break to single one
+                    # out, so a loose match can never quietly become the answer.
+                    cand = resolve_one(ondemand_only(find_sku_by_words(code, region, words)), words)
+                    if len(cand) != 1:
+                        cand = []
+                hits += [(code, m) for m in resolve_one(cand, words)]
             except Exception:  # noqa: BLE001
                 continue
+        # The same SKU is published in more than one offer file (LoadBalancerUsage appears in both
+        # AWSELB and AmazonEC2, at the same price). Identical usagetype AND price is one line, not an
+        # ambiguity, so collapse before judging.
+        if len(hits) > 1:
+            uniq = {}
+            for code, m in hits:
+                d = next((x for x in m["prices"] if x["usd"] > 0), None)
+                if d:
+                    uniq.setdefault((m.get("usagetype"), round(d["usd"], 8)), (code, m))
+            if len(uniq) == 1:
+                hits = [next(iter(uniq.values()))]
+            elif len({price for _ut, price in uniq}) == 1:
+                # Different labels, IDENTICAL published price: the number is determined even though the
+                # label is not. An allocated public IPv4 bills the same whether it is InUseAddress or
+                # IdleAddress ($0.005/hr each), and refusing to price it over a label we cannot pin would
+                # drop a real charge for no gain in accuracy.
+                hits = [next(iter(uniq.values()))]
         if len(hits) == 1:
             code, m = hits[0]
             dim = next((d for d in m["prices"] if d["usd"] > 0), None)
