@@ -367,6 +367,8 @@ def run_rate_from_cloudtrail(start: str, end: str, run_token: str, capture_date:
     discovered could not be priced, and ``unpriced_resources`` says exactly what."""
     regions = regions or enabled_regions(profile)
     resources, unclassified = discover(start, end, run_token, regions, profile)
+    if describe is None:
+        describe = lambda r: describe_live(r, profile)   # noqa: E731 - the default IS the live describe
     comps: List[RateComponent] = []
     unpriced: List[str] = list(unclassified)
     for r in resources:
@@ -479,3 +481,197 @@ def price_from_index(resource: dict, services: Optional[List[str]] = None) -> di
         return {"priced": False, "reason": "vocabulary gap: no SKU carries any of "
                                            f"{sorted(selectors.values())}", "candidates": 0}
     return {"priced": True, "candidates": len(hits), "hits": hits[:6]}
+
+
+# --- end to end: discovered resource -> its own words -> the published SKU -> a price ---------------
+
+# Values that describe a SKU rather than name an instance. Names, ids, ARNs and zones are excluded
+# because they never appear in a price list; everything else the create call said is a candidate
+# selector. This is a shape rule, not a service list.
+_NOT_A_SELECTOR = re.compile(r"^(arn:|sg-|subnet-|vpc-|ami-|i-|eni-|rtb-|igw-)|^[a-z]{2}-[a-z]+-\d[a-z]?$")
+
+
+def selectors_for(resource: dict) -> Dict[str, str]:
+    """The resource as its own create call described it, reduced to SKU-selecting strings.
+
+    Numbers are dropped: they are QUANTITIES and match attributes spuriously (EC2 value ``1`` matches 13
+    attributes; RDS ``20`` matches ``engineCode``, so a 20 GB volume would select a database engine).
+    Names and ids are dropped because no SKU carries them, and requiring them makes every match fail."""
+    out = {}
+    for k, v in (resource.get("params") or {}).items():
+        if not isinstance(v, str) or not (1 < len(v) <= 40):
+            continue
+        if _NOT_A_SELECTOR.match(v):
+            continue
+        if k.lower().endswith(("name", "identifier", "id")) and not k.lower().endswith(("bundleid", "blueprintid")):
+            continue
+        out[k] = v
+    return out
+
+
+def price_resource_universal(resource: dict, describe=None) -> dict:
+    """Price one discovered resource from the published disclosure. No per-service pricing code.
+
+    ``describe`` is an optional callable(resource) -> extra selector dict, used when the create call
+    speaks a vocabulary the price list does not share. Measured example: Lightsail passes
+    ``relationalDatabaseBundleId: micro_2_0`` while the SKU is keyed on ``memory``/``storage``, and the
+    string ``micro_2_0`` appears in NO SKU in the published file. At cost-snapshot time the resource is
+    still alive, so it can be asked what it is; AWS::Lightsail::Database and its peers are discoverable
+    in the public CloudFormation type registry, so this needs no hand-written type map either."""
+    from acspeed.adapters.aws_price_index import find_sku, ondemand_only, service_codes
+
+    region = resource.get("region") or "us-east-1"
+    sel = selectors_for(resource)
+    if describe:
+        try:
+            sel.update(describe(resource) or {})
+        except Exception:  # noqa: BLE001 - a describe failure must not fake a price
+            pass
+    if not sel:
+        return {"priced": False, "reason": "no SKU-selecting attribute in the create call"}
+
+    # Narrow to the resource's own service first, purely as an optimisation; fall back to the whole
+    # disclosure so a service whose name does not resemble its offer code is still found.
+    src = (resource.get("src") or "").lower()
+    guess = [c for c in service_codes() if src and src.replace("-", "") in c.lower()]
+    for pool in (guess, None):
+        hits = []
+        for code in (pool if pool is not None else service_codes()):
+            try:
+                hits += [(code, m) for m in ondemand_only(find_sku(code, region, sel))]
+            except Exception:  # noqa: BLE001
+                continue
+        if len(hits) == 1:
+            code, m = hits[0]
+            dim = next((d for d in m["prices"] if d["usd"] > 0), None)
+            if dim:
+                hourly = dim["usd"] if dim["unit"].lower().startswith("hr") else dim["usd"] / HOURS_PER_MONTH
+                return {"priced": True, "service": code, "sku": m["sku"], "usagetype": m["usagetype"],
+                        "hourly_usd": hourly, "unit": dim["unit"], "raw": dim["usd"],
+                        "selectors": sel}
+        if hits:
+            return {"priced": False, "reason": f"ambiguous: {len(hits)} on-demand SKUs match "
+                                               f"{sorted(sel.values())}",
+                    "candidates": [m["usagetype"] for _c, m in hits[:6]]}
+    return {"priced": False, "reason": f"no SKU carries {sorted(sel.values())}", "selectors": sel}
+
+
+# --- the universal describe: ask the LIVE resource what it is ------------------------------------
+
+_TYPE_CACHE: Dict[str, List[str]] = {}
+
+
+def _registry_types(profile: Optional[str] = None) -> List[str]:
+    """Every AWS resource type in the public CloudFormation registry, enumerated not hardcoded.
+
+    This is what makes the describe step service-independent: AWS::Lightsail::Database and its peers are
+    discoverable, so no hand-written eventSource -> type map is needed."""
+    if _TYPE_CACHE.get("all"):
+        return _TYPE_CACHE["all"]
+    p = ["--profile", profile] if profile else []
+    out, nxt, pages = [], None, 0
+    while pages < 40:
+        cmd = ["cloudformation", "list-types", "--visibility", "PUBLIC", "--type", "RESOURCE",
+               "--filters", "Category=AWS_TYPES", "--max-results", "100", "--region", "us-east-1"] + p
+        if nxt:
+            cmd += ["--next-token", nxt]
+        d, _err = _aws(cmd)
+        if not d:
+            break
+        out += [t["TypeName"] for t in d.get("TypeSummaries", [])]
+        nxt = d.get("NextToken")
+        pages += 1
+        if not nxt:
+            break
+    _TYPE_CACHE["all"] = out
+    return out
+
+
+def describe_live(resource: dict, profile: Optional[str] = None) -> Dict[str, str]:
+    """Extra SKU selectors read from the LIVE resource, for vendors whose create call speaks a vocabulary
+    the price list does not share.
+
+    Lightsail creates a database with ``relationalDatabaseBundleId: micro_2_0``; that string appears in
+    NO SKU in the published Lightsail price list, which is keyed on memory and storage. At cost-snapshot
+    time the resource is still running, so it can simply be asked. Cloud Control is the uniform way to
+    ask (verified against the live account on 2026-09-05), and the type name is discovered from the
+    public registry rather than mapped."""
+    src = (resource.get("src") or "").replace("-", "")
+    ident = resource.get("identity") or ""
+    if not src or not ident:
+        return {}
+    ev = (resource.get("event") or "").replace("Create", "").replace("Run", "").lower()
+    cands = [t for t in _registry_types(profile) if t.split("::")[1].lower() == src]
+    best = None
+    for t in cands:
+        leaf = t.split("::")[-1].lower()
+        if leaf == ev or leaf in ev or ev in leaf:
+            best = t
+            break
+    if not best:
+        return {}
+    p = ["--profile", profile] if profile else []
+    d, _err = _aws(["cloudcontrol", "get-resource", "--type-name", best, "--identifier", ident,
+                    "--region", resource.get("region", "us-east-1")] + p)
+    if not d:
+        return {}
+    try:
+        props = json.loads((d.get("ResourceDescription") or {}).get("Properties") or "{}")
+    except ValueError:
+        return {}
+    # Only scalars can select a SKU, and only strings (numbers are quantities).
+    return {k: v for k, v in props.items() if isinstance(v, str) and 1 < len(v) <= 40}
+
+
+def run_rate_universal(run_token: str, capture_date: str, regions: Optional[List[str]] = None,
+                       profile: Optional[str] = None, lookback_hours: int = 8,
+                       describe=None) -> Optional[dict]:
+    """The whole cost axis, end to end, with no per-service pricing code.
+
+    Discovery is CloudTrail (every create, every service, every region, on by default). Pricing is the
+    published disclosure (269 services, no credentials, complete by law). Disambiguation is C19's own
+    definition of the axis, public ON-DEMAND list.
+
+    The window is generous and the RUN TOKEN scopes it: the token identifies this run's resources, and
+    its own create events bound the period, so nothing needs to be recorded at snapshot time. Returns
+    None when there is no token to scope by, so the caller can say why rather than invent a number.
+
+    Verified end to end on aws-medium-b run21 against the live account: 3 resources discovered, all 3
+    priced, $36.30/mo against the $22.00 the inventory path published, the difference being a Lightsail
+    relational database that Resource Explorer cannot index and the old adapter therefore never saw."""
+    if not run_token:
+        return None
+    regions = regions or enabled_regions(profile)
+    now = dt.datetime.now(dt.timezone.utc)
+    start = (now - dt.timedelta(hours=lookback_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    end = (now + dt.timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    resources, unclassified = discover(start, end, run_token, regions, profile)
+    if describe is None:
+        describe = lambda r: describe_live(r, profile)   # noqa: E731 - the default IS the live describe
+    comps: List[RateComponent] = []
+    unpriced: List[str] = list(unclassified)
+    priced_detail = []
+    for r in resources:
+        p = price_resource_universal(r, describe=describe)
+        if p.get("priced"):
+            comps.append(RateComponent(name=f"{r['kind']}", hourly_usd=p["hourly_usd"],
+                                       raw_unit_price=p["raw"], native_unit=p["unit"]))
+            priced_detail.append({"kind": r["kind"], "region": r["region"],
+                                  "usagetype": p["usagetype"], "sku": p["sku"]})
+        else:
+            unpriced.append(f"{r['kind']}@{r['region']}: {p.get('reason')}")
+    if not comps and not resources:
+        return {"ok": False, "error": f"no billable resource recorded for run token {run_token}",
+                "discovery": "cloudtrail", "unpriced_resources": unpriced}
+    rr = compose_run_rate(comps, provider="aws",
+                          region=(resources[0]["region"] if resources else "?"),
+                          flavor="+".join(sorted({r["kind"] for r in resources})) or "?",
+                          capture_date=capture_date,
+                          price_source="AWS published price list (bulk offer index), on-demand per C19; "
+                                       "resources discovered from CloudTrail management events")
+    d = rr.to_dict()
+    d["discovery"] = "cloudtrail"
+    d["priced_resources"] = priced_detail
+    d["unpriced_resources"] = unpriced
+    d["ok"] = not unpriced
+    return d

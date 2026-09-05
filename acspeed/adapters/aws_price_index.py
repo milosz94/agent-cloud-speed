@@ -92,6 +92,18 @@ def find_sku(service_code: str, region: str, selectors: Dict[str, object],
     wanted = {_norm(v) for v in selectors.values() if isinstance(v, str) and len(str(v)) > 1}
     if not wanted:
         return []
+    # A value that appears in NO SKU of this service is not a selector FOR this service, so requiring it
+    # makes every match fail. Vendors name resources in their own vocabulary: Lightsail creates a database
+    # with ``relationalDatabaseBundleId: micro_2_0`` and ``relationalDatabaseBlueprintId: postgres_16``,
+    # and NEITHER string exists anywhere in the published Lightsail price list, which is keyed on
+    # memory/storage. Dropping the unmatchable terms and requiring the rest is what lets the resource's
+    # own words find its SKU without a per-vendor translation table.
+    universe = set()
+    for prod in (offer.get("products") or {}).values():
+        universe |= {_norm(v) for v in (prod.get("attributes") or {}).values()}
+    wanted = {w for w in wanted if w in universe}
+    if not wanted:
+        return []
     terms = (offer.get("terms") or {}).get("OnDemand", {})
     out = []
     for sku, prod in (offer.get("products") or {}).items():

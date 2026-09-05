@@ -1566,10 +1566,32 @@ def measure_cost(prof: dict, url: str, capture_date: str) -> dict | None:
             dep_id = resolve_deployment_id_by_url(url) or url
             rr = ReduRunRateAdapter().run_rate(dep_id, capture_date=capture_date)
         elif cloud == "aws":
-            # host-side via the SAME aws MCP the agent used: uniform-inventory enumerate + Price-List
-            # dimension pricing (no per-service price code); Lightsail is the one live-priced exception.
+            # DISCOVER from CloudTrail, PRICE from the published disclosure. The old path asked the
+            # account's INVENTORY which resources matched this deploy, and every filter in that question
+            # (run-token anchor, the URL's region, a per-service short circuit) silently SHRANK the answer
+            # instead of failing: it is why aws-medium-b discarded 7 runs, all DISCOVERY failures, and why
+            # run21 published $22.00/mo while a live Lightsail database sat beside its containers
+            # (measured true cost $36.30). Resource Explorer indexes 654 types over 171 services and does
+            # not index Lightsail AT ALL, so no amount of inventory work could have seen it.
+            #
+            # CloudTrail records every create by default in every account, and AWS must publish the price
+            # of everything it bills: of the 22 usagetypes this account was actually billed 2026-09-01..06,
+            # 22 are findable in the published price list. So neither half needs per-service code.
+            from acspeed.adapters.aws_ct_cost import run_rate_universal
+            rr_d = run_rate_universal(prof.get("run_token") or "", capture_date=capture_date,
+                                      profile=prof.get("aws_profile"))
+            if rr_d is not None:
+                return rr_d
+            # No token (a single ad-hoc run) leaves nothing to scope discovery by; fall back to the
+            # inventory adapter and SAY SO, rather than reporting a confident number from a path whose
+            # blind spots are documented above.
             from acspeed.adapters.aws_runrate import AwsRunRateAdapter as AwsMcpAdapter
             rr = AwsMcpAdapter(profile=prof.get("aws_profile")).run_rate(url, capture_date=capture_date)
+            if rr is not None:
+                d = rr.to_dict()
+                d["ok"] = True
+                d["discovery"] = "inventory-adapter (no run token to scope CloudTrail); see aws_ct_cost"
+                return d
         elif cloud == "azure":
             # Azure Retail Prices API is PUBLIC (no creds) and USD-native, so the PRICING is live-verified;
             # the BUNDLE resolution (what was provisioned) needs the Azure MCP / Resource Graph, the live
