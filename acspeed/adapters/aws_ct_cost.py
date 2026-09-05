@@ -654,8 +654,22 @@ def price_resource_universal(resource: dict, describe=None, profile: Optional[st
                         "hourly_usd": hourly, "unit": dim["unit"], "raw": dim["usd"],
                         "selectors": sel}
         if hits:
-            return {"priced": False, "reason": f"ambiguous: {len(hits)} on-demand SKUs match "
-                                               f"{sorted(sel.values())}",
+            # AMBIGUOUS BY ITS OWN SERVICE, or just noise from the whole-disclosure sweep? The two are
+            # not the same finding and must not carry the same weight. An ALB TARGET GROUP is free, and
+            # its words ("HTTP", "instance", a health-check path) match ZERO SKUs in the service that
+            # created it (measured: HTTP matches 0 of AWSELB's 14 SKUs) while matching a dozen in
+            # unrelated services the sweep also asked. Treating that as "the disclosure has a price we
+            # could not pin" made `ok` FALSE on every run with a load balancer, which would have failed
+            # a paid run over a resource that costs nothing.
+            #
+            # A cross-service price is still perfectly real -- a public IPv4 is billed by AmazonVPC and
+            # created by ec2 -- so this is not a filter on where a SKU may live. It only says that when
+            # the answer is ALREADY ambiguous and nothing from the resource's own service is even a
+            # candidate, that is not evidence of a price being missed.
+            own = bool(any(code in guess for code, _m in hits))
+            return {"priced": False, "from_own_service": own,
+                    "reason": f"ambiguous: {len(hits)} on-demand SKUs match {sorted(sel.values())}"
+                              + ("" if own else ", none from the service that created it"),
                     "candidates": [m["usagetype"] for _c, m in hits[:6]]}
     return {"priced": False, "reason": f"no SKU carries {sorted(sel.values())}", "selectors": sel}
 
@@ -866,7 +880,7 @@ def run_rate_universal(run_token: str, capture_date: str, regions: Optional[List
                                       "usagetype": p["usagetype"], "sku": p["sku"]})
             else:
                 reason = str(p.get("reason") or "")
-                if reason.startswith("ambiguous"):
+                if reason.startswith("ambiguous") and p.get("from_own_service"):
                     # The disclosure HAS a price and we could not pin which: a real problem, and the
                     # number must not be published until it is settled.
                     unpriced.append(f"{part['kind']}[{part.get('part')}]@{part['region']}: {reason}")
@@ -876,7 +890,8 @@ def run_rate_universal(run_token: str, capture_date: str, regions: Optional[List
                     # groups, key pairs, IAM roles, subnets). Listed rather than counted, so a genuinely
                     # billable resource that failed to match is visible instead of silently absent, and
                     # so it does not make `ok` false on every run.
-                    no_sku.append(f"{part['src']}:{part['event']}@{part['region']}")
+                    no_sku.append(f"{part['src']}:{part['event'] or part['kind']}@{part['region']}"
+                                  + (f" ({reason})" if reason.startswith("ambiguous") else ""))
     if not comps and not resources:
         return {"ok": False, "error": f"no billable resource recorded for run token {run_token}",
                 "discovery": "cloudtrail", "unpriced_resources": unpriced}
