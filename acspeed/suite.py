@@ -69,6 +69,15 @@ class VerifyResult:
     ok: bool
     detail: str = ""
     measured: object = None
+    unverifiable: bool = False
+    """The runner COULD NOT PERFORM the read: no browser on the host, an endpoint shape it does not
+    recognise, an auth failure of its own. That is a statement about the INSTRUMENT, not about the
+    deployment, and scoring it as a failed checkpoint blames the cloud for the harness's blind spot.
+
+    Measured 2026-09-05 over 96 integrate checks in the tree: 7 failures were instrument-caused (4 lost
+    beacons, 2 "no headless browser available", 1 unrecognised pageview shape) against 4 genuine agent
+    failures (missing wiring, no site B url). In aws-medium-b every one of the 5 failures was
+    instrument-caused, which is 5 runs scored 3/5 for something the cloud did not do."""
 
 
 @dataclass

@@ -367,6 +367,10 @@ def _r4_wiring_present(ctx: OpContext) -> VerifyResult:
 _WIRING_POLL_MAX_S = 180.0
 _INGEST_POLL_MAX_S = 90.0
 _INGEST_POLL_INTERVAL_S = 5.0
+# How many times the sentinel visit is DRIVEN before giving up. One shot made the read a race against the
+# CLI browser's teardown (see _r5_visit_recorded). The total ingest budget is SHARED across attempts, so
+# this costs no extra wall clock on the happy path, which breaks out on attempt 1.
+_VISIT_ATTEMPTS = 3
 
 
 def _wiring_present_polled(ctx: OpContext, max_wait_s: Optional[float] = None,
@@ -396,7 +400,7 @@ def _r5_visit_recorded(ctx: OpContext) -> VerifyResult:
     path baseline, drive a REAL headless-browser visit to that path (the only visitor), require +1."""
     tok = _probe_token(ctx)
     if not tok:
-        return VerifyResult(False, "could not authenticate to umami to read pageviews")
+        return VerifyResult(False, "could not authenticate to umami to read pageviews", unverifiable=True)
     # authoritative website id = the one wired into the served page (R4). Fall back to a fuzzy lookup only
     # if the wiring read has not run yet (e.g. R5 called standalone in a reestablish before R4).
     wid = ctx.state.get("site_b_website_id")
@@ -415,25 +419,42 @@ def _r5_visit_recorded(ctx: OpContext) -> VerifyResult:
     if before is None:
         # a flaky/unrecognized baseline read must be UNCONFIRMED, never coerced to 0 (that would let a
         # stale post-restart count satisfy after>0 with no new visit landing - a false pass).
-        return VerifyResult(False, "umami sentinel-path pageview read returned an unrecognized shape (VALIDATE-LIVE)")
+        return VerifyResult(False, "umami sentinel-path pageview read returned an unrecognized shape (VALIDATE-LIVE)",
+                            unverifiable=True)
     visit_url = sb.rstrip("/") + path
-    ok_visit, engine = headless_visit(visit_url)
-    if not ok_visit:
-        if engine == "none":
-            return VerifyResult(False, "no headless browser available on the harness host "
-                                       "(install playwright or chromium); cannot verify the visit")
-        return VerifyResult(False, f"headless visit to the sentinel path failed ({engine})")
-    # umami ingest is asynchronous, and behind a CDN the wired page + beacon can lag; POLL the count until it
-    # rises above the baseline or the ingest window expires, rather than a single fixed sleep (a single 6s
-    # read failed a real aws CloudFront-fronted deploy whose pageview landed a bit later, cf. _INGEST_POLL_MAX_S).
-    deadline = time.monotonic() + _INGEST_POLL_MAX_S
-    time.sleep(min(_INGEST_POLL_INTERVAL_S, 6.0))
-    after = _pageview_count(ctx, tok, wid, path=path)
-    while (after is None or after <= before) and time.monotonic() < deadline:
-        time.sleep(_INGEST_POLL_INTERVAL_S)
+    # RETRY THE VISIT, do not just re-read the count. The CLI engine drives chromium with
+    # ``--virtual-time-budget`` + ``--screenshot``: virtual time advances while the page is idle and the
+    # browser EXITS when the budget expires, without waiting for in-flight requests. So whether umami's
+    # beacon actually leaves the wire is a race against real network latency. Measured over 96 integrate
+    # checks: playwright 12/12 passed, chromium-cli 80/84 (4.8% lost), and every one of the 4 losses read
+    # "0 -> 0" with the wiring confirmed present. Polling the COUNT (which is all this did before) can
+    # never recover a beacon that was never sent; only another visit can. The sentinel path is unique per
+    # run and the harness is its only visitor, so extra visits cannot inflate anything: the predicate is
+    # still "did the count rise at all".
+    after, engine = None, "none"
+    for attempt in range(_VISIT_ATTEMPTS):
+        ok_visit, engine = headless_visit(visit_url)
+        if not ok_visit:
+            if engine == "none":
+                return VerifyResult(False, "no headless browser available on the harness host "
+                                           "(install playwright or chromium); cannot verify the visit",
+                                    unverifiable=True)
+            return VerifyResult(False, f"headless visit to the sentinel path failed ({engine})",
+                                unverifiable=True)
+        # umami ingest is asynchronous, and behind a CDN the wired page + beacon can lag; POLL the count
+        # until it rises above the baseline or the ingest window expires (a single 6s read failed a real
+        # aws CloudFront-fronted deploy whose pageview landed a bit later, cf. _INGEST_POLL_MAX_S).
+        deadline = time.monotonic() + (_INGEST_POLL_MAX_S / _VISIT_ATTEMPTS)
+        time.sleep(min(_INGEST_POLL_INTERVAL_S, 6.0))
         after = _pageview_count(ctx, tok, wid, path=path)
+        while (after is None or after <= before) and time.monotonic() < deadline:
+            time.sleep(_INGEST_POLL_INTERVAL_S)
+            after = _pageview_count(ctx, tok, wid, path=path)
+        if after is not None and after > before:
+            break
     if after is None:
-        return VerifyResult(False, "umami sentinel-path pageview read returned an unrecognized shape (VALIDATE-LIVE)")
+        return VerifyResult(False, "umami sentinel-path pageview read returned an unrecognized shape "
+                                   "(VALIDATE-LIVE)", unverifiable=True)
     ok = after > before
     if ok:
         # record the surviving count + the exact path/id so the restart-durability read (R7) checks the
@@ -456,12 +477,13 @@ def _r7_pageview_persists(ctx: OpContext) -> VerifyResult:
     path = ctx.state.get("pageview_path")
     tok = _probe_token(ctx)
     if not tok:
-        return VerifyResult(False, "could not authenticate to umami to read pageviews")
+        return VerifyResult(False, "could not authenticate to umami to read pageviews", unverifiable=True)
     if not wid:
         return VerifyResult(False, "no umami website id recorded for site B")
     now = _pageview_count(ctx, tok, str(wid), path=path)
     if now is None:
-        return VerifyResult(False, "umami sentinel-path pageview read returned an unrecognized shape (VALIDATE-LIVE)")
+        return VerifyResult(False, "umami sentinel-path pageview read returned an unrecognized shape (VALIDATE-LIVE)",
+                            unverifiable=True)
     if floor is None:
         return VerifyResult(now >= 1, f"sentinel-path pageview count {now} (no floor recorded)")
     ok = now >= floor
