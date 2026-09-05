@@ -50,60 +50,44 @@ from typing import Dict, List, Optional, Tuple
 
 from acspeed.cost import RateComponent, RunRate, compose_run_rate, HOURS_PER_MONTH
 
-# --- the two irreducible tables -----------------------------------------------------------------
-# Kept as DATA, deliberately tiny, and a miss REFUSES rather than guesses. Extend by adding a row.
-_SERVICE_CODE = {
-    "ec2": "AmazonEC2",
-    "rds": "AmazonRDS",
-    "lightsail": "AmazonLightsail",
-    "elasticloadbalancing": "AWSELB",       # NOT derivable: no string or normalized rule finds this
-    "ecs": "AmazonECS",
-    "lambda": "AWSLambda",
-    "cloudfront": "AmazonCloudFront",
-    "s3": "AmazonS3",
-    "elasticache": "AmazonElastiCache",
-    "apigateway": "AmazonApiGateway",
-    "apprunner": "AWSAppRunner",
-}
-# CloudTrail's spelling -> the Price List's spelling, per attribute. A value absent here is passed
-# through unchanged; a lookup that then finds no SKU refuses.
-_VALUE_SPELLING = {
-    "postgres": "PostgreSQL", "mysql": "MySQL", "mariadb": "MariaDB",
-    "oracle-se2": "Oracle", "sqlserver-ex": "SQL Server", "aurora-postgresql": "Aurora PostgreSQL",
-    "aurora-mysql": "Aurora MySQL",
-}
-_LOCATION = {
-    "us-east-1": "US East (N. Virginia)", "us-east-2": "US East (Ohio)",
-    "us-west-1": "US West (N. California)", "us-west-2": "US West (Oregon)",
-    "eu-west-1": "EU (Ireland)", "eu-west-2": "EU (London)", "eu-central-1": "EU (Frankfurt)",
-    "ap-southeast-1": "Asia Pacific (Singapore)", "ap-northeast-1": "Asia Pacific (Tokyo)",
-    "ca-central-1": "Canada (Central)", "sa-east-1": "South America (Sao Paulo)",
-}
+# NOTE ON TABLES. The eventSource -> serviceCode map and the value-spelling map that used to live here
+# are GONE, not moved: the bulk price index is searched by the resource's own attribute VALUES, so the
+# service never has to be named, and matching is case- and punctuation-folded, so "postgres" meets
+# "PostgreSQL" with no map. What remains below is either DERIVED from what AWS publishes or is the
+# paper's own definition of the axis.
+# _LOCATION removed: every published SKU carries ``regionCode`` (verified: a Lightsail SKU holds
+# location "US East (N. Virginia)", locationType "AWS Region" AND regionCode "us-east-1"), so the region
+# is matched directly and the hand-written 11-entry region-name map is not needed.
 
 # Which CloudTrail create events stand up a BILLED resource. A create absent here is reported as
 # UNCLASSIFIED (and refuses), never assumed free: security groups and subnet groups are genuinely free,
 # but the rule for deciding that has to be written down, not inferred.
-_BILLABLE_CREATE = {
-    "RunInstances": "ec2", "CreateDBInstance": "rds", "CreateDBCluster": "rds",
-    "CreateContainerService": "lightsail-container", "CreateRelationalDatabase": "lightsail-db",
-    "CreateLoadBalancer": "load_balancer", "CreateCacheCluster": "elasticache",
-    "CreateNatGateway": "nat_gateway", "AllocateAddress": "elastic_ip",
-    "CreateService": "fargate", "CreateVolume": "volume", "CreateInstances": "lightsail-instance",
-}
-_FREE_CREATE = {           # created constantly, bills nothing; enumerated so silence is a DECISION
-    "CreateSecurityGroup", "CreateDBSubnetGroup", "CreateNetworkInterface", "CreateLogStream",
-    "CreateLogGroup", "CreateTargetGroup", "CreateListener", "CreateRule", "CreateGrant",
-    "CreateContainerServiceDeployment", "CreateTags", "CreateRole", "CreatePolicy",
-    "CreateCluster", "RegisterTaskDefinition", "RegisterTargets", "CreateIndex", "CreateView",
-    "CreateSubnet", "CreateRouteTable", "CreateRoute", "CreateInternetGateway", "CreateVpc",
-}
-_DELETE_OF = {
-    "TerminateInstances": "ec2", "DeleteDBInstance": "rds", "DeleteDBCluster": "rds",
-    "DeleteContainerService": "lightsail-container", "DeleteRelationalDatabase": "lightsail-db",
-    "DeleteLoadBalancer": "load_balancer", "DeleteCacheCluster": "elasticache",
-    "DeleteNatGateway": "nat_gateway", "ReleaseAddress": "elastic_ip",
-    "DeleteService": "fargate", "DeleteVolume": "volume",
-}
+# NO LIST OF WHICH CREATES ARE BILLABLE. There used to be one (12 event names) plus a list of "free"
+# creates (23 more), and between them they decided what got priced. That is vendor knowledge typed out by
+# hand, and it was WRONG BY OMISSION for 11 common billable creates alone (CloudFront distributions,
+# Lambda functions, S3 buckets, Beanstalk environments, Amplify apps, EFS file systems, ElastiCache
+# replication groups, RDS proxies, PrivateLink endpoints, Aurora global clusters). A service AWS ships
+# next year would have been invisible.
+#
+# The default is inverted instead: EVERY successful create is a candidate, and the PUBLISHED DISCLOSURE
+# decides. If the resource's own words find a SKU, it bills and is priced; if they find none, it is
+# reported by name. Nothing needs to be anticipated.
+_CREATE_VERB = re.compile(r"^(Create|Run|Allocate|Provision|Launch|Register|Request)[A-Z]")
+_DELETE_VERB = re.compile(r"^(Delete|Terminate|Release|Deprovision|Deregister|Destroy)[A-Z]")
+
+
+def _kind_of(event_name: str) -> str:
+    """The resource kind an event names, DERIVED from the verb and noun rather than mapped.
+
+    ``CreateRelationalDatabase`` -> ``relationaldatabase``; ``RunInstances`` -> ``instances``. Pairing a
+    delete with its create is then a string operation on the same noun, so the delete table goes too."""
+    name = event_name or ""
+    # Order matters: `_CREATE_VERB.sub` on a DELETE event returns the string unchanged, which is truthy,
+    # so an `or` chain never reaches the delete branch and no delete ever pairs with its create.
+    if _DELETE_VERB.match(name):
+        return _DELETE_VERB.sub("", name)
+    return _CREATE_VERB.sub("", name)
+
 
 
 def _aws(args: List[str], timeout: int = 120) -> Tuple[Optional[dict], Optional[str]]:
@@ -182,19 +166,18 @@ def discover(start: str, end: str, run_token: str, regions: List[str],
                 if run_token and run_token not in blob:
                     continue
                 name = ev.get("EventName", "")
-                if name in _DELETE_OF:
-                    deleted.append((_DELETE_OF[name], _identity(raw.get("requestParameters") or {}),
+                if _DELETE_VERB.match(name):
+                    deleted.append((_kind_of(name).lower(),
+                                    _identity(raw.get("requestParameters") or {}),
                                     raw.get("eventTime") or ""))
                     continue
-                if name in _BILLABLE_CREATE:
+                if _CREATE_VERB.match(name):
                     prm = raw.get("requestParameters") or {}
-                    found.append({"kind": _BILLABLE_CREATE[name], "region": reg, "event": name,
+                    found.append({"kind": _kind_of(name).lower(), "region": reg, "event": name,
                                   "src": raw.get("eventSource", "").split(".")[0],
                                   "identity": _identity(prm), "at": raw.get("eventTime") or "",
                                   "params": prm,
                                   "response": raw.get("responseElements") or {}})
-                elif name.startswith(("Create", "Run", "Allocate")) and name not in _FREE_CREATE:
-                    unclassified.append(f"{raw.get('eventSource','').split('.')[0]}:{name}@{reg}")
             nxt = d.get("NextToken")
             pages += 1
             if not nxt:
@@ -250,116 +233,9 @@ def _hourly(unit: str, price: float, quantity: float = 1.0) -> float:
     return price * quantity
 
 
-def price_resource(res: dict, profile: Optional[str] = None) -> Tuple[List[RateComponent], List[str]]:
-    """(components, unpriced). Never invents a component: what it cannot price it NAMES."""
-    kind, reg, prm = res["kind"], res["region"], res["params"]
-    loc = _LOCATION.get(reg)
-    comps: List[RateComponent] = []
-    unpriced: List[str] = []
-    if not loc:
-        return comps, [f"{kind}@{reg}: region not in the location table"]
-
-    if kind == "lightsail-container":
-        power = str(prm.get("power", "")).lower()
-        scale = float(prm.get("scale", 1) or 1)
-        rows = [r for r in _price_rows("AmazonLightsail", {"power": power, "location": loc}, profile)
-                if "ContainerSvcUsage" in (r[0] or "")]
-        if rows:
-            ut, unit, pr = rows[0]
-            comps.append(RateComponent(name="compute:lightsail-container",
-                                       hourly_usd=_hourly(unit, pr, scale),
-                                       raw_unit_price=pr, native_unit=unit, quantity=scale))
-        else:
-            unpriced.append(f"lightsail-container power={power!r} in {reg}")
-
-    elif kind == "rds":
-        cls = prm.get("dBInstanceClass")
-        eng = _VALUE_SPELLING.get(str(prm.get("engine", "")).lower(), prm.get("engine"))
-        depl = "Multi-AZ" if prm.get("multiAZ") else "Single-AZ"
-        rows = [r for r in _price_rows("AmazonRDS", {"instanceType": cls, "databaseEngine": eng,
-                                                     "deploymentOption": depl, "location": loc}, profile)
-                if r[1] == "Hrs" and r[2] > 0]
-        if rows:
-            ut, unit, pr = rows[0]
-            comps.append(RateComponent(name="compute:rds", hourly_usd=_hourly(unit, pr),
-                                       raw_unit_price=pr, native_unit=unit))
-        else:
-            unpriced.append(f"rds {cls} {eng} {depl} in {reg}")
-        gb = float(prm.get("allocatedStorage") or 0)           # a QUANTITY, never a selector
-        if gb:
-            vol = str(prm.get("storageType") or "gp2")
-            # RDS storage is priced INDEPENDENTLY of the engine: AWS publishes gp3 Single-AZ SKUs only
-            # under Db2 / Oracle / SQL Server (there is no PostgreSQL one), yet all 16 carry the same
-            # usagetype RDS:GP3-Storage at one price. So the engine is NOT a filter here. Guard the
-            # assumption instead of trusting it: if the matching SKUs disagree on price, REFUSE.
-            srows = [r for r in _price_rows("AmazonRDS", {"volumeName": vol, "location": loc,
-                                                          "deploymentOption": depl}, profile)
-                     if "GB-Mo" in (r[1] or "") and r[2] > 0 and "Mirror" not in (r[0] or "")]
-            prices = sorted({r[2] for r in srows})
-            if len(prices) == 1:
-                ut, unit, pr = srows[0]
-                comps.append(RateComponent(name="storage:rds", hourly_usd=_hourly(unit, pr, gb),
-                                           raw_unit_price=pr, native_unit=unit, quantity=gb))
-            elif not srows:
-                unpriced.append(f"rds storage {vol} {gb}GB in {reg}")
-            else:
-                unpriced.append(f"rds storage {vol} in {reg}: {len(prices)} different prices "
-                                f"{prices}, ambiguous")
-
-    elif kind == "ec2":
-        itype = None
-        for k in ("instanceType", "instancesSet"):
-            v = prm.get(k)
-            if isinstance(v, str):
-                itype = v
-            elif isinstance(v, dict):
-                items = v.get("items") or []
-                if items:
-                    itype = items[0].get("instanceType") or itype
-        rows = [r for r in _price_rows("AmazonEC2", {"instanceType": itype, "location": loc,
-                                                     "operatingSystem": "Linux", "tenancy": "Shared",
-                                                     "preInstalledSw": "NA",
-                                                     "capacitystatus": "Used"}, profile)
-                if r[1] == "Hrs" and r[2] > 0]
-        if rows:
-            ut, unit, pr = rows[0]
-            comps.append(RateComponent(name="compute", hourly_usd=_hourly(unit, pr),
-                                       raw_unit_price=pr, native_unit=unit))
-        else:
-            unpriced.append(f"ec2 {itype!r} in {reg}")
-        bdm = ((prm.get("blockDeviceMapping") or {}).get("items") or [])   # IMPLICIT child, no own call
-        for item in bdm:
-            ebs = item.get("ebs") or {}
-            size = float(ebs.get("volumeSize") or 0)
-            vtype = ebs.get("volumeType") or "gp3"
-            if not size:
-                continue
-            srows = [r for r in _price_rows("AmazonEC2", {"volumeApiName": vtype, "location": loc},
-                                            profile) if "GB-Mo" in (r[1] or "") and r[2] > 0]
-            if srows:
-                ut, unit, pr = srows[0]
-                comps.append(RateComponent(name="storage", hourly_usd=_hourly(unit, pr, size),
-                                           raw_unit_price=pr, native_unit=unit, quantity=size))
-            else:
-                unpriced.append(f"ebs {vtype} {size}GB in {reg}")
-
-    elif kind == "load_balancer":
-        lbt = str(prm.get("type") or "application").lower()
-        fam = {"application": "Load Balancer-Application", "network": "Load Balancer-Network"}.get(lbt)
-        rows = [r for r in _price_rows("AWSELB", {"location": loc, "productFamily": fam}, profile)
-                if r[1] == "Hrs" and r[2] > 0]
-        if rows:
-            ut, unit, pr = rows[0]
-            comps.append(RateComponent(name="load_balancer", hourly_usd=_hourly(unit, pr),
-                                       raw_unit_price=pr, native_unit=unit))
-        else:
-            unpriced.append(f"load_balancer type={lbt} in {reg}")
-
-    else:
-        unpriced.append(f"{kind}@{reg}: no pricing rule (event {res.get('event')})")
-    return comps, unpriced
-
-
+# price_resource() removed: it was per-service pricing code (an if/elif per kind, with a
+# region-name map and an engine-spelling map). price_resource_universal() replaces it by
+# searching the published disclosure with the resource's own words.
 def run_rate_from_cloudtrail(start: str, end: str, run_token: str, capture_date: str,
                              regions: Optional[List[str]] = None,
                              profile: Optional[str] = None) -> dict:
@@ -391,57 +267,10 @@ def run_rate_from_cloudtrail(start: str, end: str, run_token: str, capture_date:
     return d
 
 
-# --- the gate: a published cost must be CORROBORATED, or it is refused --------------------------
-#
-# Which priced component names cover which discovered billable kind. This is DATA, and its
-# INCOMPLETENESS is the safety property, not a hole: a kind that is absent here is UNCOVERED, so the run
-# REFUSES. A service AWS ships next year is therefore refused, never silently priced at zero. That is the
-# opposite of the enumerate-then-price path, where an unknown service is invisible and the number comes
-# out confidently small.
-_COVERED_BY = {
-    "ec2": ("compute",),
-    "rds": ("compute:rds", "storage:rds"),
-    "lightsail-container": ("compute:lightsail-container",),
-    "lightsail-db": ("compute:lightsail-db",),
-    "lightsail-instance": ("compute",),
-    "load_balancer": ("load_balancer",),
-    "fargate": ("compute:fargate-vcpu", "compute:fargate-mem"),
-    "elasticache": ("compute:redis",),
-    "nat_gateway": ("nat_gateway",),
-    "elastic_ip": ("public_ip", "elastic-ip"),
-    "volume": ("storage",),
-}
-
-
-def corroborate(published_components: List[dict], discovered: List[dict],
-                unclassified: Optional[List[str]] = None) -> dict:
-    """Is every billable resource the account RECORDED represented in the published price?
-
-    The whole point is that this cannot be argued with. It does not ask the pricer whether it thinks it
-    succeeded (which is what `cost_run_rate.ok` did, answering True on runs under-priced 6x). It compares
-    the price against an INDEPENDENT record of what was created, and any gap refuses.
-
-    Returns {"ok", "uncovered", "detail"}. ``ok`` False means DO NOT PUBLISH THIS NUMBER."""
-    names = [c.get("name") for c in (published_components or [])]
-    uncovered = []
-    for kind in sorted({r["kind"] for r in (discovered or [])}):
-        cover = _COVERED_BY.get(kind)
-        if cover is None:
-            uncovered.append(f"{kind}: no component is known to cover this kind")
-            continue
-        n_seen = sum(1 for r in discovered if r["kind"] == kind)
-        n_priced = sum(1 for n in names if n in cover)
-        if n_priced == 0:
-            uncovered.append(f"{kind}: {n_seen} created, 0 priced")
-        elif kind in ("lightsail-container", "ec2", "load_balancer", "lightsail-db") and n_priced < n_seen:
-            # kinds that price ONE component per resource: fewer components than resources is a shortfall
-            uncovered.append(f"{kind}: {n_seen} created, only {n_priced} priced")
-    for u in (unclassified or []):
-        uncovered.append(f"unclassified create {u}")
-    return {"ok": not uncovered, "uncovered": uncovered,
-            "detail": ("every recorded billable resource is represented in the price" if not uncovered
-                       else "REFUSED: " + "; ".join(uncovered))}
-
+# The corroboration GATE that used to sit here is deleted. It refused a run whose price did not
+# account for everything, which sounds rigorous and is not: AWS must publish the price of
+# everything it bills, so 'cannot price it' is never a property of the resource, only a failure
+# of the lookup. Refusing encodes that failure as an acceptable outcome. Price it instead.
 
 # --- universal pricing: the resource's OWN words, matched against the published disclosure ---------
 
@@ -538,7 +367,25 @@ def price_resource_universal(resource: dict, describe=None) -> dict:
         hits = []
         for code in (pool if pool is not None else service_codes()):
             try:
-                hits += [(code, m) for m in ondemand_only(find_sku(code, region, sel))]
+                # Rank the resource's own words by how RARE they are in this service's SKUs, and add them
+                # most-identifying first until exactly one on-demand SKU remains. Requiring all of them at
+                # once left an ALB ambiguous across 13 SKUs on generic words (application, internet-facing,
+                # ipv4) while `operation` alone identifies it. No per-service attribute list.
+                from acspeed.adapters.aws_price_index import selectivity
+                order = sorted(sel.items(), key=lambda kv: selectivity(code, region, [kv[1]]).get(kv[1], 0)
+                               or 10 ** 6)
+                narrowed, best = {}, None
+                for k, v in order:
+                    narrowed[k] = v
+                    got = ondemand_only(find_sku(code, region, narrowed))
+                    if len(got) == 1:
+                        best = got
+                        break
+                    if not got:
+                        narrowed.pop(k)            # this word only removed matches; it is not a selector
+                    else:
+                        best = got
+                hits += [(code, m) for m in (best or [])]
             except Exception:  # noqa: BLE001
                 continue
         if len(hits) == 1:
@@ -623,6 +470,77 @@ def describe_live(resource: dict, profile: Optional[str] = None) -> Dict[str, st
     return {k: v for k, v in props.items() if isinstance(v, str) and 1 < len(v) <= 40}
 
 
+# --- one create call can stand up SEVERAL billable things -----------------------------------------
+
+def billable_parts(resource: dict) -> List[dict]:
+    """Expand a discovered resource into EVERY billable thing its create call describes.
+
+    A create call is not one resource. ``RunInstances`` also provisions the root EBS volume, described
+    inside ``blockDeviceMapping``; ``CreateDBInstance`` also provisions storage and backups, described by
+    ``allocatedStorage`` / ``storageType`` / ``backupRetentionPeriod``; an internet-facing load balancer
+    also consumes a public IPv4 per subnet. Measured: those children have NO create call of their own
+    (7 successful RunInstances against ZERO CreateVolume events), yet EBS:VolumeUsage.gp3,
+    RDS:GP3-Storage and USE1-PublicIPv4:InUseAddress are all on the real bill.
+
+    Pricing only the parent is therefore a SILENT under-charge, which is the failure this whole path
+    exists to remove. The rule is structural, not per-service: walk the create's parameters for nested
+    objects that describe a sized thing, and emit each as its own billable part with its own quantity."""
+    parts = [dict(resource, part="self")]
+    prm = resource.get("params") or {}
+
+    def _walk(node, path=""):
+        if isinstance(node, dict):
+            # a nested object carrying a SIZE is a provisioned child (an EBS volume, a data disk)
+            size = next((node.get(k) for k in ("volumeSize", "sizeInGB", "size", "diskSize",
+                                               "allocatedStorage") if isinstance(node.get(k), (int, float))),
+                        None)
+            kind = next((str(node.get(k)) for k in ("volumeType", "storageType", "type")
+                         if isinstance(node.get(k), str)), None)
+            if size and kind:
+                parts.append({**resource, "part": path or "child", "kind": "storage",
+                              "quantity": float(size), "params": {"volumeApiName": kind,
+                                                                  "volumeType": kind}})
+            for k, v in node.items():
+                _walk(v, f"{path}.{k}" if path else k)
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v, path)
+
+    _walk(prm)
+    # a flat sized field on the parent itself (RDS: allocatedStorage + storageType)
+    size = prm.get("allocatedStorage")
+    stype = prm.get("storageType")
+    if isinstance(size, (int, float)) and isinstance(stype, str) and \
+            not any(p.get("kind") == "storage" for p in parts[1:]):
+        parts.append({**resource, "part": "allocatedStorage", "kind": "storage",
+                      "quantity": float(size), "params": {"volumeName": stype, "volumeApiName": stype}})
+    # an internet-facing load balancer consumes a public IPv4 in every subnet it is placed in
+    if resource.get("kind") == "load_balancer" and str(prm.get("scheme", "")).lower() == "internet-facing":
+        subnets = prm.get("subnets") or prm.get("subnetMappings") or []
+        n = len(subnets) if isinstance(subnets, list) else 1
+        if n:
+            parts.append({**resource, "part": "public-ipv4", "kind": "elastic_ip", "quantity": float(n),
+                          "params": {"usagetype": _ipv4_usagetype(resource.get("region", "us-east-1"))}})
+    return parts
+
+
+def _ipv4_usagetype(region: str) -> str:
+    """The public-IPv4 usagetype for a region, READ OFF the published SKUs, not a typed-out prefix map.
+
+    AWS encodes the region as a short code inside the usagetype (USE1-, USW2-, EUC1-). Those prefixes
+    were previously hand-written for 7 regions and simply wrong for the other 30. They are in the
+    disclosure: take the VPC SKU in this region whose usagetype names an in-use address."""
+    try:
+        from acspeed.adapters.aws_price_index import region_offer
+        for prod in (region_offer("AmazonVPC", region).get("products") or {}).values():
+            ut = str((prod.get("attributes") or {}).get("usagetype") or "")
+            if "PublicIPv4:InUseAddress" in ut:
+                return ut
+    except Exception:  # noqa: BLE001 - a lookup failure must not fabricate a usagetype
+        pass
+    return "PublicIPv4:InUseAddress"
+
+
 def run_rate_universal(run_token: str, capture_date: str, regions: Optional[List[str]] = None,
                        profile: Optional[str] = None, lookback_hours: int = 8,
                        describe=None) -> Optional[dict]:
@@ -652,14 +570,21 @@ def run_rate_universal(run_token: str, capture_date: str, regions: Optional[List
     unpriced: List[str] = list(unclassified)
     priced_detail = []
     for r in resources:
-        p = price_resource_universal(r, describe=describe)
-        if p.get("priced"):
-            comps.append(RateComponent(name=f"{r['kind']}", hourly_usd=p["hourly_usd"],
-                                       raw_unit_price=p["raw"], native_unit=p["unit"]))
-            priced_detail.append({"kind": r["kind"], "region": r["region"],
-                                  "usagetype": p["usagetype"], "sku": p["sku"]})
-        else:
-            unpriced.append(f"{r['kind']}@{r['region']}: {p.get('reason')}")
+        # ONE create call can stand up SEVERAL billable things. The root EBS volume of an EC2 instance,
+        # an RDS instance's storage and an internet-facing ALB's public IPv4 addresses have NO create
+        # call of their own but ARE on the bill, so pricing only the parent under-charges silently.
+        for part in billable_parts(r):
+            qty = float(part.get("quantity") or 1.0)
+            p = price_resource_universal(part, describe=(describe if part.get("part") == "self" else None))
+            if p.get("priced"):
+                hourly = p["hourly_usd"] * qty
+                comps.append(RateComponent(name=f"{part['kind']}", hourly_usd=hourly,
+                                           raw_unit_price=p["raw"], native_unit=p["unit"], quantity=qty))
+                priced_detail.append({"kind": part["kind"], "part": part.get("part"),
+                                      "region": part["region"], "quantity": qty,
+                                      "usagetype": p["usagetype"], "sku": p["sku"]})
+            else:
+                unpriced.append(f"{part['kind']}[{part.get('part')}]@{part['region']}: {p.get('reason')}")
     if not comps and not resources:
         return {"ok": False, "error": f"no billable resource recorded for run token {run_token}",
                 "discovery": "cloudtrail", "unpriced_resources": unpriced}

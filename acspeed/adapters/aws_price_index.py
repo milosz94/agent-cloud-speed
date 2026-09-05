@@ -193,3 +193,24 @@ def ondemand_only(matches: List[dict], platform: str = "Linux",
             continue
         out.append(m)
     return out
+
+
+def selectivity(service_code: str, region: str, values: List[str]) -> Dict[str, int]:
+    """How many SKUs each candidate value appears in. Fewer = more identifying.
+
+    A create call describes a resource in words of wildly different information content. Measured on
+    aws-medium-b run16: an ALB's create carries ``type=application``, ``scheme=internet-facing`` and
+    ``ipAddressType=ipv4``, and requiring all three still left THIRTEEN on-demand SKUs, so the resource
+    came out UNPRICED as ambiguous. ``operation=LoadBalancing:Application`` identifies it alone.
+
+    Ranking by selectivity is the service-independent way to tell an identifying term from a generic one:
+    no list of which attributes matter per service, just how rare each value is in that service's own
+    published SKUs."""
+    offer = region_offer(service_code, region)
+    counts = {v: 0 for v in values}
+    for prod in (offer.get("products") or {}).values():
+        vals = {_norm(x) for x in (prod.get("attributes") or {}).values()}
+        for v in values:
+            if _norm(v) in vals:
+                counts[v] += 1
+    return counts
