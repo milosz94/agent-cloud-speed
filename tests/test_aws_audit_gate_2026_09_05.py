@@ -153,5 +153,27 @@ class TestProbeIsNotAProvision(unittest.TestCase):
                          "one observed instance against one priced compute is not a shortfall")
 
 
+class TestIdentifiersAreCountedFromPlainText(unittest.TestCase):
+    """ONE load balancer named twice must count as ONE, whatever its position on the line.
+
+    The first cut of this read the result via ``json.dumps``, which renders a newline as the two
+    characters backslash + n. ``\\b`` then matches between them and the capture eats the 'n', so the
+    SAME host yields ``umami-x-1`` when it appears mid-line and ``numami-x-1`` when it starts a line.
+    Both land in the identity set, so one resource counts as two. That is what made aws-medium-b run08
+    report three load balancers from two. The whole shortfall verdict rests on these counts, so an
+    inflated count is a false under-price accusation."""
+
+    def test_the_same_host_at_line_start_and_mid_line_is_one_resource(self):
+        host = "umami-acs1-2103432357.us-east-1.elb.amazonaws.com"
+        body = f"created lb {host} ok\n{host}\n"          # same host, mid-line then line-start
+        t = _transcript([("Bash", "command", "aws elbv2 create-load-balancer --name x", T0, body)])
+        try:
+            ident = observed_identities(t, "acs1", 600.0)
+        finally:
+            os.unlink(t)
+        self.assertEqual(ident["load_balancer"], {"umami-acs1-2103432357"},
+                         f"one host must yield one identity, got {ident['load_balancer']}")
+
+
 if __name__ == "__main__":
     unittest.main()

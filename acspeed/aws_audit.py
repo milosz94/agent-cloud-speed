@@ -134,6 +134,26 @@ _IDENT = {
 }
 
 
+def _result_text(content) -> str:
+    """The tool result as PLAIN text. Never ``json.dumps``: that renders a newline as the two characters
+    backslash + n, and ``\\b`` then matches between them, so an identifier that starts a line is captured
+    with a leading 'n' and counted as a SECOND distinct resource ('umami-x-1' -> 'numami-x-1'). Two ALBs
+    read as three, and under a re-price-on-mismatch policy that spurious count would trigger a re-price."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        out = []
+        for c in content:
+            if isinstance(c, dict):
+                out.append(str(c.get("text") or c.get("content") or ""))
+            else:
+                out.append(str(c))
+        return "\n".join(out)
+    if isinstance(content, dict):
+        return str(content.get("text") or content.get("content") or content)
+    return str(content or "")
+
+
 def observed_identities(transcript_path: str, run_token: str, wall_s: Optional[float] = None) -> Dict[str, set]:
     """kind -> the DISTINCT resource identities the deploy turn's tool RESULTS prove existed. Scoped to
     identities carrying this run's token so a stale workdir log from a PRIOR run cannot inflate the count."""
@@ -165,7 +185,7 @@ def observed_identities(transcript_path: str, run_token: str, wall_s: Optional[f
             for b in content:
                 if not (isinstance(b, dict) and b.get("type") == "tool_result"):
                     continue
-                text = json.dumps(b.get("content"))
+                text = _result_text(b.get("content"))
                 for kind, pat in _IDENT.items():
                     for m in pat.finditer(text):
                         ident = m.group(1) if m.groups() else m.group(0)
