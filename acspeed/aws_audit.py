@@ -196,6 +196,21 @@ def observed_identities(transcript_path: str, run_token: str, wall_s: Optional[f
     return out
 
 
+def _deploy_turn_s(rec: dict) -> Optional[float]:
+    """Seconds from t0 to the END of the deploy turn, which is the window the cost snapshot closes over.
+
+    ``serving.agent_finished_at_s`` is the poller's OWN clock and is authoritative. ``agent_wall_s`` is
+    ``lane_summary.wall_s``, derived from the transcript, and it can be far short of the real span when
+    the lane analysis sees only part of the session: on aws-medium-b run20 it reported 287.7s against a
+    true 3303.7s, an 11.5x truncation. It agreed to within 2% on all 15 earlier runs, which is exactly
+    why keying on it looked safe and would have silently truncated the next run's window."""
+    s = (rec.get("serving") or {}).get("agent_finished_at_s")
+    if isinstance(s, (int, float)) and s > 0:
+        return float(s)
+    w = rec.get("agent_wall_s")
+    return float(w) if isinstance(w, (int, float)) and w > 0 else None
+
+
 def _result_failed(text: str, is_error: bool) -> bool:
     if is_error:                                          # the harness's own tool-failure flag
         return True
@@ -351,7 +366,7 @@ def audit_run(run_json_path: str, transcript_path: Optional[str] = None) -> dict
         result.update(built={}, priced={}, missing=[], underpriced=False, note="no transcript recorded")
         return result
     try:
-        built, deleted = _scan_ops(tpath, d.get("agent_wall_s"))
+        built, deleted = _scan_ops(tpath, _deploy_turn_s(d))
     except OSError as e:
         result.update(built={}, priced={}, missing=[], underpriced=False, note=f"transcript unreadable: {e}")
         return result
