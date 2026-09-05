@@ -27,7 +27,7 @@ serial sum, disclosed does not, which is what makes the A-vs-B comparison honest
 
 - [aws-easy](aws/aws-easy/) - n=10
 - [aws-medium-a](aws/aws-medium-a/) - n=7 fair (excluded, see DATA-DEFECTS: 7/9/10 unpriced standing EC2)
-- [aws-medium-b](aws/aws-medium-b/) - n=5 fair (excluded, see DATA-DEFECTS: 1/2/4/7 first-poll 404 Lightsail edge; 11/12/14 unpriced billable resource; 9/10 Lightsail second container unpriced)
+- [aws-medium-b](aws/aws-medium-b/) - n=7 fair of 19 attempted (every exclusion is stated in the cell's own README; 15/17/19 are a live, unfixed single-region Lightsail pricing defect)
 
 ### [gcp/](gcp/)
 
