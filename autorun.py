@@ -2255,7 +2255,22 @@ def main() -> None:
                  "or a NON-snap chrome (a snap chromium is confined and cannot render). Install one for THIS "
                  "python and re-run:\n    pip install playwright && python3 -m playwright install chromium")
             sys.exit(2)
-        _log(f"PREFLIGHT: headless browser OK (engine={_eng_b}); the integration visit can be driven.")
+        if _eng_b == "playwright":
+            _log(f"PREFLIGHT: headless browser OK (engine={_eng_b}); the integration visit can be driven.")
+        else:
+            # A DEGRADED engine is not "OK". Measured 2026-09-05 over 96 integrate checks in the results
+            # tree: playwright 12/12 passed, chromium-cli 80/84 (4 lost beacons, all in aws-medium-b).
+            # Playwright waits for the network to settle; the CLI drives chromium with
+            # --virtual-time-budget + --screenshot and exits on the budget. The fallback is SILENT, and
+            # that is how the ENTIRE production dataset (every aws/gcp/azure/redu medium run) came to be
+            # collected on the weaker engine: `acspeed-run` is a pipx console script whose interpreter
+            # had no playwright, so _visit_playwright returned None on every run and nobody noticed
+            # because this line said OK. Say it loudly instead.
+            _log(f"PREFLIGHT WARNING: headless engine is '{_eng_b}', NOT playwright. Measured loss rate "
+                 "4.8% vs 0% for playwright, so a passing deploy can still fail the integration read "
+                 "for an instrument reason. Install playwright FOR THE INTERPRETER RUNNING THIS "
+                 f"({sys.executable}):\n    {sys.executable} -m pip install playwright && "
+                 f"{sys.executable} -m playwright install chromium")
 
     start = a.start if a.start is not None else _next_run_index(prof["out_dir"])
     if a.start is None and start > 1:
