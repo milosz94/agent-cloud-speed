@@ -111,3 +111,34 @@ class TestInstrumentFailureIsNotACloudFailure(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEvidenceIsPersisted(unittest.TestCase):
+    """The verify's structured reading must reach the run record, not just its prose.
+
+    Every integrate failure in aws-medium-b recorded `measured={"before":..,"after":..,"website_id":..,
+    "path":..,"engine":..}` at check time, and `_op_row` dropped it. Only the sentence survived. That is
+    why four separate hypotheses about those failures could be argued and none tested: the numbers that
+    would have settled it were computed and discarded."""
+
+    def test_op_row_carries_measured_and_unverifiable(self):
+        from acspeed.suite import TierRun
+
+        class _Op:
+            op_id, op_type, durable = "integrate", "OPERATE_MUTATE", False
+
+        class _Outcome:
+            op = _Op()
+            verify = VerifyResult(False, "0 -> 0",
+                                  measured={"before": 0, "after": 0, "website_id": "w-1",
+                                            "path": "/acspeed-sentinel-abcd", "engine": "chromium-cli"},
+                                  unverifiable=False)
+            agent = {}
+            started_at = 1.0
+            verified_at = 2.0
+
+        row = TierRun._op_row(TierRun, _Outcome())          # unbound: _op_row uses only its argument
+        self.assertEqual(row["verify_measured"]["after"], 0)
+        self.assertEqual(row["verify_measured"]["engine"], "chromium-cli")
+        self.assertEqual(row["verify_measured"]["path"], "/acspeed-sentinel-abcd")
+        self.assertIn("verify_unverifiable", row)

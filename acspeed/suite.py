@@ -326,6 +326,16 @@ class TierRun:
             "durable": o.op.durable,
             "verify_ok": o.verify.ok,
             "verify_detail": o.verify.detail,
+            # PERSIST THE EVIDENCE, not just the prose. Every verify predicate already returns its
+            # structured reading (the integrate read returns before/after/website_id/path/engine), and
+            # dropping it here is why the aws-medium-b integrate failures survived four rounds of
+            # hypothesis-and-retract with nothing to test against: the numbers existed at check time and
+            # were discarded. `detail` is a sentence for a human; `measured` is what a later question can
+            # actually be asked of.
+            "verify_measured": o.verify.measured,
+            # An instrument failure ("no browser on the host", an unrecognised response shape) is a
+            # statement about the RUNNER, not the deployment. Recorded so it can be told apart later.
+            "verify_unverifiable": getattr(o.verify, "unverifiable", False),
             "agent_error": bool(o.agent.get("is_error")),
             "agent_session": o.agent.get("session_id"),
             "agent_cost_usd": o.agent.get("total_cost_usd"),
