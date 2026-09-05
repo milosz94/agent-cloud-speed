@@ -113,5 +113,48 @@ class TestLightsailPricesCoProvisionedBackend(unittest.TestCase):
         self.assertEqual([c.name for c in rr.components], ["compute:lightsail-container"])
 
 
+def _two_container_mcp(cli):
+    # a medium-b Lightsail deploy: TWO container services (site A + site B), both carrying the run token
+    if "get-container-services" in cli:
+        return {"containerServices": [
+            {"containerServiceName": "umami-acsd16c075c", "power": "medium", "powerId": "medium-1",
+             "scale": 1, "state": "RUNNING", "url": _LS_URL + "/"},
+            {"containerServiceName": "alcove-acsd16c075c", "power": "small", "powerId": "small-1",
+             "scale": 1, "state": "RUNNING",
+             "url": "https://alcove-acsd16c075c.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com/"}]}
+    if "get-container-service-powers" in cli:
+        return {"powers": [{"powerId": "medium-1", "price": 40.0, "name": "medium"},
+                           {"powerId": "small-1", "price": 15.0, "name": "small"}]}
+    return {}
+
+
+class TestLightsailMultiContainer(unittest.TestCase):
+    """run09/run10: a medium-b Lightsail deploy stands up a SECOND app (site B) as its own container service;
+    pricing only the URL-matched one under-prices the run (the audit caught this in the published set)."""
+
+    def test_both_run_token_containers_are_priced(self):
+        rr = _lightsail_run_rate(_two_container_mcp, _LS_URL, "us-east-1", "2026-09-05")
+        self.assertIsNotNone(rr)
+        self.assertEqual([c.name for c in rr.components],                     # BOTH containers, not one
+                         ["compute:lightsail-container", "compute:lightsail-container"])
+        self.assertAlmostEqual(rr.monthly_usd(), 55.0, places=2)             # medium $40 + small $15
+        self.assertIn("mediumx1+smallx1", rr.flavor)
+
+    def test_another_runs_container_is_not_pulled_in(self):
+        def mcp(cli):
+            if "get-container-services" in cli:
+                return {"containerServices": [
+                    {"containerServiceName": "umami-acsd16c075c", "power": "medium", "powerId": "medium-1",
+                     "scale": 1, "url": _LS_URL + "/"},
+                    {"containerServiceName": "umami-acs00000000", "power": "large", "powerId": "large-1",
+                     "scale": 1, "url": "https://umami-acs00000000.x.us-east-1.cs.amazonlightsail.com/"}]}
+            if "get-container-service-powers" in cli:
+                return {"powers": [{"powerId": "medium-1", "price": 40.0, "name": "medium"},
+                                   {"powerId": "large-1", "price": 80.0, "name": "large"}]}
+            return {}
+        rr = _lightsail_run_rate(mcp, _LS_URL, "us-east-1", "2026-09-05")
+        self.assertAlmostEqual(rr.monthly_usd(), 40.0, places=2)             # only THIS run token's container
+
+
 if __name__ == "__main__":
     unittest.main()

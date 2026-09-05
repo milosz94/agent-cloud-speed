@@ -630,25 +630,49 @@ def _general_run_rate(mcp_call: McpCall, url: str, region: str, capture_date: st
 
 # --- the one AWS-forced exception: Lightsail (not in the tag inventory), priced from its LIVE price API ---
 
-def _lightsail_run_rate(mcp_call: McpCall, url: str, region: str, capture_date: str) -> Optional[RunRate]:
-    svcs = (mcp_call(f"aws lightsail get-container-services --region {region}") or {}).get(
-        "containerServices", [])
-    app = _app_name(url)
-    u = (url or "").rstrip("/")
-    svc = next((s for s in svcs if (s.get("url") or "").rstrip("/") in (u, u + "/") or u in (s.get("url") or "")),
-               None) or next((s for s in svcs if s.get("containerServiceName") == app), None)
-    if not svc:
-        return None
-    powers = (mcp_call(f"aws lightsail get-container-service-powers --region {region}") or {}).get("powers", [])
+def _lightsail_component(svc: dict, powers: list) -> Optional[RateComponent]:
+    """One container service -> its standing RateComponent, or None if its power is not in the live price
+    list."""
     price_month = next((float(p["price"]) for p in powers
                         if p.get("name") == svc.get("power") or p.get("powerId") == svc.get("powerId")), None)
     if price_month is None:
         return None
     scale = int(svc.get("scale", 1) or 1)
-    comp = RateComponent(name="compute:lightsail-container", hourly_usd=price_month * scale / HOURS_PER_MONTH,
+    return RateComponent(name="compute:lightsail-container", hourly_usd=price_month * scale / HOURS_PER_MONTH,
                          raw_unit_price=price_month, native_unit="power-month", quantity=float(scale))
-    return compose_run_rate([comp], provider="aws", region=region,
-                            flavor=f"lightsail-container:{svc.get('power')}x{scale}", capture_date=capture_date,
+
+
+def _lightsail_run_rate(mcp_call: McpCall, url: str, region: str, capture_date: str) -> Optional[RunRate]:
+    """Price EVERY container service belonging to this deploy, not just the URL-matched one: a medium-tier
+    Lightsail deploy stands up a second app (site B) as its own container service, and pricing only the first
+    under-prices the run (aws-medium-b run09/run10 priced one $15 container when two were serving). Services
+    are matched by the run token / app name carried in the service name (the same anchors the general
+    enumerator uses), with the URL-matched service as a fallback for a deploy whose name carries no token."""
+    svcs = (mcp_call(f"aws lightsail get-container-services --region {region}") or {}).get(
+        "containerServices", [])
+    anchors = _match_anchors(url)
+    u = (url or "").rstrip("/")
+    matched, seen = [], set()
+    for s in svcs:
+        name = s.get("containerServiceName") or ""
+        svc_url = (s.get("url") or "").rstrip("/")
+        if name in seen:
+            continue
+        if any(a in name for a in anchors) or (svc_url and (svc_url in (u, u + "/") or (u and u in svc_url))):
+            matched.append(s)
+            seen.add(name)
+    if not matched:                                      # fallback: exact app-name match (pre-multi behavior)
+        app = _app_name(url)
+        matched = [s for s in svcs if s.get("containerServiceName") == app]
+    if not matched:
+        return None
+    powers = (mcp_call(f"aws lightsail get-container-service-powers --region {region}") or {}).get("powers", [])
+    comps = [c for c in (_lightsail_component(s, powers) for s in matched) if c is not None]
+    if not comps:
+        return None
+    flavor = "+".join(f"{s.get('power')}x{int(s.get('scale', 1) or 1)}" for s in matched)
+    return compose_run_rate(comps, provider="aws", region=region,
+                            flavor=f"lightsail-container:{flavor}", capture_date=capture_date,
                             price_source="AWS Lightsail public list price (get-container-service-powers, live; "
                                          "Lightsail is not in the uniform tag inventory)")
 
