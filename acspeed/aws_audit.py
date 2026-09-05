@@ -13,6 +13,7 @@ already produced (the transcript and ``cost_run_rate``), so it is safe to run ov
 """
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import re
 from collections import Counter
@@ -52,7 +53,12 @@ _BOTO_CREATE = {
 }
 
 _CLI_RE = re.compile(r"\baws\s+(" + "|".join(re.escape(k) for k in _CLI_CREATE) + r")\b")
-_BOTO_RE = re.compile(r"""operation_name\s*=\s*['"](""" + "|".join(_BOTO_CREATE) + r""")['"]""")
+# The op name is matched as a BARE STRING LITERAL, not only as ``operation_name='X'``. The agent is not
+# obliged to use the keyword form: aws-medium-b run17 wrapped boto3 in a helper and called
+# ``go("lightsail","CreateContainerService")``, so the keyword-anchored pattern matched NOTHING across all
+# 47 of its tool calls, the audit reported ``built={}``, and a run that was under-priced 6x scored "ok".
+# Anchoring on a calling convention the agent chooses is not a control; the operation NAME is the invariant.
+_BOTO_RE = re.compile(r"""['"](""" + "|".join(_BOTO_CREATE) + r""")['"]""")
 
 # The matching DELETES, so a resource CREATED and then torn down within the same run (the online regime
 # explores architectures: build EC2, abandon it, switch to Fargate) is not mistaken for an unpriced standing
@@ -78,7 +84,7 @@ _BOTO_DELETE = {
     "DeleteService": "fargate", "DeleteVolume": "volume",
 }
 _CLI_DEL_RE = re.compile(r"\baws\s+(" + "|".join(re.escape(k) for k in _CLI_DELETE) + r")\b")
-_BOTO_DEL_RE = re.compile(r"""operation_name\s*=\s*['"](""" + "|".join(_BOTO_DELETE) + r""")['"]""")
+_BOTO_DEL_RE = re.compile(r"""['"](""" + "|".join(_BOTO_DELETE) + r""")['"]""")
 
 # Priced component name (cost_run_rate.components[].name) -> the billable KIND it covers. A run-rate that
 # carries any of these has priced that kind. ``storage``/``public_ip`` are auto-synthesized parts of a
@@ -114,6 +120,62 @@ _STANDALONE_BILLABLE = {"load_balancer", "rds", "lightsail", "elasticache", "nat
 _STATUS_RE = re.compile(r'"status"\s*:\s*"(\w+)"')
 
 
+# Identifiers that AWS only ever emits for a resource that EXISTS: an assigned instance id, a service
+# endpoint, a DNS name. Used to CORROBORATE a count shortfall, because counting create CALLS cannot tell a
+# real provision from a probe the agent expected to fail: aws-easy run9 wrapped RunInstances in a try/except
+# and labelled the branch "unexpected success", so the script returned success, the call counted, and the run
+# was flagged 2-built-vs-1-priced when exactly ONE instance was ever created. A probe that failed leaves no
+# identifier behind, so the identifier count is the honest one.
+_IDENT = {
+    "ec2": re.compile(r"\bi-[0-9a-f]{8,17}\b"),
+    "lightsail": re.compile(r"https?://([a-z0-9-]+)\.[a-z0-9]+\.[a-z0-9-]+\.cs\.amazonlightsail\.com"),
+    "rds": re.compile(r"\b([a-z0-9-]+)\.[a-z0-9]+\.[a-z0-9-]+\.rds\.amazonaws\.com\b"),
+    "load_balancer": re.compile(r"\b([a-z0-9-]+-\d+)\.[a-z0-9-]+\.elb\.amazonaws\.com\b"),
+}
+
+
+def observed_identities(transcript_path: str, run_token: str, wall_s: Optional[float] = None) -> Dict[str, set]:
+    """kind -> the DISTINCT resource identities the deploy turn's tool RESULTS prove existed. Scoped to
+    identities carrying this run's token so a stale workdir log from a PRIOR run cannot inflate the count."""
+    out: Dict[str, set] = {k: set() for k in _IDENT}
+    t0 = cutoff = None
+    with open(transcript_path) as fh:
+        for line in fh:
+            try:
+                o = json.loads(line)
+            except ValueError:
+                continue
+            ts = o.get("timestamp")
+            if ts and t0 is None and wall_s is not None:
+                try:
+                    t0 = _dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    cutoff = t0 + _dt.timedelta(seconds=wall_s)
+                except ValueError:
+                    cutoff = None
+            if ts and cutoff is not None:
+                try:
+                    if _dt.datetime.fromisoformat(ts.replace("Z", "+00:00")) > cutoff:
+                        continue
+                except ValueError:
+                    pass
+            msg = o.get("message") or o
+            content = msg.get("content") if isinstance(msg, dict) else None
+            if not isinstance(content, list):
+                continue
+            for b in content:
+                if not (isinstance(b, dict) and b.get("type") == "tool_result"):
+                    continue
+                text = json.dumps(b.get("content"))
+                for kind, pat in _IDENT.items():
+                    for m in pat.finditer(text):
+                        ident = m.group(1) if m.groups() else m.group(0)
+                        window = text[max(0, m.start() - 90):m.end() + 90]
+                        if run_token and run_token not in (ident if m.groups() else window):
+                            continue
+                        out[kind].add(ident)
+    return out
+
+
 def _result_failed(text: str, is_error: bool) -> bool:
     if is_error:                                          # the harness's own tool-failure flag
         return True
@@ -128,14 +190,36 @@ def _tool_blobs(transcript_path: str):
         yield blob
 
 
-def _tool_calls(transcript_path: str):
-    """Yield (tool_use_id, tool_name, executed_text) for every tool call."""
+def _tool_calls(transcript_path: str, wall_s: Optional[float] = None):
+    """Yield (tool_use_id, tool_name, executed_text) for every tool call.
+
+    ``wall_s`` restricts the scan to the DEPLOY TURN (the first timestamp plus ``agent_wall_s``), which
+    is the window the cost snapshot closes over: ``measure_cost`` runs at autorun.py:1857, after the
+    deploy turn ends and BEFORE ``drive_suite`` at :1879. Without this cut the scan also counts what the
+    SUITE provisions (site B above all), which the snapshot never priced and never should have. Measured:
+    on aws-medium-a the uncut scan flags runs 7, 9 and 10 for an unpriced EC2 that the suite created,
+    all three FALSE; with the cut that cell flags nothing and aws-medium-b still flags exactly its seven
+    hand-confirmed under-priced runs."""
+    t0 = cutoff = None
     with open(transcript_path) as fh:
         for line in fh:
             try:
                 o = json.loads(line)
             except ValueError:
                 continue
+            ts = o.get("timestamp")
+            if ts and t0 is None and wall_s is not None:
+                try:
+                    t0 = _dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    cutoff = t0 + _dt.timedelta(seconds=wall_s)
+                except ValueError:
+                    cutoff = None
+            if ts and cutoff is not None:
+                try:
+                    if _dt.datetime.fromisoformat(ts.replace("Z", "+00:00")) > cutoff:
+                        continue
+                except ValueError:
+                    pass
             msg = o.get("message") or o
             content = msg.get("content") if isinstance(msg, dict) else None
             if not isinstance(content, list):
@@ -173,13 +257,13 @@ def _result_failures(transcript_path: str) -> dict:
     return failed
 
 
-def _scan_ops(transcript_path: str) -> Tuple[Counter, Counter]:
+def _scan_ops(transcript_path: str, wall_s: Optional[float] = None) -> Tuple[Counter, Counter]:
     """(creates, deletes) counted from SUCCESSFUL calls only: a create/delete whose result marks a failure
     (or, for creates, an abandoned/errored attempt) does not count. A call with no matching result counts."""
     failed = _result_failures(transcript_path)
     creates: Counter = Counter()
     deletes: Counter = Counter()
-    for tid, _name, blob in _tool_calls(transcript_path):
+    for tid, _name, blob in _tool_calls(transcript_path, wall_s):
         if failed.get(tid, False):
             continue
         for m in _CLI_RE.finditer(blob):
@@ -247,7 +331,7 @@ def audit_run(run_json_path: str, transcript_path: Optional[str] = None) -> dict
         result.update(built={}, priced={}, missing=[], underpriced=False, note="no transcript recorded")
         return result
     try:
-        built, deleted = _scan_ops(tpath)
+        built, deleted = _scan_ops(tpath, d.get("agent_wall_s"))
     except OSError as e:
         result.update(built={}, priced={}, missing=[], underpriced=False, note=f"transcript unreadable: {e}")
         return result
@@ -261,11 +345,32 @@ def audit_run(run_json_path: str, transcript_path: Optional[str] = None) -> dict
     # counts alone (one delete call can tear down several), so it is surfaced for manual confirmation, not failed.
     uncertain = sorted(k for k, n in built.items()
                        if k in _STANDALONE_BILLABLE and n > 0 and deleted.get(k, 0) > 0 and priced.get(k, 0) == 0)
-    # a count shortfall (2 built, 1 priced) is a softer flag, reported but not failing unless standalone
-    shortfall = {k: (built[k], priced.get(k, 0)) for k in built
-                 if k in _STANDALONE_BILLABLE and priced.get(k, 0) and built[k] > priced.get(k, 0)}
+    # A COUNT shortfall (2 built, 1 priced) FAILS. It used to be "reported but not failing", which is how
+    # aws-medium-b run10 and run19 printed ``shortfall={'lightsail': (2,1)}`` / ``(3,1)`` next to the verdict
+    # "ok" while being under-priced 4x. Pricing one of two live container services is not a softer kind of
+    # wrong than pricing none of one. Measured over the cell: making this fail adds runs 10, 17 and 19 and
+    # introduces ZERO false alarms on the 8 published rows.
+    # CORROBORATED by identities seen in the results: a shortfall stands only if at least as many DISTINCT
+    # resources were actually observed as the call count claims. Where no identifier pattern exists for a
+    # kind, the call count stands on its own.
+    ident = observed_identities(tpath, d.get("run_token") or "", d.get("agent_wall_s"))
+    shortfall = {}
+    for k in built:
+        if k not in _STANDALONE_BILLABLE or not priced.get(k, 0) or deleted.get(k, 0):
+            continue
+        n_built = built[k]
+        if k in ident:
+            n_built = min(n_built, max(len(ident[k]), priced.get(k, 0)))
+        if n_built > priced.get(k, 0):
+            shortfall[k] = (built[k], priced.get(k, 0))
+    # ABSENCE OF EVIDENCE IS NOT A PASS. An empty ``built`` means the scanner recognised nothing in the
+    # transcript, which is a statement about the SCANNER, not about the run. Reporting that as "ok" is a
+    # check that cannot fail. It is UNVERIFIABLE, and a run nobody can verify is not publishable unless a
+    # human looks. (Before the bare-literal fix above this hit runs 15, 17 and 18; run17 was under-priced.)
+    unverifiable = not built
     result.update(built=dict(built), priced=dict(priced), deleted=dict(deleted), missing=missing,
-                  uncertain=uncertain, count_shortfall=shortfall, underpriced=bool(missing))
+                  uncertain=uncertain, count_shortfall=shortfall, unverifiable=unverifiable,
+                  underpriced=bool(missing) or bool(shortfall))
     return result
 
 
@@ -287,16 +392,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = ap.parse_args(argv)
     rows = [audit_run(p) for p in _iter_run_jsons(args.path)]
     bad = [r for r in rows if r.get("underpriced")]
+    unver = [r for r in rows if r.get("unverifiable")]
     for r in rows:
-        flag = "UNDER-PRICED" if r["underpriced"] else ("usage" if r["usage_metered"] else "ok")
+        flag = ("UNDER-PRICED" if r["underpriced"] else
+                "UNVERIFIABLE" if r.get("unverifiable") else
+                ("usage" if r["usage_metered"] else "ok"))
         extra = f"  MISSING={r['missing']}" if r["missing"] else ""
         unc = f"  uncertain(built+deleted,unpriced)={r['uncertain']}" if r.get("uncertain") else ""
         sf = f"  shortfall={r['count_shortfall']}" if r.get("count_shortfall") else ""
         print(f"  run{r['run']:<3} [{flag:<12}] built={r['built']} priced={r['priced']}{extra}{unc}{sf}")
     unc_runs = [r["run"] for r in rows if r.get("uncertain")]
     print(f"\n{len(bad)}/{len(rows)} under-priced" + (f": runs {[r['run'] for r in bad]}" if bad else "")
-          + (f"  |  {len(unc_runs)} uncertain: runs {unc_runs}" if unc_runs else ""))
-    return 1 if bad else 0
+          + (f"  |  {len(unc_runs)} uncertain: runs {unc_runs}" if unc_runs else "")
+          + (f"  |  {len(unver)} UNVERIFIABLE: runs {[r['run'] for r in unver]}" if unver else ""))
+    return 1 if (bad or unver) else 0
 
 
 if __name__ == "__main__":
