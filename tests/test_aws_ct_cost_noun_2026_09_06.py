@@ -44,9 +44,63 @@ class TestTheNounSurvivesTheVerb(unittest.TestCase):
         self.assertEqual(_kind_of("Createsomething"), "Createsomething")
         self.assertEqual(_kind_of("Register"), "Register")
 
-    def test_an_event_with_no_known_verb_is_returned_whole(self):
-        self.assertEqual(_kind_of("PutBucketPolicy"), "PutBucketPolicy")
+    def test_a_verb_outside_the_fallback_list_still_yields_its_noun(self):
+        """The noun is the operation minus its leading verb WORD, not minus a listed verb. AWS's own
+        registry classifies CopySnapshot and StartInstances as creates, and both were invisible while
+        thirteen typed verbs decided what a create was; their nouns have to work too."""
+        self.assertEqual(_kind_of("CopySnapshot"), "Snapshot")
+        self.assertEqual(_kind_of("StartInstances"), "Instances")
+        self.assertEqual(_kind_of("PutBucketPolicy"), "BucketPolicy")
+        self.assertEqual(_kind_of("ImportKeyPair"), _kind_of("CreateKeyPair"),
+                         "two ways of standing up the same kind must pair on the same noun")
         self.assertEqual(_kind_of(""), "")
+
+
+class TestAwsSaysWhatCreatesAndWhatDeletes(unittest.TestCase):
+    """Thirteen English verbs used to BE the classifier. An operation outside them was not merely
+    unpriced, it never entered discovery, so its cost was silently absent. AWS publishes the answer in
+    every CloudFormation resource schema (`handlers.create.permissions` / `handlers.delete.permissions`).
+    """
+
+    def setUp(self):
+        from acspeed.adapters import aws_ct_cost as m
+        self.m = m
+        m._LIFECYCLE.clear()
+        self.addCleanup(m._LIFECYCLE.clear)
+
+    def _with(self, create=(), delete=()):
+        from unittest import mock
+        return mock.patch.object(self.m, "_lifecycle",
+                                 return_value={"create": set(create), "delete": set(delete)})
+
+    def test_a_create_verb_nobody_typed_is_classified_from_the_registry(self):
+        with self._with(create={"ec2:CopySnapshot", "ec2:StartInstances"}):
+            self.assertEqual(self.m.classify_event("ec2", "CopySnapshot"), "create")
+            self.assertEqual(self.m.classify_event("ec2", "StartInstances"), "create")
+
+    def test_those_same_events_are_invisible_to_the_verb_list_alone(self):
+        """The premise. Without this the test above proves nothing: it would pass on a classifier that
+        ignored the registry entirely."""
+        with self._with():
+            self.assertIsNone(self.m.classify_event("ec2", "CopySnapshot"))
+            self.assertIsNone(self.m.classify_event("ec2", "StartInstances"))
+
+    def test_the_verbs_still_answer_when_the_registry_is_silent(self):
+        """Offline, or for an operation no resource type mentions, coverage must fall back to what it
+        was rather than to nothing."""
+        with self._with():
+            self.assertEqual(self.m.classify_event("lightsail", "CreateRelationalDatabase"), "create")
+            self.assertEqual(self.m.classify_event("ec2", "TerminateInstances"), "delete")
+
+    def test_an_ambiguous_operation_is_left_to_the_verbs(self):
+        """`ec2:AllocateAddress` sits in four create handlers AND one delete handler. A source that says
+        both says nothing."""
+        with self._with(create={"ec2:AllocateAddress"}, delete={"ec2:AllocateAddress"}):
+            self.assertEqual(self.m.classify_event("ec2", "AllocateAddress"), "create")
+
+    def test_a_read_is_neither(self):
+        with self._with(create={"ec2:DescribeVolumes"}, delete={"ec2:DescribeVolumes"}):
+            self.assertIsNone(self.m.classify_event("ec2", "DescribeVolumes"))
 
 
 if __name__ == "__main__":

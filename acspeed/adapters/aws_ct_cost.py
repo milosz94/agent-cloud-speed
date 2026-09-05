@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import re
 import subprocess
 from typing import Dict, List, Optional, Tuple
@@ -72,6 +73,12 @@ from acspeed.cost import RateComponent, RunRate, compose_run_rate, HOURS_PER_MON
 # The default is inverted instead: EVERY successful create is a candidate, and the PUBLISHED DISCLOSURE
 # decides. If the resource's own words find a SKU, it bills and is priced; if they find none, it is
 # reported by name. Nothing needs to be anticipated.
+# FALLBACK ONLY. These thirteen English verbs used to BE the classifier, and a verb absent from them made
+# a resource invisible: not unpriced, never discovered. Measured against botocore's full API surface,
+# billable things are stood up by verbs outside the list (CopySnapshot, StartInstances, StartDBInstance),
+# so the failure was a silent UNDER-COUNT, which is the worst kind this module can produce. AWS publishes
+# the answer (see `_lifecycle`); these remain only for an operation the published registry does not
+# mention, so coverage can grow but never shrink.
 # The capital that starts the noun is matched by LOOKAHEAD, never consumed. Consuming it ate the first
 # letter of every kind in the run: CreateRelationalDatabase -> "elationalDatabase", CreateKeyPair ->
 # "eyPair", RunInstances -> "nstances". Delete pairing survived it (both sides were mangled the same
@@ -79,18 +86,87 @@ from acspeed.cost import RateComponent, RunRate, compose_run_rate, HOURS_PER_MON
 _CREATE_VERB = re.compile(r"^(Create|Run|Allocate|Provision|Launch|Register|Request)(?=[A-Z])")
 _DELETE_VERB = re.compile(r"^(Delete|Terminate|Release|Deprovision|Deregister|Destroy)(?=[A-Z])")
 
+# AWS's own labelling of which API call creates a resource and which destroys it, published as the
+# CloudFormation resource schemas: every type carries `handlers.create.permissions` and
+# `handlers.delete.permissions`, and those permissions ARE API operations. One public 3 MB download,
+# no credentials, 1729 types.
+_CFN_SCHEMA_ZIP = "https://schema.cloudformation.us-east-1.amazonaws.com/CloudformationSchema.zip"
+_LIFECYCLE: Dict[str, set] = {}
+
+
+def _lifecycle() -> Dict[str, set]:
+    """`{"create": {"ec2:RunInstances", ...}, "delete": {"ec2:TerminateInstances", ...}}`, from AWS.
+
+    This replaces thirteen verbs I typed out. The verbs were not merely incomplete, they were incomplete
+    in the direction that loses money quietly: an operation outside them was not classified as a create,
+    so the resource never entered discovery at all and its cost was simply absent. `ec2:CopySnapshot` and
+    `ec2:StartInstances` are both in a published create handler and in neither verb list.
+
+    Returns empty sets when the download is unavailable, so the caller falls back to the verbs and
+    coverage degrades to what it was rather than to nothing."""
+    if _LIFECYCLE:
+        return _LIFECYCLE
+    from acspeed.adapters.aws_price_index import _cache_dir
+    cache = os.path.join(_cache_dir(), "cfn_lifecycle.json")
+    try:
+        if os.path.exists(cache) and os.path.getsize(cache) > 0:
+            with open(cache) as fh:
+                raw = json.load(fh)
+        else:
+            import io
+            import urllib.request
+            import zipfile
+            with urllib.request.urlopen(_CFN_SCHEMA_ZIP, timeout=300) as r:  # noqa: S310 - fixed AWS host
+                blob = r.read()
+            create, delete = set(), set()
+            with zipfile.ZipFile(io.BytesIO(blob)) as z:
+                for name in z.namelist():
+                    try:
+                        handlers = (json.loads(z.read(name)).get("handlers") or {})
+                    except Exception:  # noqa: BLE001 - one unreadable schema is not a failure
+                        continue
+                    create |= set((handlers.get("create") or {}).get("permissions") or [])
+                    delete |= set((handlers.get("delete") or {}).get("permissions") or [])
+            raw = {"create": sorted(create), "delete": sorted(delete)}
+            os.makedirs(_cache_dir(), exist_ok=True)
+            with open(cache, "w") as fh:
+                json.dump(raw, fh)
+    except Exception:  # noqa: BLE001 - offline is a smaller coverage, never a wrong answer
+        raw = {"create": [], "delete": []}
+    _LIFECYCLE.update({"create": set(raw["create"]), "delete": set(raw["delete"])})
+    return _LIFECYCLE
+
+
+def classify_event(src: str, event_name: str) -> Optional[str]:
+    """"create", "delete", or None for an event that does neither.
+
+    The published registry decides; the verb lists answer only for an operation it does not mention.
+    An operation appearing in BOTH a create and a delete handler (an address is allocated by one type
+    and released by another) is left to the verbs, which is the honest reading of an ambiguous source."""
+    name, cycle = event_name or "", _lifecycle()
+    key = f"{(src or '').lower()}:{name}"
+    is_c, is_d = key in cycle.get("create", ()), key in cycle.get("delete", ())
+    if is_c and not is_d:
+        return "create"
+    if is_d and not is_c:
+        return "delete"
+    if _DELETE_VERB.match(name):
+        return "delete"
+    if _CREATE_VERB.match(name):
+        return "create"
+    return None
+
 
 def _kind_of(event_name: str) -> str:
-    """The resource kind an event names, DERIVED from the verb and noun rather than mapped.
+    """The resource kind an event names: the operation minus its leading verb WORD.
 
-    ``CreateRelationalDatabase`` -> ``relationaldatabase``; ``RunInstances`` -> ``instances``. Pairing a
-    delete with its create is then a string operation on the same noun, so the delete table goes too."""
+    ``CreateRelationalDatabase`` -> ``RelationalDatabase``; ``RunInstances`` -> ``Instances``;
+    ``CopySnapshot`` -> ``Snapshot``. Taking the first CamelCase token rather than matching a list of
+    verbs means an operation the verb lists never knew still yields its noun, which is what pairs a
+    delete with its create and what anchors the SKU search."""
     name = event_name or ""
-    # Order matters: `_CREATE_VERB.sub` on a DELETE event returns the string unchanged, which is truthy,
-    # so an `or` chain never reaches the delete branch and no delete ever pairs with its create.
-    if _DELETE_VERB.match(name):
-        return _DELETE_VERB.sub("", name)
-    return _CREATE_VERB.sub("", name)
+    head = re.match(r"^[A-Z][a-z]+(?=[A-Z])", name)
+    return name[head.end():] if head else name
 
 
 
@@ -170,12 +246,14 @@ def discover(start: str, end: str, run_token: str, regions: List[str],
                 if run_token and run_token not in blob:
                     continue
                 name = ev.get("EventName", "")
-                if _DELETE_VERB.match(name):
+                src = raw.get("eventSource", "").split(".")[0]
+                kind = classify_event(src, name)
+                if kind == "delete":
                     deleted.append((_kind_of(name).lower(),
                                     _identity(raw.get("requestParameters") or {}),
                                     raw.get("eventTime") or ""))
                     continue
-                if _CREATE_VERB.match(name):
+                if kind == "create":
                     prm = raw.get("requestParameters") or {}
                     found.append({"kind": _kind_of(name).lower(), "region": reg, "event": name,
                                   "src": raw.get("eventSource", "").split(".")[0],
@@ -475,6 +553,28 @@ def _spellings(field: str, value: object, units: set) -> List[str]:
     return [f"{value:g}{unit}"] if unit in units else []
 
 
+def _head_noun(resource: dict) -> str:
+    """The last word of the resource's own noun: ``AllocateAddress`` -> "address"."""
+    from acspeed.adapters.aws_price_index import _norm
+    words = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+", _kind_of(resource.get("event") or ""))
+    return _norm(words[-1]) if words else ""
+
+
+def _name_heads(attrs: dict) -> set:
+    """What each of a SKU's names DENOTES: the last word of each dash- or colon-separated part.
+
+    `USE1-PublicIPv4:InUseAddress` denotes an address; `USE1-IPAddressManager-IP-Hours` denotes hours,
+    and its group `AWSVPCIPAddressManager` denotes a manager. Both contain the word "address"."""
+    from acspeed.adapters.aws_price_index import _norm
+    out = set()
+    for key in ("usagetype", "group", "productFamily", "operation"):
+        for chunk in re.split(r"[^A-Za-z0-9]+", str(attrs.get(key) or "")):
+            words = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+", chunk)
+            if words:
+                out.add(_norm(words[-1]))
+    return out
+
+
 def price_resource_universal(resource: dict, describe=None, profile: Optional[str] = None) -> dict:
     """Price one discovered resource from the published disclosure. No per-service pricing code.
 
@@ -534,18 +634,50 @@ def price_resource_universal(resource: dict, describe=None, profile: Optional[st
                 # "LoadBalancer" is the other half of that sentence.
                 words = list(sel.values()) + [noun]
                 cand = best or []
-                if not cand:
-                    # exact matching found NOTHING: the resource and its SKU use different grammar for
-                    # the same thing. Fall back to containment, then require the tie-break to single one
-                    # out, so a loose match can never quietly become the answer.
-                    noun = _kind_of(resource.get("event") or "")
-                    cand = resolve_one(
-                        ondemand_only(find_sku_by_words(code, region, words, anchor=noun)), words)
-                    if len(cand) != 1:
-                        cand = []
+                if len(cand) != 1:
+                    # The resource and its SKU can use different grammar for the same thing, so fall back
+                    # to containment anchored on the noun. This runs when exact matching found NOTHING
+                    # and ALSO when it found several, because an ambiguous exact result used to SUPPRESS
+                    # it: an allocated Elastic IP matched seven unrelated SKUs on the single generic word
+                    # "vpc" (CloudWAN, Firehose, Transit Gateway), and because that was not empty, the
+                    # SKUs actually named after an address were never even considered.
+                    anchored = ondemand_only(find_sku_by_words(code, region, words, anchor=noun))
+                    if not cand:
+                        cand = resolve_one(anchored, words)
+                        if len(cand) != 1:
+                            cand = []          # a loose match may never quietly become the answer
+                    else:
+                        seen = {m["sku"] for m in cand}
+                        cand = cand + [m for m in anchored if m["sku"] not in seen]
                 hits += [(code, m) for m in resolve_one(cand, words)]
             except Exception:  # noqa: BLE001
                 continue
+        # A PART carries the unit of its own quantity, and the SKU has to be priced in that unit. A gp3
+        # volume publishes three SKUs under the same name: EBS:VolumeP-IOPS.gp3 (IOPS-Mo),
+        # EBS:VolumeP-Throughput.gp3 (GiBps-mo) and EBS:VolumeUsage.gp3 (GB-Mo). The part is 40 GB, so
+        # only the per-GB line can be its price; without this the root volume of every instance came out
+        # ambiguous and unpriced while EBS:VolumeUsage.gp3 was on the bill.
+        hint = str(resource.get("unit_hint") or "").lower()
+        if hint and len(hits) > 1:
+            keep = [(c, m) for c, m in hits
+                    if any(str(d.get("unit") or "").lower().startswith(hint)
+                           for d in m["prices"] if d["usd"] > 0)]
+            if keep:
+                hits = keep
+
+        # LAST RESORT, and only among candidates that are otherwise AMBIGUOUS (so it can turn an
+        # unpriced resource into a priced one but can never change a price that already resolved):
+        # prefer SKUs whose name is ABOUT the resource's noun. English compound nouns are head-final,
+        # so the last word is what the name denotes: `VPCPublicIPv4Address` IS an address,
+        # `AWSVPCIPAddressManager` is a manager that merely mentions one. Measured on an allocated
+        # Elastic IP, whose only selector is `domain: vpc` and which therefore matched seven unrelated
+        # SKUs while USE1-PublicIPv4:InUseAddress was on the bill at $0.005/hr.
+        if len(hits) > 1 and _head_noun(resource):
+            head = _head_noun(resource)
+            pref = [(c, m) for c, m in hits if head in _name_heads(m.get("attributes") or {})]
+            if pref:
+                hits = pref
+
         # The same SKU is published in more than one offer file (LoadBalancerUsage appears in both
         # AWSELB and AmazonEC2, at the same price). Identical usagetype AND price is one line, not an
         # ambiguity, so collapse before judging.
@@ -673,8 +805,8 @@ def billable_parts(resource: dict) -> List[dict]:
                          if isinstance(node.get(k), str)), None)
             if size and kind:
                 parts.append({**resource, "part": path or "child", "kind": "storage",
-                              "quantity": float(size), "params": {"volumeApiName": kind,
-                                                                  "volumeType": kind}})
+                              "quantity": float(size), "event": "", "unit_hint": "GB",
+                              "params": {"volumeApiName": kind, "volumeType": kind}})
             for k, v in node.items():
                 _walk(v, f"{path}.{k}" if path else k)
         elif isinstance(node, list):
@@ -687,14 +819,20 @@ def billable_parts(resource: dict) -> List[dict]:
     stype = prm.get("storageType")
     if isinstance(size, (int, float)) and isinstance(stype, str) and \
             not any(p.get("kind") == "storage" for p in parts[1:]):
-        parts.append({**resource, "part": "allocatedStorage", "kind": "storage",
-                      "quantity": float(size), "params": {"volumeName": stype, "volumeApiName": stype}})
-    # an internet-facing load balancer consumes a public IPv4 in every subnet it is placed in
-    if resource.get("kind") == "load_balancer" and str(prm.get("scheme", "")).lower() == "internet-facing":
+        parts.append({**resource, "part": "allocatedStorage", "kind": "storage", "event": "",
+                      "quantity": float(size), "unit_hint": "GB",
+                      "params": {"volumeName": stype, "volumeApiName": stype}})
+    # An internet-facing load balancer consumes a public IPv4 in every subnet it is placed in.
+    # The condition used to also require kind == "load_balancer", which NEVER MATCHED: kinds come from
+    # `_kind_of`, which yields "loadbalancer". The branch was dead, so every run's public IPv4 addresses
+    # went uncounted while USE1-PublicIPv4:InUseAddress was on the real bill. `scheme: internet-facing`
+    # plus subnets is the condition that actually implies public addresses; the kind added nothing.
+    if str(prm.get("scheme", "")).lower() == "internet-facing":
         subnets = prm.get("subnets") or prm.get("subnetMappings") or []
         n = len(subnets) if isinstance(subnets, list) else 1
         if n:
             parts.append({**resource, "part": "public-ipv4", "kind": "elastic_ip", "quantity": float(n),
+                          "event": "",
                           "params": {"usagetype": _ipv4_usagetype(resource.get("region", "us-east-1"))}})
     return parts
 
