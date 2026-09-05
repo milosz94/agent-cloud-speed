@@ -148,6 +148,37 @@ def _digest(service_code: str, region: str) -> dict:
     return got
 
 
+def resolve_values(service_code: str, region: str, values) -> Set[str]:
+    """The resource's words as THIS service spells them, dropping the ones it does not use at all.
+
+    Folding case and punctuation bridges ``nano``/``Nano`` and it was claimed to bridge
+    ``postgres``/``PostgreSQL`` too. It does not: those normalise to "postgres" and "postgresql", so the
+    engine selected nothing and an RDS instance matched every engine's SKU at once, 78 of them, and came
+    out ambiguous while InstanceUsage:db.t4g.micro was on the bill. This was the second of the two joins
+    the module documented as having no discoverable rule.
+
+    The disclosure resolves it. A word the price list does not carry is matched to the published value it
+    PREFIXES, and two guards keep that from becoming a guess: the published value must be essentially the
+    same word (a prefix covering most of it, so ``aurora`` does NOT become ``aurorabacktrack``), and the
+    SHORTEST candidate wins, which is the base-over-qualified rule `_prefer_base_usagetype` already
+    applies to usagetypes (``postgresql`` beats ``postgresqlonpremiseforoutpost``)."""
+    uni = value_universe(service_code, region)
+    out = set()
+    for v in values:
+        if not isinstance(v, str) or len(v) <= 1:
+            continue
+        n = _norm(v)
+        if not n:
+            continue
+        if n in uni:
+            out.add(n)
+            continue
+        near = sorted((u for u in uni if u.startswith(n) and len(n) >= 0.6 * len(u)), key=len)
+        if near:
+            out.add(near[0])
+    return out
+
+
 def value_universe(service_code: str, region: str) -> Set[str]:
     """Every normalised attribute value this service publishes here. A value outside it is the VENDOR's
     vocabulary, not the disclosure's, and has to be resolved before it can select anything."""
@@ -168,7 +199,7 @@ def find_sku(service_code: str, region: str, selectors: Dict[str, object],
     caller genuinely knows one (e.g. productFamily), and is never needed to make a match happen.
     Returns every match with its price dimensions, so an AMBIGUOUS result is visible to the caller
     rather than silently resolved to the first row."""
-    wanted = {_norm(v) for v in selectors.values() if isinstance(v, str) and len(str(v)) > 1}
+    wanted = resolve_values(service_code, region, list(selectors.values()))
     if not wanted:
         return []
     # A value that appears in NO SKU of this service is not a selector FOR this service, so requiring it
@@ -180,9 +211,6 @@ def find_sku(service_code: str, region: str, selectors: Dict[str, object],
     #
     # Asked of the DIGEST, not the offer file, so a service that cannot match is ruled out for a few kB
     # instead of a full parse. Most services can never match most resources, so this is the usual answer.
-    wanted = {w for w in wanted if w in value_universe(service_code, region)}
-    if not wanted:
-        return []
     offer = region_offer(service_code, region)
     if not offer:
         return []
@@ -236,18 +264,26 @@ def search_all(region: str, selectors: Dict[str, object],
 _NON_ONDEMAND = ("unused", "reservation", "reserved", "dedicated", "hostbox", "hostusage",
                  "spot", "ded:", "res:", "commit")
 
-# Attribute-level pins, applied ONLY when the service publishes that attribute. These are purchase-option
-# and platform choices (C19 excludes reservations and committed use), never per-service pricing code.
+# THE LAST TWO TABLES IN THE PRICING PATH, AND THE ONLY ONES THAT SHOULD SURVIVE. Everything else that
+# used to be typed out here is gone, derived from what AWS publishes. These two are not vendor knowledge:
+# they are the PAPER'S OWN DEFINITION of the cost axis, written where the code applies it. C19 measures a
+# standing hourly run-rate at the PUBLIC ON-DEMAND LIST price, so each entry below names the clause it
+# implements, and `test_c19_definition_is_declared` fails if one is added without a stated reason.
+#
+# _NON_ONDEMAND is NOT redundant with the pins: measured 2026-09-06 across all 241 services publishing a
+# us-east-1 offer, 906 SKUs pass every attribute pin and are caught only by the usagetype qualifier
+# (AWSELB ReservedLCUUsage, Bedrock Reserved_1Month/3Month and ProvisionedThroughput_*Commit lines).
+# Deleting it would quietly admit reserved and committed pricing into a list-price measurement.
 _ONDEMAND_PINS = {
-    "capacitystatus": "Used",
-    "tenancy": "Shared",
-    "licenseModel": "No License required",
-    "preInstalledSw": "NA",
-    "deploymentOption": "Single-AZ",
-    # C19 prices the public AWS REGION. Outposts, Local Zones and Wavelength are different products sold
-    # at different rates, and their SKUs sit in the same offer file: an ALB search returned
-    # Outposts-LoadBalancerUsage and TS-LoadBalancerUsage beside the real LoadBalancerUsage.
-    "locationType": "AWS Region",
+    "capacitystatus": ("Used", "C19 prices capacity in use, not unused reservation capacity"),
+    "tenancy": ("Shared", "dedicated tenancy is a purchase option, not the list price"),
+    "licenseModel": ("No License required", "a bring-your-own or included licence is a different product"),
+    "preInstalledSw": ("NA", "pre-installed software is a different product at a different rate"),
+    "deploymentOption": ("Single-AZ", "multi-AZ is a redundancy CHOICE the deploy makes, not the default"),
+    "locationType": ("AWS Region", "C19 prices the public AWS region; Outposts, Local Zones and "
+                                   "Wavelength are different products whose SKUs share the offer file, "
+                                   "and an ALB search returned Outposts- and TS-LoadBalancerUsage beside "
+                                   "the real LoadBalancerUsage"),
 }
 
 
@@ -267,7 +303,7 @@ def ondemand_only(matches: List[dict], platform: str = "Linux",
         # Compare pins CASE-FOLDED. AWS is not internally consistent about its own spelling: RDS writes
         # licenseModel "No license required" while EC2 writes "No License required", and an exact compare
         # silently discarded every RDS on-demand SKU.
-        if any(k in a and _norm(a[k]) != _norm(v) for k, v in _ONDEMAND_PINS.items()):
+        if any(k in a and _norm(a[k]) != _norm(v) for k, (v, _why) in _ONDEMAND_PINS.items()):
             continue
         if "operatingSystem" in a and _norm(a["operatingSystem"]) != _norm(platform):
             continue
@@ -350,7 +386,7 @@ def _prefer_base_usagetype(matches: List[dict]) -> List[dict]:
 
 
 def find_sku_by_coverage(service_code: str, region: str, values: List[str],
-                         anchor: str = "") -> List[dict]:
+                         anchor: str = "", unit: str = "") -> List[dict]:
     """The SKUs carrying the MOST of the resource's own words, in one pass over the offer.
 
     Two ways of using the same words were measured to be wrong, both on the same Lightsail database.
@@ -364,9 +400,7 @@ def find_sku_by_coverage(service_code: str, region: str, values: List[str],
     the event breaks the remaining tie but never filters, because a service is free to name a SKU
     something other than its own resource type (``ContainerSvcUsage`` for a ContainerService), and a
     filter on the noun would silently drop those."""
-    uni = value_universe(service_code, region)
-    wanted = {_norm(v) for v in values if isinstance(v, str) and len(str(v)) > 1}
-    wanted = {w for w in wanted if w in uni}
+    wanted = resolve_values(service_code, region, values)
     if not wanted:
         return []
     offer = region_offer(service_code, region)
@@ -384,6 +418,15 @@ def find_sku_by_coverage(service_code: str, region: str, values: List[str],
                 dims.append({"unit": dim.get("unit"),
                              "usd": float(dim.get("pricePerUnit", {}).get("USD", 0) or 0),
                              "description": dim.get("description", "")})
+        # THE UNIT CONSTRAINS THE SEARCH, it does not filter its result. A sized child inherits every
+        # word its parent's create call carried, so counting coverage over ALL SKUs let the parent's
+        # instance class and engine outvote the one word that describes the child: a 20 GB RDS volume
+        # scored 2 against the instance's SKU and 1 against RDS:GP3-Storage, and filtering afterwards
+        # then left it with nothing. Counting only among SKUs billed in the child's own unit asks the
+        # right question of the right candidates.
+        if unit and not any(str(d.get("unit") or "").lower().startswith(unit.lower())
+                            for d in dims if d["usd"] > 0):
+            continue
         out.append({"sku": sku, "attributes": attrs, "usagetype": attrs.get("usagetype"),
                     "operation": attrs.get("operation"), "prices": dims, "coverage": cov})
     if not out:

@@ -198,13 +198,23 @@ def deploy_window(rec: dict, transcript_first_ts: str) -> Tuple[str, str]:
 
 def _identity(params: dict) -> str:
     """The resource's own name, as the create/delete call names it. Used to net a mid-run create against
-    its OWN delete rather than against any delete of the same kind."""
-    for k in ("serviceName", "relationalDatabaseName", "dBInstanceIdentifier", "dBClusterIdentifier",
-              "loadBalancerName", "cacheClusterId", "instanceName", "name"):
-        v = params.get(k)
-        if isinstance(v, str) and v:
-            return v
-    return ""
+    its OWN delete rather than against any delete of the same kind.
+
+    Chosen by SHAPE, not from a list of eight field names. An IDENTIFIER identifies and a NAME may not:
+    ``CreateDBInstance`` carries both ``dBName: umami`` (the database inside) and
+    ``dBInstanceIdentifier: umami-db-acsb845f10e`` (the billed resource), and only the second appears in
+    the matching delete, so preferring "name" would have paired nothing. Values shaped like ANOTHER
+    resource's id are skipped for the same reason they are not SKU selectors."""
+    ranked = []
+    for k, v in (params or {}).items():
+        if not isinstance(v, str) or not v or _NOT_A_SELECTOR.match(v):
+            continue
+        low = k.lower()
+        rank = 0 if low.endswith("identifier") else 1 if low.endswith("id") else 2 if low.endswith("name") else None
+        if rank is not None:
+            ranked.append((rank, k, v))
+    ranked.sort(key=lambda t: (t[0], t[1]))
+    return ranked[0][2] if ranked else ""
 
 
 def enabled_regions(profile: Optional[str] = None) -> List[str]:
@@ -315,84 +325,11 @@ def _hourly(unit: str, price: float, quantity: float = 1.0) -> float:
     return price * quantity
 
 
-# price_resource() removed: it was per-service pricing code (an if/elif per kind, with a
-# region-name map and an engine-spelling map). price_resource_universal() replaces it by
-# searching the published disclosure with the resource's own words.
-def run_rate_from_cloudtrail(start: str, end: str, run_token: str, capture_date: str,
-                             regions: Optional[List[str]] = None,
-                             profile: Optional[str] = None) -> dict:
-    """The whole path. Returns a ``cost_run_rate``-shaped dict; ``ok`` is False when ANYTHING
-    discovered could not be priced, and ``unpriced_resources`` says exactly what."""
-    regions = regions or enabled_regions(profile)
-    resources, unclassified = discover(start, end, run_token, regions, profile)
-    if describe is None:
-        describe = lambda r: describe_live(r, profile)   # noqa: E731 - the default IS the live describe
-    comps: List[RateComponent] = []
-    unpriced: List[str] = list(unclassified)
-    for r in resources:
-        c, u = price_resource(r, profile)
-        comps += c
-        unpriced += u
-    if not comps:
-        return {"ok": False, "error": "no billable resource priced", "discovered": len(resources),
-                "unpriced_resources": unpriced}
-    rr = compose_run_rate(comps, provider="aws", region=(resources[0]["region"] if resources else "?"),
-                          flavor="+".join(sorted({r["kind"] for r in resources})),
-                          capture_date=capture_date,
-                          price_source="AWS public list (Price List Query API), resources discovered "
-                                       "from CloudTrail management events in the deploy window")
-    d = rr.to_dict()
-    d["discovered_resources"] = [{"kind": r["kind"], "region": r["region"], "event": r["event"]}
-                                 for r in resources]
-    d["unpriced_resources"] = unpriced
-    d["no_sku_match"] = sorted(set(no_sku))
-    d["ok"] = not unpriced                     # FAIL CLOSED: anything unpriced sinks the whole run
-    return d
-
-
-# The corroboration GATE that used to sit here is deleted. It refused a run whose price did not
-# account for everything, which sounds rigorous and is not: AWS must publish the price of
-# everything it bills, so 'cannot price it' is never a property of the resource, only a failure
-# of the lookup. Refusing encodes that failure as an acceptable outcome. Price it instead.
-
-# --- universal pricing: the resource's OWN words, matched against the published disclosure ---------
-
-def price_from_index(resource: dict, services: Optional[List[str]] = None) -> dict:
-    """Price ONE discovered resource from the published price list, with no per-service pricing code.
-
-    The selectors are simply the STRING values the create call used to describe the resource. No
-    translation table: matching is case- and punctuation-insensitive, which is what makes CloudTrail's
-    ``nano`` meet the SKU's ``Nano`` and ``postgres`` meet ``PostgreSQL`` without a spelling map.
-
-    Where the two vocabularies genuinely do not share a term the match returns nothing, and that is
-    REPORTED as a vocabulary gap naming the identifier, never as a zero. Measured example: Lightsail
-    passes ``relationalDatabaseBundleId: micro_2_0`` while the SKU is keyed on ``memory``/``storage``,
-    and the string ``micro_2_0`` appears in no SKU in the published file. EC2 (``instanceType``), RDS
-    (``dBInstanceClass``) and Lightsail containers (``power``) DO share the term."""
-    from acspeed.adapters.aws_price_index import find_sku, service_codes
-
-    region = resource.get("region") or "us-east-1"
-    params = resource.get("params") or {}
-    selectors = {k: v for k, v in params.items()
-                 if isinstance(v, str) and 1 < len(v) <= 40
-                 and not v.startswith(("arn:", "sg-", "subnet-", "vpc-", "ami-", "i-"))}
-    tried, hits = [], []
-    for code in (services or service_codes()):
-        tried.append(code)
-        try:
-            found = find_sku(code, region, selectors)
-        except Exception:  # noqa: BLE001 - one unreadable offer file must not hide the rest
-            continue
-        for m in found:
-            for d in m["prices"]:
-                if d["usd"] > 0:
-                    hits.append({"service": code, "sku": m["sku"], "usagetype": m["usagetype"],
-                                 "unit": d["unit"], "usd": d["usd"], "desc": d["description"]})
-                    break
-    if not hits:
-        return {"priced": False, "reason": "vocabulary gap: no SKU carries any of "
-                                           f"{sorted(selectors.values())}", "candidates": 0}
-    return {"priced": True, "candidates": len(hits), "hits": hits[:6]}
+# price_resource(), run_rate_from_cloudtrail() and price_from_index() removed: per-service
+# pricing code (an if/elif per kind, a region-name map, an engine-spelling map) and two callers
+# nothing referenced, one of which still called the already-deleted price_resource(). The last of
+# them also carried the hand-written resource-id prefix list (arn:/sg-/subnet-/vpc-/ami-/i-) that
+# _NOT_A_SELECTOR replaced with a shape. price_resource_universal() is the only pricing path.
 
 
 # --- end to end: discovered resource -> its own words -> the published SKU -> a price ---------------
@@ -628,7 +565,8 @@ def price_resource_universal(resource: dict, describe=None, profile: Optional[st
                 from acspeed.adapters.aws_price_index import (resolve_one, find_sku_by_words,
                                                               find_sku_by_coverage)
                 noun = _kind_of(resource.get("event") or "")
-                best = ondemand_only(find_sku_by_coverage(code, region, list(sel.values()), anchor=noun))
+                best = ondemand_only(find_sku_by_coverage(code, region, list(sel.values()), anchor=noun,
+                                                           unit=str(resource.get("unit_hint") or "")))
                 # The resource's own words, plus the NOUN of the event that created it: an ALB's SKU
                 # says "LoadBalancing:Application" where the event says type=application, and the noun
                 # "LoadBalancer" is the other half of that sentence.
@@ -658,10 +596,22 @@ def price_resource_universal(resource: dict, describe=None, profile: Optional[st
         # only the per-GB line can be its price; without this the root volume of every instance came out
         # ambiguous and unpriced while EBS:VolumeUsage.gp3 was on the bill.
         hint = str(resource.get("unit_hint") or "").lower()
-        if hint and len(hits) > 1:
-            keep = [(c, m) for c, m in hits
+        if hint:
+            # A REQUIREMENT, not a preference. A sized child inherits every short string its parent's
+            # create call carried, because which of them describes the CHILD is not knowable structurally,
+            # so a 20 GB RDS volume matched `InstanceUsage:db.t4g.micro` and was priced at 20x the
+            # instance's HOURLY rate: $233.60/mo for a $2.30/mo disk. The unit is what tells parent from
+            # child, and a child whose unit nothing matches is honestly unpriced rather than wrong.
+            hits = [(c, m) for c, m in hits
                     if any(str(d.get("unit") or "").lower().startswith(hint)
                            for d in m["prices"] if d["usd"] > 0)]
+        # ...and the mirror of it: a resource whose sized child took the per-size line cannot itself be
+        # priced by size. See `billable_parts`.
+        skip = str(resource.get("exclude_unit") or "").lower()
+        if skip and len(hits) > 1:
+            keep = [(c, m) for c, m in hits
+                    if not all(str(d.get("unit") or "").lower().startswith(skip)
+                               for d in m["prices"] if d["usd"] > 0)]
             if keep:
                 hits = keep
 
@@ -795,18 +745,43 @@ def billable_parts(resource: dict) -> List[dict]:
     parts = [dict(resource, part="self")]
     prm = resource.get("params") or {}
 
+    # A SIZED CHILD IS A SHAPE, not a list of field names. The previous version looked for
+    # volumeSize/sizeInGB/size/diskSize/allocatedStorage beside volumeType/storageType/type, which is
+    # AWS's vocabulary typed out and is wrong for the next field name AWS invents. What identifies one
+    # is a field naming an AMOUNT OF SPACE (English: size, storage) with a positive value, plus a short
+    # string in the same object to say what KIND of space. Whether that string means anything is not
+    # decided here: the price list decides, in pricing, where it is consulted anyway. Doing it here
+    # would make a structural function reach the network, which hung the whole test suite.
+    def _sized(node):
+        """(quantity, {selectors}) when this object describes a sized thing."""
+        sized = [float(v) for k, v in node.items()
+                 if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0
+                 and ("size" in k.lower() or "storage" in k.lower())]
+        kinds = {k: v for k, v in node.items()
+                 if isinstance(v, str) and 1 < len(v) <= 40 and not _NOT_A_SELECTOR.match(v)}
+        return (sized[0], kinds) if sized and kinds else (None, {})
+
     def _walk(node, path=""):
         if isinstance(node, dict):
-            # a nested object carrying a SIZE is a provisioned child (an EBS volume, a data disk)
-            size = next((node.get(k) for k in ("volumeSize", "sizeInGB", "size", "diskSize",
-                                               "allocatedStorage") if isinstance(node.get(k), (int, float))),
-                        None)
-            kind = next((str(node.get(k)) for k in ("volumeType", "storageType", "type")
-                         if isinstance(node.get(k), str)), None)
-            if size and kind:
-                parts.append({**resource, "part": path or "child", "kind": "storage",
-                              "quantity": float(size), "event": "", "unit_hint": "GB",
-                              "params": {"volumeApiName": kind, "volumeType": kind}})
+            qty, priced = _sized(node)
+            if qty:
+                # Neutral keys: these values are already vouched for by the price list, so the
+                # name/identifier suffix filter must not throw one away for being called *Name.
+                parts.append({**resource, "part": path or "storage", "kind": "storage",
+                              "quantity": qty, "event": "", "unit_hint": "GB",
+                              "params": {f"spec{i}": v for i, v in enumerate(priced.values())}})
+                if not path:
+                    # A PARENT IS NOT ITS CHILD. When the create call describes its child on ITSELF
+                    # (RDS carries allocatedStorage and storageType flat), the parent's own words include
+                    # the child's, so the parent matches the CHILD's SKUs: `storageType: gp3` left the DB
+                    # instance matching 33 GP3 STORAGE SKUs, ambiguous and unpriced, while
+                    # InstanceUsage:db.t4g.micro was on the bill.
+                    #
+                    # Removing those FIELDS is not the fix, because which string describes the child is
+                    # exactly what is not known here (dropping all of them left the instance with no
+                    # selectors at all). What IS known is that the child took the sized line, so the
+                    # parent cannot also be priced by the size: the two are different lines on the bill.
+                    parts[0] = {**parts[0], "exclude_unit": "GB"}
             for k, v in node.items():
                 _walk(v, f"{path}.{k}" if path else k)
         elif isinstance(node, list):
@@ -814,14 +789,6 @@ def billable_parts(resource: dict) -> List[dict]:
                 _walk(v, path)
 
     _walk(prm)
-    # a flat sized field on the parent itself (RDS: allocatedStorage + storageType)
-    size = prm.get("allocatedStorage")
-    stype = prm.get("storageType")
-    if isinstance(size, (int, float)) and isinstance(stype, str) and \
-            not any(p.get("kind") == "storage" for p in parts[1:]):
-        parts.append({**resource, "part": "allocatedStorage", "kind": "storage", "event": "",
-                      "quantity": float(size), "unit_hint": "GB",
-                      "params": {"volumeName": stype, "volumeApiName": stype}})
     # An internet-facing load balancer consumes a public IPv4 in every subnet it is placed in.
     # The condition used to also require kind == "load_balancer", which NEVER MATCHED: kinds come from
     # `_kind_of`, which yields "loadbalancer". The branch was dead, so every run's public IPv4 addresses
