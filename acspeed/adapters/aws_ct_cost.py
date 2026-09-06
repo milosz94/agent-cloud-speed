@@ -627,6 +627,23 @@ def price_resource_universal(resource: dict, describe=None, profile: Optional[st
                 hits += [(code, m) for m in resolve_one(cand, words)]
             except Exception:  # noqa: BLE001
                 continue
+
+        # COVERAGE IS MAXIMISED PER SERVICE, so every service contributes its own best guess and they
+        # all arrive here as equals. Measured on run23's live RDS instance: a describe of the running
+        # resource adds its maintenance windows, status, CA certificate and parameter group, and among
+        # those "standard", "region" and "available" are real attribute values SOMEWHERE, so 864 SKUs
+        # from Pinpoint, MediaLive, Chime and ElastiCache matched one word each and drowned the two that
+        # matched TWO: InstanceUsage:db.t3.micro and RDS:GP2-Storage, both in the resource's own service.
+        # The run recorded ok:false with its database unpriced.
+        #
+        # A SKU accounting for SEVERAL of the resource's words is stronger evidence than one accounting
+        # for a single generic word. The rule engages only when such evidence exists (a best of 1 is not
+        # discriminating), so a resource identified by exactly one word, or found by containment rather
+        # than by value, is left to the rules below exactly as before.
+        if len(hits) > 1:
+            best_cov = max((m.get("coverage") or 0) for _c, m in hits)
+            if best_cov > 1:
+                hits = [(c, m) for c, m in hits if (m.get("coverage") or 0) == best_cov]
         # A PART carries the unit of its own quantity, and the SKU has to be priced in that unit. A gp3
         # volume publishes three SKUs under the same name: EBS:VolumeP-IOPS.gp3 (IOPS-Mo),
         # EBS:VolumeP-Throughput.gp3 (GiBps-mo) and EBS:VolumeUsage.gp3 (GB-Mo). The part is 40 GB, so
