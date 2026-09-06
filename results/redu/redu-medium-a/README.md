@@ -15,18 +15,18 @@ found on other adapters 2026-09-03, and none is excluded by the first-poll rule 
 
 ## Result (n=10)
 
-| run | tier | total wall (s) | agent $ | fixed $/mo | deploy t1 (s) |
-|----:|:----:|---------------:|--------:|-----------:|--------------:|
-| 1 | 5/5 | 1259 | $7.88 | $44.67 | 440 |
-| 2 | 5/5 | 1456 | $9.00 | $44.53 | 238 |
-| 3 | 5/5 | 1507 | $6.88 | $44.53 | 208 |
-| 4 | 5/5 | 2747 | $12.74 | $44.53 | 283 |
-| 5 | 5/5 | 1721 | $6.10 | $44.53 | 502 |
-| 6 | 5/5 | 1098 | $6.09 | $44.53 | 278 |
-| 7 | 5/5 | 1425 | $6.60 | $44.53 | 244 |
-| 8 | 5/5 | 2439 | $7.10 | $44.53 | 310 |
-| 9 | 5/5 | 2258 | $10.57 | $44.53 | 235 |
-| 10 | 5/5 | 1979 | $6.08 | $44.53 | 319 |
+| run | total | deploy (t1) | register | site-b | integrate | durability | agent $ | fixed $/mo | $/mo @ 10k | $/mo @ 500k | $/mo @ 10M | tier |
+|----:|------:|------------:|---------:|-------:|----------:|-----------:|--------:|-----------:|-----------:|------------:|-----------:|:----:|
+| [1](sessions/5c8d930c-4a9a-41f9-b5da-9534545993fc.jsonl) | 1139 | 440 | 26 | 202 | 252 | 219 | $7.88 | $44.67 | $44.67 | $44.67 | $44.67 | 5/5 |
+| [2](sessions/822f7785-dc35-4b19-8e07-0e7a9bbaddc5.jsonl) | 1328 | 238 | 489 | 240 | 211 | 151 | $9.00 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
+| [3](sessions/bf0451fb-95af-4b26-984d-c5d49882ed02.jsonl) | 1374 | 208 | 14 | 289 | 383 | 480 | $6.88 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
+| [4](sessions/2a6a8e9a-747a-4889-8bd8-7c5265382b1c.jsonl) | 2612 | 283 | 1139 | 319 | 346 | 524 | $12.74 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
+| [5](sessions/fc1c53c8-0436-4c9c-852b-441909d7a81c.jsonl) | 1602 | 502 | 24 | 329 | 328 | 419 | $6.10 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
+| [6](sessions/8c36ac3c-d83f-4294-a0f6-7aebe5407310.jsonl) | 956 | 278 | 20 | 207 | 238 | 212 | $6.09 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
+| [7](sessions/91372ec4-50b5-4ca1-90d0-0e7095cfa939.jsonl) | 1294 | 244 | 16 | 360 | 364 | 310 | $6.60 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
+| [8](sessions/079325b1-9a4a-44fe-84e4-368626c4e403.jsonl) | 2281 | 310 | 17 | 521 | 704 | 730 | $7.10 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
+| [9](sessions/6dc203d7-7213-4101-8b3a-2509c8cf3a53.jsonl) | 2116 | 235 | 16 | 1080 | 492 | 293 | $10.57 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
+| [10](sessions/6c88956e-0aae-4718-bfb2-f931d4e2049f.jsonl) | 1863 | 319 | 25 | 640 | 453 | 426 | $6.08 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
 
 `agent $` is the **whole workflow**: deploy + the four operations + the durability cycle + teardown,
 computed with that one composition for every row so the rows are comparable.
@@ -36,23 +36,14 @@ not scale with traffic: **$44.53/mo** at every traffic level on nine runs and **
 (dated redu list price captured on each run's date; the small difference is the dated capture, not a
 configuration change).
 
-## Per operation (wall seconds)
-
-| run | deploy (t1) | register | deploy-site-b | integrate | durability | total |
-|----:|------------:|---------:|--------------:|----------:|-----------:|------:|
-| 1 | 440 | 33 | 209 | 266 | 225 | 1259 |
-| 2 | 238 | 496 | 246 | 224 | 157 | 1456 |
-| 3 | 208 | 20 | 294 | 396 | 486 | 1507 |
-| 4 | 283 | 1146 | 324 | 358 | 530 | 2747 |
-| 5 | 502 | 30 | 335 | 340 | 424 | 1721 |
-| 6 | 278 | 25 | 212 | 250 | 218 | 1098 |
-| 7 | 244 | 22 | 365 | 376 | 316 | 1425 |
-| 8 | 310 | 23 | 526 | 716 | 736 | 2439 |
-| 9 | 235 | 22 | 1086 | 504 | 298 | 2258 |
-| 10 | 319 | 31 | 645 | 464 | 432 | 1979 |
-
-`register` is the widest-spread operation: 20s on run03 against 1146s on run04, a 57x range on the same
+`register` is the widest-spread operation: 14s on run03 against 1139s on run04, an 81x range on the same
 operation and the same cloud. That spread is the reason a single run is not a measurement here.
+
+**Column basis (changed 2026-09-06).** The per-operation columns are each operation's critical-path
+`split.makespan_s`, which is what the aws, gcp and azure cells publish. This cell previously published
+`wall_s` for the same columns, which runs 5 to 14 seconds longer per operation because it includes the
+harness verification tail. Both figures are in every run record; nothing was recomputed or re-run, and
+`deploy (t1)` is unchanged because it was already time-to-serving on both bases.
 
 ## Capability (Part 1) is MEASURED, but only on the first two runs
 

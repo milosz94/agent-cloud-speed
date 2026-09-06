@@ -12,35 +12,25 @@ Postgres + a second-site VM.
 
 ## Overview (total wall = all operations; agent $ = whole workflow incl. deprovision)
 
-| run | total wall (s) | agent $ | $/mo | tier |
-|----:|---------------:|--------:|-----:|:----:|
-| 1 | 487 | $6.72 | $44.65 | 5/5 |
-| 2 | 504 | $6.77 | $44.65 | 5/5 |
-| 3 | 484 | $7.22 | $44.65 | 5/5 |
-| 4 | 497 | $6.49 | $44.65 | 5/5 |
-| 5 | 671 | $9.25 | $44.65 | 5/5 |
-| 6 | 506 | $9.39 | $44.65 | 5/5 |
-| 7 | 509 | $6.34 | $44.65 | 5/5 |
-| 8 | 465 | $7.19 | $44.65 | 5/5 |
-| 9 | 521 | $6.64 | $44.65 | 5/5 |
-| 10 | 444 | $5.48 | $44.65 | 5/5 |
+| run | total | deploy (t1) | register | site-b | integrate | durability | agent $ | fixed $/mo | $/mo @ 10k | $/mo @ 500k | $/mo @ 10M | tier |
+|----:|------:|------------:|---------:|-------:|----------:|-----------:|--------:|-----------:|-----------:|------------:|-----------:|:----:|
+| [1](sessions/487c40b0-96cd-4a15-8d48-cfd5b8dab90b.jsonl) | 456 | 267 | 18 | 44 | 27 | 101 | $6.72 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [2](sessions/ddbf8c5d-2201-4fa8-ab7e-1e8e865d46ae.jsonl) | 473 | 331 | 11 | 18 | 22 | 92 | $6.77 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [3](sessions/b661c2c6-4d64-4a2f-abb0-aad5353ddba5.jsonl) | 453 | 282 | 10 | 18 | 26 | 116 | $7.22 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [4](sessions/24d38e9d-d877-4ebe-bf46-79ee566e70f2.jsonl) | 467 | 333 | 14 | 17 | 17 | 85 | $6.49 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [5](sessions/4c66859f-bdf3-4312-aeb3-2d32700980b2.jsonl) | 642 | 308 | 15 | 53 | 35 | 232 | $9.25 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [6](sessions/90b1dead-8df2-41b7-8149-0dc1e23e0241.jsonl) | 470 | 342 | 12 | 25 | 17 | 73 | $9.39 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [7](sessions/6a7f6276-2ff4-4a53-a23d-fa43b9165915.jsonl) | 471 | 292 | 13 | 48 | 23 | 95 | $6.34 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [8](sessions/1c237077-e4ee-4a3f-adf8-b5ff384bcb4d.jsonl) | 434 | 308 | 8 | 14 | 19 | 86 | $7.19 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [9](sessions/6e3b0bdf-ec07-4d1d-9d83-5e80663a2dbc.jsonl) | 491 | 328 | 11 | 45 | 19 | 88 | $6.64 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [10](sessions/74699e2c-79ad-4ba5-9b9a-20a99b01eb72.jsonl) | 413 | 281 | 12 | 15 | 15 | 90 | $5.48 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
 
 Cost is a **standing** run-rate, flat at **$44.65/mo** (compute VM + managed Postgres). Captured 2026-09-02.
 
-## Per operation (wall seconds)
-
-| run | deploy (t1) | register | deploy-site-b | integrate | durability | total |
-|----:|------------:|---------:|--------------:|----------:|-----------:|------:|
-| 1 | 267 | 24 | 49 | 39 | 107 | 487 |
-| 2 | 331 | 17 | 23 | 35 | 98 | 504 |
-| 3 | 282 | 16 | 24 | 39 | 122 | 484 |
-| 4 | 333 | 21 | 23 | 30 | 91 | 497 |
-| 5 | 308 | 21 | 58 | 47 | 237 | 671 |
-| 6 | 342 | 19 | 30 | 30 | 84 | 506 |
-| 7 | 292 | 21 | 55 | 40 | 101 | 509 |
-| 8 | 308 | 15 | 19 | 32 | 92 | 465 |
-| 9 | 328 | 18 | 50 | 32 | 94 | 521 |
-| 10 | 281 | 19 | 21 | 28 | 96 | 444 |
+**Column basis (changed 2026-09-06).** The per-operation columns are each operation's critical-path
+`split.makespan_s`, matching the aws, gcp and azure cells. This cell previously published `wall_s`,
+which runs 5 to 14 seconds longer per operation because it includes the harness verification tail.
+Both figures are in every run record; nothing was recomputed or re-run, and `deploy (t1)` is unchanged.
 
 ## Provision spine (Part 1/2, deploy-serve only)
 
