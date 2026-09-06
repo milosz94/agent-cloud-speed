@@ -196,7 +196,7 @@ def deploy_window(rec: dict, transcript_first_ts: str) -> Tuple[str, str]:
     return t0.strftime("%Y-%m-%dT%H:%M:%SZ"), end.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _identity(params: dict) -> str:
+def _identity(params: dict, event: str = "") -> str:
     """The resource's own name, as the create/delete call names it. Used to net a mid-run create against
     its OWN delete rather than against any delete of the same kind.
 
@@ -210,11 +210,25 @@ def _identity(params: dict) -> str:
         if not isinstance(v, str) or not v or _NOT_A_SELECTOR.match(v):
             continue
         low = k.lower()
-        rank = 0 if low.endswith("identifier") else 1 if low.endswith("id") else 2 if low.endswith("name") else None
+        # identifier > name > id. A bare *Id is ranked LAST because it is often a CATALOGUE id rather
+        # than this resource's own: CreateRelationalDatabase carries relationalDatabaseBlueprintId
+        # ("postgres_16") beside relationalDatabaseName, and ranking *Id first made the engine the
+        # database's identity, which would have deduplicated two databases sharing an engine into one.
+        rank = 0 if low.endswith("identifier") else 1 if low.endswith("name") else 2 if low.endswith("id") else None
         if rank is not None:
-            ranked.append((rank, k, v))
-    ranked.sort(key=lambda t: (t[0], t[1]))
-    return ranked[0][2] if ranked else ""
+            # Between two fields of equal rank, the one named after the RESOURCE wins. A create can carry
+            # several names: CreateRelationalDatabase has `relationalDatabaseName` (the database that was
+            # provisioned) and `masterDatabaseName` (a database created INSIDE it, "umami"), and an
+            # alphabetical tie-break picked the second. Identity feeds deduplication, so a name that is
+            # not the resource's own risks silently merging two resources into one, which under-counts.
+            named_after_it = 0 if (event and _norm_key(_kind_of(event)) in _norm_key(k)) else 1
+            ranked.append((rank, named_after_it, k, v))
+    ranked.sort(key=lambda t: (t[0], t[1], t[2]))
+    return ranked[0][3] if ranked else ""
+
+
+def _norm_key(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(text).lower())
 
 
 def enabled_regions(profile: Optional[str] = None) -> List[str]:
@@ -260,14 +274,14 @@ def discover(start: str, end: str, run_token: str, regions: List[str],
                 kind = classify_event(src, name)
                 if kind == "delete":
                     deleted.append((_kind_of(name).lower(),
-                                    _identity(raw.get("requestParameters") or {}),
+                                    _identity(raw.get("requestParameters") or {}, name),
                                     raw.get("eventTime") or ""))
                     continue
                 if kind == "create":
                     prm = raw.get("requestParameters") or {}
                     found.append({"kind": _kind_of(name).lower(), "region": reg, "event": name,
                                   "src": raw.get("eventSource", "").split(".")[0],
-                                  "identity": _identity(prm), "at": raw.get("eventTime") or "",
+                                  "identity": _identity(prm, name), "at": raw.get("eventTime") or "",
                                   "params": prm,
                                   "response": raw.get("responseElements") or {}})
             nxt = d.get("NextToken")
@@ -292,7 +306,30 @@ def discover(start: str, end: str, run_token: str, regions: List[str],
             if r["kind"] == kind and (not ident or r.get("identity") == ident):
                 found.pop(i)
                 break
-    return found, sorted(set(unclassified))
+
+    # ONE RESOURCE, ONE COMPONENT. Several creates can name the SAME thing, because a service exposes
+    # changing it as another create: `CreateContainerServiceDeployment` deploys a new version of an
+    # EXISTING container service and carries that service's own `serviceName`, and `RebootDBInstance`
+    # names the instance it restarts. Counted separately they become extra resources on the bill that
+    # nobody provisioned. Measured on run22, the first live run after the catalogue hop shipped: SIX
+    # deployments of two container services were priced as six additional containers, $64.77/mo of
+    # infrastructure that never existed, on a run whose true rate is $36.30.
+    #
+    # Offline re-pricing could not have caught it: the parent's live describe is what lends a deployment
+    # the service's `power`, so once the run is torn down the double count silently disappears.
+    #
+    # The rule needs no list of which events are really mutations: two creates in the SAME service naming
+    # the SAME identity are the same resource, and the earliest is the one that stood it up.
+    deduped, seen = [], {}
+    for r in sorted(found, key=lambda x: x.get("at") or ""):
+        ident = r.get("identity") or ""
+        key = (r.get("src") or "", ident)
+        if ident and key in seen:
+            continue
+        if ident:
+            seen[key] = True
+        deduped.append(r)
+    return deduped, sorted(set(unclassified))
 
 
 # --- pricing ------------------------------------------------------------------------------------
@@ -870,7 +907,13 @@ def run_rate_universal(run_token: str, capture_date: str, regions: Optional[List
         # call of their own but ARE on the bill, so pricing only the parent under-charges silently.
         for part in billable_parts(r):
             qty = float(part.get("quantity") or 1.0)
-            p = price_resource_universal(part, describe=(describe if part.get("part") == "self" else None))
+            # PROFILE MUST REACH THE CATALOGUE LOOKUP. Without it `resolve_catalog_id` shells out with no
+            # --profile, so on any account driven by a named profile the call fails and the resource is
+            # reported as carrying no SKU. Measured on run22 (2026-09-06, the first live run after the
+            # catalogue hop shipped): the Lightsail relational database came back as `no SKU`, the exact
+            # resource the hop exists to price, because this argument was not passed.
+            p = price_resource_universal(part, profile=profile,
+                                         describe=(describe if part.get("part") == "self" else None))
             if p.get("priced"):
                 hourly = p["hourly_usd"] * qty
                 comps.append(RateComponent(name=f"{part['kind']}", hourly_usd=hourly,
