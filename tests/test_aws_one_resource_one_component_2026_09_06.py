@@ -59,6 +59,41 @@ class TestOneResourceOneComponent(unittest.TestCase):
         self.assertEqual(found[0]["event"], "CreateContainerService")
         self.assertEqual(found[0]["params"].get("power"), "small")
 
+    def test_the_call_that_describes_the_resource_wins_a_tie(self):
+        """run24: CreateBucket and PutBucketTagging carried the same identity in the SAME SECOND, so
+        "keep the earliest" broke the tie arbitrarily and kept the tagging call. Harmless for a bucket
+        (its SKU is $0.00), but the same tie would discard a create carrying `power` in favour of a
+        mutation, which under-counts silently."""
+        found, _u = self._discover([
+            _event("PutBucketTagging", {"bucketName": "acs22-src", "tagging": {}},
+                   "2026-09-06T11:11:46Z", src="s3"),
+            _event("CreateBucket", {"bucketName": "acs22-src", "storageClass": "STANDARD",
+                                    "locationConstraint": "us-east-1"},
+                   "2026-09-06T11:11:46Z", src="s3")])
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["event"], "CreateBucket",
+                         "the call with the most SKU-selecting parameters says what the resource IS")
+
+    def test_when_neither_call_carries_a_selector_the_noun_decides(self):
+        """run24's real shape: both calls reduce to a bucket name, so selector count ties. `Bucket` is
+        what `BucketTagging` is ABOUT, and the create must survive whichever order they arrive in."""
+        for order in ([("PutBucketTagging", {}), ("CreateBucket", {})],
+                      [("CreateBucket", {}), ("PutBucketTagging", {})]):
+            events = [_event(name, {"bucketName": "acs22-src", **extra},
+                             "2026-09-06T11:11:46Z", src="s3") for name, extra in order]
+            found, _u = self._discover(events)
+            self.assertEqual(len(found), 1, [f["event"] for f in found])
+            self.assertEqual(found[0]["event"], "CreateBucket", f"arrival order {order} decided it")
+
+    def test_the_container_service_survives_its_deployment_in_either_order(self):
+        """Previously this relied on the service being created FIRST."""
+        for order in (("CreateContainerServiceDeployment", "CreateContainerService"),
+                      ("CreateContainerService", "CreateContainerServiceDeployment")):
+            events = [_event(n, {"serviceName": "umami-acs22"}, "2026-09-06T00:01:00Z") for n in order]
+            found, _u = self._discover(events)
+            self.assertEqual(len(found), 1)
+            self.assertEqual(found[0]["event"], "CreateContainerService")
+
     def test_two_different_resources_are_still_two(self):
         """The guard must not merge distinct resources: this is an UNDER-count if it goes wrong."""
         found, _u = self._discover([

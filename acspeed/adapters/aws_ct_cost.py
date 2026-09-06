@@ -196,6 +196,23 @@ def deploy_window(rec: dict, transcript_first_ts: str) -> Tuple[str, str]:
     return t0.strftime("%Y-%m-%dT%H:%M:%SZ"), end.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _describes_better(candidate: dict, incumbent: dict) -> bool:
+    """Of two calls naming the SAME resource, which one says what the resource IS?
+
+    First, the one carrying more SKU-selecting parameters: a create describes the thing, a mutation
+    describes the change. When neither carries any (measured on run24: `CreateBucket` and
+    `PutBucketTagging` both reduce to a bucket name), the NOUN decides. English compounds are head-final
+    and these nouns nest, so a noun that PREFIXES the other names the thing the other is about:
+    ``Bucket`` is what ``BucketTagging`` concerns, and ``ContainerService`` is what
+    ``ContainerServiceDeployment`` deploys. That also makes the deployment case independent of the order
+    the two calls happen to arrive in, rather than relying on the service being created first."""
+    mine, theirs = len(selectors_for(candidate)), len(selectors_for(incumbent))
+    if mine != theirs:
+        return mine > theirs
+    a, b = _kind_of(candidate.get("event") or ""), _kind_of(incumbent.get("event") or "")
+    return bool(a) and a != b and b.startswith(a)
+
+
 def _identity(params: dict, event: str = "") -> str:
     """The resource's own name, as the create/delete call names it. Used to net a mid-run create against
     its OWN delete rather than against any delete of the same kind.
@@ -320,16 +337,28 @@ def discover(start: str, end: str, run_token: str, regions: List[str],
     #
     # The rule needs no list of which events are really mutations: two creates in the SAME service naming
     # the SAME identity are the same resource, and the earliest is the one that stood it up.
-    deduped, seen = [], {}
+    # Keep the call that DESCRIBES the resource, which is not always the earliest: run24's CreateBucket
+    # and PutBucketTagging carry the same identity in the same SECOND, and the tie broke arbitrarily in
+    # favour of the tagging call, so the bucket was reported as carrying no SKU instead of being priced.
+    # It cost nothing there (an S3 bucket's SKU is $0.00) but the shape is a silent under-count: the same
+    # tie would discard a create carrying `power` or `instanceType` in favour of a mutation. The call with
+    # the most SKU-selecting parameters is the one that says what the resource IS.
+    kept: Dict[tuple, dict] = {}
+    order: List[dict] = []
     for r in sorted(found, key=lambda x: x.get("at") or ""):
         ident = r.get("identity") or ""
-        key = (r.get("src") or "", ident)
-        if ident and key in seen:
+        if not ident:
+            order.append(r)
             continue
-        if ident:
-            seen[key] = True
-        deduped.append(r)
-    return deduped, sorted(set(unclassified))
+        key = (r.get("src") or "", ident)
+        prev = kept.get(key)
+        if prev is None:
+            kept[key] = r
+            order.append(r)
+        elif _describes_better(r, prev):
+            order[order.index(prev)] = r
+            kept[key] = r
+    return order, sorted(set(unclassified))
 
 
 # --- pricing ------------------------------------------------------------------------------------
