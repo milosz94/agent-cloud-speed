@@ -10,11 +10,23 @@
 | [15](sessions/3eaf6819-7aad-4e52-9c0b-ba330f9e3542.jsonl) | 9195 | 486 | 23 | 73 | 1415 | 7198 | $6.66 | $66.42 | $66.42 | $66.42 | 3/5 |
 | [16](sessions/89ff274c-1762-4c0e-bd51-c755cc6d76d6.jsonl) | 5754 | 596 | 51 | 27 | 4880 | 200 | $5.48 | $66.42 | $66.42 | $66.42 | 5/5 |
 | [18](sessions/34c7e294-d3a9-4228-8cbd-52b332c071b3.jsonl) | 5959 | 507 | 10 | 35 | 1450 | 3957 | $8.73 | $100.89 | $100.89 | $100.89 | 3/5 |
+| [22](sessions/87ade837-c291-4eba-8eb2-c6a97d64f1df.jsonl) | 1581 | 1064 | 22 | 36 | 24 | 435 | $9.06 | $36.30 | $36.30 | $36.30 | 5/5 |
+| [23](sessions/e66d9496-df9e-405d-b708-d53a4bc7b5ac.jsonl) | 1475 | 1078 | 12 | 35 | 22 | 328 | $4.27 | $37.03 | $37.03 | $37.03 | 5/5 |
+| [24](sessions/3f73e2bc-d6e5-437d-b23e-be0fb4d23dfb.jsonl) | 1608 | 1233 | 25 | 34 | 26 | 290 | $5.02 | $35.57 | $35.57 | $35.57 | 5/5 |
+| [25](sessions/f6f090dd-cccb-42f1-bccf-170a4f5e1c1c.jsonl) | 1523 | 1129 | 23 | 27 | 20 | 324 | $4.56 | $30.66 | $30.66 | $30.66 | 5/5 |
+| [26](sessions/d77d3678-9493-414d-a3da-21dc0aaec50e.jsonl) | 1762 | 1392 | 11 | 26 | 21 | 312 | $3.35 | $30.66 | $30.66 | $30.66 | 5/5 |
+| [27](sessions/b1343ebf-3466-4af3-9303-999186e4e768.jsonl) | 1114 | 870 | 23 | 68 | 28 | 125 | $2.22 | $95.66 | $95.66 | $95.66 | 5/5 |
 
-n = 8 fair of 19 attempted; 4 of the 8 reached the goal predicate (5, 6, 8, 16). Every column is a
-critical-path second and the per-operation columns sum to the total (Part 4's M). `agent $` is the deploy
-round plus the deprovision turn only; it excludes the agent spend on the four scored operations, which for
-run 13 is a further $11.58.
+n = 14 fair of 27 attempted; 10 of the 14 reached the goal predicate (5, 6, 8, 16, 22, 23, 24, 25, 26,
+27). Every column is a critical-path second and the per-operation columns sum to the total (Part 4's M).
+`agent $` is the deploy round plus the deprovision turn only; it excludes the agent spend on the four
+scored operations, which for run 13 is a further $11.58.
+
+Runs 22 to 27 are the first six measured after the cost path was rebuilt (2026-09-06). Every earlier row
+in this table was priced by the enumerate-then-price adapter; these six were priced from CloudTrail
+management events joined to the published price list by usagetype. The six reach the goal predicate 6/6
+against 4/8 for the rows above them, which is a change in the runs and not in the instrument: the tier
+score is measured off-clock by the runner and is untouched by the cost work.
 
 ## What the `$/mo` column actually prices, on every row
 
@@ -27,7 +39,7 @@ in all six medium cells; it is a property of the measurement, not of these runs.
 
 ## Exclusions, and why
 
-Eleven runs are attempted but not published. They are real data; each would misrepresent the cloud.
+Thirteen runs are attempted but not published. They are real data; each would misrepresent the cloud.
 
 | runs | reason |
 |---|---|
@@ -37,6 +49,8 @@ Eleven runs are attempted but not published. They are real data; each would misr
 | 14 | a co-provisioned RDS instance built and never priced (same fix) |
 | **17** | **its datastore existed before the deploy finished and was not priced: the container ran in `us-east-2` while its RDS was `umami-db-acsb845f10e.<...>.us-east-1.rds.amazonaws.com`, and backend enumeration only ever asked the container's own region. Priced $10.00/mo against this cell's $65 to $101 band** |
 | **19** | **same shape, different mechanism: its datastore was a Lightsail RELATIONAL DATABASE, and the merge dropped every `service == "lightsail"` row on the theory that the live path prices it. The live path prices container services only, so it fell through both. Priced $15.00/mo** |
+| 20 | cancelled part-way; its teardown never completed, so the record describes a run that did not finish |
+| 21 | its Lightsail relational database was not priced, the same shape as 19. Priced $22.00/mo against this cell's band |
 
 For 17 and 19 the datastore was verified to pre-date the cost snapshot from the run's own transcript
 timestamps (first database call at 06:05:08Z and 09:22:35Z against deploy-serve verified at 06:44:11Z and
