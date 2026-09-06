@@ -30,20 +30,6 @@
       "source": "9bb69ed8-b98a-4dfa-a529-131e716b3df6.jsonl"
     },
     {
-      "bytes_in": 543262,
-      "bytes_out": 542428,
-      "lines": 364,
-      "name": "e0991a98-7e11-4ea9-b62d-1ddbd0c4e004.jsonl",
-      "redactions": {
-        "conn-password": 5,
-        "infra-host": 2,
-        "ip": 14,
-        "value": 58
-      },
-      "residue": 0,
-      "source": "e0991a98-7e11-4ea9-b62d-1ddbd0c4e004.jsonl"
-    },
-    {
       "bytes_in": 640278,
       "bytes_out": 638731,
       "lines": 430,
@@ -148,15 +134,15 @@
     }
   ],
   "files_with_residue": {},
-  "inputs": 10,
+  "inputs": 9,
   "total_redactions": {
-    "conn-password": 21,
+    "conn-password": 16,
     "infra": 10,
-    "infra-host": 26,
-    "ip": 92,
+    "infra-host": 24,
+    "ip": 78,
     "jwt": 12,
-    "value": 648
+    "value": 590
   },
-  "total_redactions_count": 809,
-  "written": 10
+  "total_redactions_count": 730,
+  "written": 9
 }

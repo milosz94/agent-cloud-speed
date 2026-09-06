@@ -4,7 +4,6 @@
 |----:|------:|------------:|---------:|-------:|----------:|-----------:|--------:|-----------:|-----------:|------------:|-----------:|:----:|
 | [1](sessions/b62c17d1-8d4e-48ad-8b8a-1c22c34d0107.jsonl) | 2179 | 1221 | 22 | 346 | 61 | 529 | $3.88 | - | $40.87 | $42.31 | $70.34 | 5/5 |
 | [2](sessions/9bb69ed8-b98a-4dfa-a529-131e716b3df6.jsonl) | 2827 | 2252 | 32 | 194 | 152 | 197 | $2.68 | - | $40.87 | $42.31 | $70.34 | 5/5 |
-| [3](sessions/e0991a98-7e11-4ea9-b62d-1ddbd0c4e004.jsonl) | 4526 | 2977 | 309 | 906 | 170 | 164 | $3.21 | - | $23.68 | $25.13 | $53.15 | 5/5 |
 | [4](sessions/6ebe9f00-16d9-4e5f-8635-54501196d1c1.jsonl) | 3083 | 2201 | 35 | 446 | 142 | 259 | $2.77 | - | $41.86 | $43.31 | $71.34 | 5/5 |
 | [5](sessions/d544437e-6806-405c-a559-5bf16936ea5f.jsonl) | 1916 | 1350 | 32 | 308 | 58 | 168 | $4.29 | - | $39.77 | $41.22 | $69.24 | 5/5 |
 | [6](sessions/fc476b4a-62bf-46ca-a7d5-a515c1d6c311.jsonl) | 2788 | 1996 | 30 | 292 | 135 | 335 | $3.04 | - | $39.77 | $41.22 | $69.24 | 5/5 |
@@ -19,4 +18,10 @@ and the three traffic columns carry the whole cost. Run 8 landed on an App Servi
 flexible Postgres, which is a standing rate, so it is flat at $24.82/mo across every traffic level.
 
 Cost is per run, from that run's own record. The three traffic columns previously repeated run 1's
-estimate on all ten rows; they now carry each run's measured figure.
+estimate on every row; they now carry each run's measured figure.
+
+**Run 3 was removed on 2026-09-07 and will be re-run.** Its record carried `"split": null`, so it had
+no `critical_platform_s` and was already absent from the Part 3 floor ratio (which is why that row
+read n=9 against a 10-row table). It reached the goal predicate and scored 5/5, but the split could
+not be recomputed from what was stored, so the run was withdrawn rather than published with a hole.
+Run ids are unchanged, so the gap at 3 is where the re-run lands.

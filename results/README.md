@@ -38,8 +38,8 @@ serial sum, disclosed does not, which is what makes the A-vs-B comparison honest
 ### [azure/](azure/)
 
 - [azure-easy](azure/azure-easy/) - n=10
-- [azure-medium-a](azure/azure-medium-a/) - n=10
-- [azure-medium-b](azure/azure-medium-b/) - n=10
+- [azure-medium-a](azure/azure-medium-a/) - n=9 (run 3 withdrawn 2026-09-07, null split, to be re-run)
+- [azure-medium-b](azure/azure-medium-b/) - n=9 (run 3 withdrawn 2026-09-07, null split, to be re-run)
 
 ### [redu/](redu/)
 
