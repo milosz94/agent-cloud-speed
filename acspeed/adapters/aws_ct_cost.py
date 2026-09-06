@@ -552,23 +552,58 @@ def _name_heads(attrs: dict) -> set:
 def price_resource_universal(resource: dict, describe=None, profile: Optional[str] = None) -> dict:
     """Price one discovered resource from the published disclosure. No per-service pricing code.
 
-    ``describe`` is an optional callable(resource) -> extra selector dict, used when the create call
-    speaks a vocabulary the price list does not share. Measured example: Lightsail passes
-    ``relationalDatabaseBundleId: micro_2_0`` while the SKU is keyed on ``memory``/``storage``, and the
-    string ``micro_2_0`` appears in NO SKU in the published file. At cost-snapshot time the resource is
-    still alive, so it can be asked what it is; AWS::Lightsail::Database and its peers are discoverable
-    in the public CloudFormation type registry, so this needs no hand-written type map either."""
-    from acspeed.adapters.aws_price_index import find_sku, ondemand_only, service_codes
+    ASK THE RESOURCE ONLY WHAT ITS OWN CREATE CALL COULD NOT TELL YOU. ``describe`` reads the LIVE
+    resource, and a live resource answers with everything it knows: run23's RDS instance came back with
+    its maintenance windows, status, CA certificate and parameter group. Merging that unconditionally is
+    what made three consecutive live runs fail in three different ways, because every service has a
+    different describe shape, so every new service is a new surprise. That is the opposite of universal.
 
+    The create call is the authoritative record of what was ASKED FOR, and for most resources it is
+    sufficient on its own (measured: the same RDS instance resolves to exactly one SKU from
+    ``dBInstanceClass`` + ``engine`` alone). The describe is a FALLBACK for a genuine vocabulary gap, of
+    which one is measured: Lightsail passes ``relationalDatabaseBundleId: micro_2_0`` while the SKU is
+    keyed on memory and storage, and that string appears in NO published Lightsail SKU.
+
+    So: price from the create call; consult the live resource only if that fails. A describe can then
+    rescue a resource the create call could not identify, but it can never spoil one it already did."""
     region = resource.get("region") or "us-east-1"
-    sel = selectors_for(resource)
+    base = selectors_for(resource)
+    attempts = [("create call", base)]
     if describe:
         try:
-            sel.update(describe(resource) or {})
+            extra = describe(resource) or {}
         except Exception:  # noqa: BLE001 - a describe failure must not fake a price
-            pass
-    if not sel:
+            extra = {}
+        if extra:
+            attempts.append(("create call + live describe", {**base, **extra}))
+    if not any(sel for _why, sel in attempts):
         return {"priced": False, "reason": "no SKU-selecting attribute in the create call"}
+    verdicts = []
+    for why, sel in attempts:
+        if not sel:
+            continue
+        got = _price_with_selectors(resource, sel, region, profile)
+        if got.get("priced"):
+            got["evidence"] = why
+            return got
+        verdicts.append(got)
+    # A DESCRIBE MAY RESCUE, NEVER SPOIL -- including the failure it reports. A FREE resource's create
+    # call always fails to find a price, so the describe always runs on exactly the resources that have
+    # none, and its noise becomes an ambiguity that blocks the whole run: a security group returned
+    # ambiguous across 99 SKUs on its own group id, vpc id and description, and made a live run where all
+    # eight billable lines priced correctly report ok:false. When nothing priced, the create call's
+    # verdict stands, because "no SKU carries this resource's words" is the honest answer and the
+    # describe only ever added words the resource did not choose.
+    return verdicts[0] if verdicts else {
+        "priced": False, "reason": "no SKU-selecting attribute in the create call"}
+
+
+def _price_with_selectors(resource: dict, sel: Dict[str, str], region: str,
+                          profile: Optional[str] = None) -> dict:
+    """One pricing attempt against a given selector set. See `price_resource_universal`."""
+    from acspeed.adapters.aws_price_index import find_sku, ondemand_only, service_codes
+
+    sel = dict(sel)
 
     # Narrow to the resource's own service first, purely as an optimisation; fall back to the whole
     # disclosure so a service whose name does not resemble its offer code is still found.
