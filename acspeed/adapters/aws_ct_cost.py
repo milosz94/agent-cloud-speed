@@ -137,6 +137,109 @@ def _lifecycle() -> Dict[str, set]:
     return _LIFECYCLE
 
 
+_SIZE_FIELDS: Dict[str, list] = {}
+
+
+def _unit_of(spec: dict) -> Optional[Tuple[str, float]]:
+    """(dimension, divisor) when a schema property DECLARES the unit it is measured in.
+
+    Some services are billed per unit of a dimension rather than per sized SKU, and for those the create
+    call carries a NUMBER whose meaning only the vendor's own schema states. AWS states it two ways and
+    both are machine-readable:
+
+      * a pattern listing raw values beside human ones, positionally aligned --
+        ``256|512|1024|2048|4096|(0.25|0.5|1|2|4) vCPU`` says 256 units is 0.25 vCPU;
+      * prose giving two examples -- "``128`` CPU units (``0.125`` vCPUs) and ``196608`` CPU units
+        (``192`` vCPUs)" -- which is accepted ONLY when both pairs agree, so a misparse of either one
+        disagrees with the other and is rejected rather than believed.
+
+    Returns None when the service declares nothing, and the resource is then reported unpriced. A guessed
+    ratio would be a silent wrong number, which is the one outcome this module exists to prevent."""
+    text, pattern = str(spec.get("description") or ""), str(spec.get("pattern") or "")
+    m = re.match(r"^([\d|]+)\|\(([\d.|]+)\)\s*(\w+)$", pattern)
+    if m:
+        raw = [float(x) for x in m.group(1).split("|")]
+        human = [float(x) for x in m.group(2).split("|")]
+        if len(raw) == len(human) and human[0]:
+            return m.group(3), raw[0] / human[0]
+    pairs = re.findall(r"``([\d.]+)``\s*(?:CPU|cpu) units\s*\(``([\d.]+)``\s*vCPUs?\)", text)
+    if len(pairs) >= 2:
+        ratios = {round(float(a) / float(b), 6) for a, b in pairs if float(b)}
+        if len(ratios) == 1:
+            return "vCPU", ratios.pop()
+    m = re.search(r"\(in (MiB|MB|GiB|GB)\)", text)
+    if m:
+        return "GB", 1024.0 if m.group(1) in ("MiB", "MB") else 1.0
+    return None
+
+
+def size_fields() -> Dict[str, list]:
+    """`{type name: [(field path, dimension, divisor)]}` for every published resource type.
+
+    WHICH FIELDS CARRY A SIZE IS NOT A LIST I GET TO WRITE. It is in the schemas, and asking them also
+    answers a question no list could: which services are billed per UNIT at all. Measured across the
+    bundle: ECS task definitions yield Cpu and Memory, App Runner yields InstanceConfiguration.Cpu and
+    .Memory (nested), and EC2 instances, RDS instances and Lightsail containers yield NOTHING -- because
+    those are billed per sized SKU, and their schemas say so by declaring no unit."""
+    if _SIZE_FIELDS:
+        return _SIZE_FIELDS
+    from acspeed.adapters.aws_price_index import _cache_dir
+    cache = os.path.join(_cache_dir(), "cfn_size_fields.json")
+    try:
+        if os.path.exists(cache) and os.path.getsize(cache) > 0:
+            with open(cache) as fh:
+                raw = json.load(fh)
+        else:
+            import io
+            import urllib.request
+            import zipfile
+            with urllib.request.urlopen(_CFN_SCHEMA_ZIP, timeout=300) as r:  # noqa: S310 - fixed host
+                blob = r.read()
+            raw = {}
+            with zipfile.ZipFile(io.BytesIO(blob)) as z:
+                for name in z.namelist():
+                    # ONE BAD SCHEMA MUST NOT DISCARD THE OTHER 1728. Measured: `aws-budgets-budget`
+                    # contains a self-referencing $ref, the walk recursed until RecursionError, and a
+                    # single outer try/except turned that into ZERO size fields for every service --
+                    # Fargate and App Runner silently unpriced with no error anywhere. Per-file, and
+                    # the walk carries its own cycle guard.
+                    try:
+                        doc = json.loads(z.read(name))
+                        defs, found = doc.get("definitions") or {}, []
+
+                        def scan(props, prefix="", seen=()):
+                            for k, v in (props or {}).items():
+                                if not isinstance(v, dict):
+                                    continue
+                                ref = v.get("$ref") if isinstance(v.get("$ref"), str) else None
+                                if ref:
+                                    if ref in seen:
+                                        continue          # a definition that contains itself
+                                    spec, here = defs.get(ref.split("/")[-1], {}), seen + (ref,)
+                                else:
+                                    spec, here = v, seen
+                                if not isinstance(spec, dict):
+                                    continue
+                                got = _unit_of(spec)
+                                if got:
+                                    found.append([prefix + k, got[0], got[1]])
+                                if spec.get("properties") and len(here) < 12:
+                                    scan(spec["properties"], prefix + k + ".", here)
+
+                        scan(doc.get("properties"))
+                        if found:
+                            raw[str(doc.get("typeName") or name).lower()] = found
+                    except Exception:  # noqa: BLE001 - one unreadable schema is not a failure
+                        continue
+            os.makedirs(_cache_dir(), exist_ok=True)
+            with open(cache, "w") as fh:
+                json.dump(raw, fh)
+    except Exception:  # noqa: BLE001 - offline means no dimension parts, never a guessed one
+        raw = {}
+    _SIZE_FIELDS.update(raw)
+    return _SIZE_FIELDS
+
+
 def classify_event(src: str, event_name: str) -> Optional[str]:
     """"create", "delete", or None for an event that does neither.
 
@@ -376,6 +479,27 @@ def discover(start: str, end: str, run_token: str, regions: List[str],
         elif _describes_better(r, mate):
             order[order.index(mate)] = r
             bucket[bucket.index(mate)] = r
+    # HOW MANY OF IT ARE RUNNING. A create that names another create in a parameter NAMED AFTER that
+    # thing is an instance of it: `RunTask` carries `taskDefinition: <the definition's arn>`, and each
+    # task is separately billed while the definition itself is billed not at all. Without this a run that
+    # starts three tasks from one definition is priced as one, and neither the unit tests nor the
+    # conformance check can see it -- conformance verifies that every billed usagetype was PRODUCED, not
+    # that its quantity is right.
+    #
+    # COUNTED, NEVER MERGED. The alternative -- folding the definition into the task and dropping it as a
+    # resource -- can delete a billable resource when the match is wrong, which is the silent under-count
+    # this module exists to prevent. A failed match here just leaves the count at one, which is exactly
+    # today's behaviour. The parameter must be named after the referenced noun, so the ECS cluster, which
+    # merely shares the run's naming convention, does not count as a task.
+    for r in order:
+        noun = _norm_key(_kind_of(r.get("event") or ""))
+        if not noun:
+            continue
+        n = sum(1 for other in order if other is not r
+                and any(_norm_key(k) == noun and isinstance(v, str)
+                        for k, v in (other.get("params") or {}).items()))
+        if n:
+            r["instances"] = n
     return order, sorted(set(unclassified))
 
 
@@ -574,6 +698,114 @@ def _spellings(field: str, value: object, units: set) -> List[str]:
     return [f"{value:g}{unit}"] if unit in units else []
 
 
+def _size_fields_for(resource: dict) -> list:
+    """The size-bearing fields of the published TYPE this create stands up, if it has any."""
+    src, noun = (resource.get("src") or "").lower(), _kind_of(resource.get("event") or "").lower()
+    if not src or not noun:
+        return []
+    out = []
+    for type_name, fields in size_fields().items():
+        bits = type_name.split("::")
+        if len(bits) != 3 or bits[1] != src:
+            continue
+        leaf = bits[2]
+        if leaf == noun or noun.startswith(leaf) or leaf.startswith(noun):
+            out.extend(fields)
+    return out
+
+
+def _value_at(params: dict, path: str) -> Optional[float]:
+    """The numeric a schema field names, found in the create call however it chose to nest it.
+
+    Matched on the field's own name rather than on its full path, because a create call and a CFN type
+    agree on what a field is CALLED and not on where it sits (``InstanceConfiguration.Cpu`` arrives as
+    ``instanceConfiguration.cpu``, and ECS's ``Cpu`` arrives at the top level)."""
+    want = path.split(".")[-1].lower()
+    hit: List[float] = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k.lower() == want and not isinstance(v, (dict, list, bool)):
+                    try:
+                        n = float(str(v))
+                    except (TypeError, ValueError):
+                        n = 0.0
+                    if n > 0:
+                        hit.append(n)
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(params)
+    return hit[0] if hit else None
+
+
+def _family_words(resource: dict) -> List[str]:
+    """The resource's own words that might name its billing family, e.g. ``FARGATE``."""
+    return [v for v in (selectors_for(resource) or {}).values() if isinstance(v, str)]
+
+
+def price_dimension(src: str, region: str, dimension: str, words: List[str]) -> dict:
+    """The published per-unit rate for one dimension of one resource.
+
+    The DISCLOSURE names the dimension: a SKU billed per vCPU says so in its unit (``vCPU-hour``) or in
+    its usagetype (``USE1-Fargate-vCPU-Hours:perCPU``), so no attribute list is needed -- and none would
+    work, since only ECS of the five services measured publishes `cputype`/`memorytype` at all.
+
+    Among the candidates the UNQUALIFIED name wins, because a qualifier lengthens it: ``Fargate-vCPU-
+    Hours`` beats ``Fargate-ARM-vCPU-Hours`` and ``Fargate-Windows-vCPU-Hours``, and ``Fargate-GB-Hours``
+    beats ``Fargate-EphemeralStorage-GB-Hours``. That is the same reasoning as pinning ``tenancy:
+    Shared`` and ``capacitystatus: Used``: C19 prices the default configuration. It also fails SAFE here,
+    because every qualified variant measured is CHEAPER, so a wrong pick would under-count."""
+    from acspeed.adapters.aws_price_index import _norm, ondemand_only, region_offer, service_for
+    dim, ws = dimension.lower(), [_norm(w) for w in words if isinstance(w, str) and len(w) > 2]
+    best = None
+    for code in service_for(src):
+        offer = region_offer(code, region)
+        terms = (offer.get("terms") or {}).get("OnDemand", {})
+        cands = []
+        for sku, prod in (offer.get("products") or {}).items():
+            attrs = prod.get("attributes") or {}
+            usagetype = str(attrs.get("usagetype") or "")
+            dims = [{"unit": d.get("unit"),
+                     "usd": float(d.get("pricePerUnit", {}).get("USD", 0) or 0),
+                     "description": d.get("description", "")}
+                    for t in terms.get(sku, {}).values()
+                    for d in (t.get("priceDimensions") or {}).values()]
+            if not any(d["usd"] > 0 and dim in (str(d["unit"]) + usagetype).lower() for d in dims):
+                continue
+            hay = _norm(usagetype + str(attrs.get("operation") or "") + str(attrs.get("group") or ""))
+            cands.append({"sku": sku, "attributes": attrs, "usagetype": usagetype, "_hay": hay,
+                          "operation": attrs.get("operation"), "prices": dims})
+        cands = ondemand_only(cands)
+        if not cands:
+            continue
+        # The resource's own words PREFER a family when they name one, and are ignored when they do not.
+        # A create call carries plenty that no SKU could match -- a task definition's words are its
+        # family name, its network mode and its raw cpu/memory numbers, while the word that places it,
+        # FARGATE, sits inside a LIST that the selector rule does not read. Requiring them therefore
+        # rejected every candidate and left Fargate unpriced; preferring them keeps the disambiguation
+        # when it exists and falls back to the default line when it does not, which is the same way weak
+        # evidence is treated everywhere else here.
+        narrowed = [c for c in cands if any(w in c["_hay"] for w in ws)] if ws else []
+        cands = narrowed or cands
+        pick = min(cands, key=lambda m: (len(str(m["usagetype"])), str(m["usagetype"])))
+        tied = {round(next(d["usd"] for d in m["prices"] if d["usd"] > 0), 10)
+                for m in cands if len(str(m["usagetype"])) == len(str(pick["usagetype"]))}
+        if len(tied) != 1:
+            continue                      # two equally-unqualified names at different prices: refuse
+        dimension_price = next(d for d in pick["prices"] if d["usd"] > 0)
+        best = {"priced": True, "service": code, "sku": pick["sku"], "usagetype": pick["usagetype"],
+                "hourly_usd": dimension_price["usd"], "unit": dimension_price["unit"],
+                "raw": dimension_price["usd"], "selectors": {"dimension": dimension},
+                "candidates": len(cands)}
+        break
+    return best or {"priced": False,
+                    "reason": f"no published per-{dimension} rate for {src} matching {sorted(set(ws))}"}
+
+
 def _head_noun(resource: dict) -> str:
     """The last word of the resource's own noun: ``AllocateAddress`` -> "address"."""
     from acspeed.adapters.aws_price_index import _norm
@@ -614,6 +846,14 @@ def price_resource_universal(resource: dict, describe=None, profile: Optional[st
     So: price from the create call; consult the live resource only if that fails. A describe can then
     rescue a resource the create call could not identify, but it can never spoil one it already did."""
     region = resource.get("region") or "us-east-1"
+    # A per-unit DIMENSION part is not matched by attribute values at all: its rate is named by the
+    # disclosure's own unit, and its quantity came from the create call. See `price_dimension`.
+    if resource.get("dimension"):
+        got = price_dimension((resource.get("src") or "").lower(), region,
+                              str(resource["dimension"]), _family_words(resource))
+        if got.get("priced"):
+            got["evidence"] = "published per-unit rate"
+        return got
     base = selectors_for(resource)
     attempts = [("create call", base)]
     if describe:
@@ -939,6 +1179,20 @@ def billable_parts(resource: dict) -> List[dict]:
                 _walk(v, path)
 
     _walk(prm)
+    # A resource billed PER UNIT OF A DIMENSION rather than per sized SKU: Fargate and App Runner charge
+    # per vCPU-hour and per GB-hour, so the create call holds the QUANTITY and the disclosure holds the
+    # rate. This is the storage child's shape, one level more general, and it stays inside the part: the
+    # parent's own words are untouched, which is what makes it safe (widening the GLOBAL selector set
+    # instead silently under-counted every historical run by 17-60%).
+    for path, dimension, divisor in _size_fields_for(resource):
+        value = _value_at(prm, path)
+        if value is None or divisor <= 0:
+            continue
+        running = max(1, int(resource.get("instances") or 1))
+        parts.append({**resource, "part": f"{dimension.lower()}:{path}", "kind": dimension.lower(),
+                      "quantity": (value / divisor) * running, "event": "", "dimension": dimension,
+                      "params": {f"w{i}": w for i, w in enumerate(_family_words(resource))}})
+
     # An internet-facing load balancer consumes a public IPv4 in every subnet it is placed in.
     # The condition used to also require kind == "load_balancer", which NEVER MATCHED: kinds come from
     # `_kind_of`, which yields "loadbalancer". The branch was dead, so every run's public IPv4 addresses

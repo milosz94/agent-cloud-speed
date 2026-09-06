@@ -26,6 +26,7 @@ the exclusion cannot quietly widen.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -80,13 +81,39 @@ def conformance(priced_usagetypes: Sequence[str], start: str, end: str,
             "produced": sorted(produced), "window": f"{start}..{end}"}
 
 
+def tokens_in(results_dir: str, start: str, end: str) -> List[str]:
+    """Every run token in a results directory whose run happened inside the window.
+
+    A conformance check comparing SOME runs against a WHOLE account's bill reports the other runs'
+    charges as misses, which is noise that hides the real ones. Reading the tokens from the directory
+    makes the comparison complete by construction rather than by me remembering to list them."""
+    import glob
+    out = []
+    for path in sorted(glob.glob(os.path.join(results_dir, "run*.json"))):
+        try:
+            with open(path) as fh:
+                rec = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        token, when = rec.get("run_token"), str(rec.get("measured_at") or "")[:10]
+        if token and (not when or start <= when < end):
+            out.append(token)
+    return out
+
+
 def _main(argv: List[str]) -> int:
     if len(argv) < 3:
-        print("usage: python -m acspeed.aws_conformance START END TOKEN[,TOKEN...] [aws-profile]\n"
-              "  dates YYYY-MM-DD, END exclusive; tokens are acspeed run tokens whose resources were\n"
-              "  provisioned inside that window.")
+        print("usage: python -m acspeed.aws_conformance START END (TOKEN[,TOKEN...] | RESULTS_DIR) "
+              "[aws-profile]\n"
+              "  dates YYYY-MM-DD, END exclusive. Given a directory, every run token measured inside\n"
+              "  the window is read from it, so the comparison against the account's bill is complete.")
         return 2
-    start, end, tokens = argv[0], argv[1], [t for t in argv[2].split(",") if t]
+    start, end = argv[0], argv[1]
+    if os.path.isdir(argv[2]):
+        tokens = tokens_in(argv[2], start, end)
+        print(f"{len(tokens)} run tokens in {argv[2]} for {start}..{end}")
+    else:
+        tokens = [t for t in argv[2].split(",") if t]
     profile = argv[3] if len(argv) > 3 else None
     from acspeed.adapters.aws_ct_cost import (billable_parts, discover, enabled_regions,
                                               price_resource_universal)
