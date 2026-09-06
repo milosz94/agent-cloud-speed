@@ -27,9 +27,7 @@ serial sum, disclosed does not, which is what makes the A-vs-B comparison honest
 
 - [aws-easy](aws/aws-easy/) - n=10
 - [aws-medium-a](aws/aws-medium-a/) - n=7 fair (excluded, see DATA-DEFECTS: 7/9/10 unpriced standing EC2)
-- [aws-medium-b](aws/aws-medium-b/) - n=12 fair of 27 attempted, 10 reaching the goal predicate (every
-  exclusion is stated in the cell's own README; runs 22 to 27 are the first priced by the rebuilt cost
-  path, which was verified against the account's own charges)
+- [aws-medium-b](aws/aws-medium-b/) - n=12
 
 ### [gcp/](gcp/)
 

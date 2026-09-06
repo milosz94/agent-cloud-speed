@@ -4,10 +4,18 @@ The cell table is in `README.md`, in the same shape as every other cell. This fi
 detail that table cannot: n and its denominator, what the `$/mo` column prices, and why each
 unpublished run is unpublished.
 
-n = 12 fair of 27 attempted; 10 of the 12 reached the goal predicate (5, 6, 8, 16, 22, 23, 24,
-25, 26, 27). Every column is a critical-path second and the per-operation columns sum to the
-total (Part 4's M). `agent $` is the deploy round plus the deprovision turn only; it excludes
-the agent spend on the four scored operations, which for run 13 is a further $11.58.
+**Run numbers in this file are ATTEMPT ids.** `README.md` numbers its rows 1 to 12 in table order.
+The mapping is:
+
+| README row | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| attempt id | 3 | 5 | 6 | 8 | 13 | 16 | 22 | 23 | 24 | 25 | 26 | 27 |
+
+n = 12 fair of 27 attempted; 10 of the 12 reached the goal predicate (attempts 5, 6, 8, 16, 22, 23,
+24, 25, 26, 27 = README rows 2, 3, 4, 6, 7, 8, 9, 10, 11, 12). Every column is a critical-path second
+and the per-operation columns sum to the total (Part 4's M). `agent $` is the deploy round plus the
+deprovision turn only; it excludes the agent spend on the four scored operations, which for attempt 13
+(README row 5) is a further $11.58.
 
 Runs 22 to 27 are the first six measured after the cost path was rebuilt (2026-09-06). Every
 earlier row was priced by the enumerate-then-price adapter; these six were priced from
