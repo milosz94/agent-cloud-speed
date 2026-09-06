@@ -196,6 +196,18 @@ def deploy_window(rec: dict, transcript_first_ts: str) -> Tuple[str, str]:
     return t0.strftime("%Y-%m-%dT%H:%M:%SZ"), end.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _same_kind(a: dict, b: dict) -> bool:
+    """Do two calls name the same KIND of thing, or merely the same NAME?
+
+    Nested nouns are the same thing seen at different grain: a ContainerServiceDeployment is a
+    ContainerService's deployment, and a BucketTagging is a Bucket's tags. Unnested nouns are not:
+    a Beanstalk Application and its Environment share a name and are two different resources."""
+    na, nb = _kind_of(a.get("event") or ""), _kind_of(b.get("event") or "")
+    if not na or not nb:
+        return na == nb
+    return na == nb or na.startswith(nb) or nb.startswith(na)
+
+
 def _describes_better(candidate: dict, incumbent: dict) -> bool:
     """Of two calls naming the SAME resource, which one says what the resource IS?
 
@@ -343,21 +355,27 @@ def discover(start: str, end: str, run_token: str, regions: List[str],
     # It cost nothing there (an S3 bucket's SKU is $0.00) but the shape is a silent under-count: the same
     # tie would discard a create carrying `power` or `instanceType` in favour of a mutation. The call with
     # the most SKU-selecting parameters is the one that says what the resource IS.
-    kept: Dict[tuple, dict] = {}
+    # SHARING A NAME IS NOT BEING THE SAME THING. Two resources of DIFFERENT kinds routinely carry the
+    # same name: a Beanstalk application and its environment are both `acs-<token>`, and deduplicating on
+    # identity alone made the ENVIRONMENT disappear from a live run entirely -- an under-count, the worst
+    # direction. The nouns say whether they are the same thing: `ContainerServiceDeployment` is a
+    # ContainerService's deployment because one noun PREFIXES the other, while `Environment` and
+    # `Application` are simply two different resources that happen to be named alike.
+    kept: Dict[tuple, List[dict]] = {}
     order: List[dict] = []
     for r in sorted(found, key=lambda x: x.get("at") or ""):
         ident = r.get("identity") or ""
         if not ident:
             order.append(r)
             continue
-        key = (r.get("src") or "", ident)
-        prev = kept.get(key)
-        if prev is None:
-            kept[key] = r
+        bucket = kept.setdefault((r.get("src") or "", ident), [])
+        mate = next((x for x in bucket if _same_kind(r, x)), None)
+        if mate is None:
+            bucket.append(r)
             order.append(r)
-        elif _describes_better(r, prev):
-            order[order.index(prev)] = r
-            kept[key] = r
+        elif _describes_better(r, mate):
+            order[order.index(mate)] = r
+            bucket[bucket.index(mate)] = r
     return order, sorted(set(unclassified))
 
 

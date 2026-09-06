@@ -94,6 +94,28 @@ class TestOneResourceOneComponent(unittest.TestCase):
             self.assertEqual(len(found), 1)
             self.assertEqual(found[0]["event"], "CreateContainerService")
 
+    def test_two_kinds_sharing_a_name_are_two_resources(self):
+        """Measured on the live arch matrix: a Beanstalk application and its environment are BOTH named
+        `acs-<token>`, and deduplicating on identity alone made the ENVIRONMENT vanish from the run -- an
+        under-count. Nested nouns are one thing at two grains; unnested nouns are two things."""
+        found, _u = self._discover([
+            _event("CreateApplication", {"applicationName": "acs22"}, "2026-09-06T12:59:00Z",
+                   src="elasticbeanstalk"),
+            _event("CreateEnvironment", {"applicationName": "acs22", "environmentName": "acs22",
+                                         "solutionStackName": "64bit Amazon Linux 2023 running Python"},
+                   "2026-09-06T13:00:43Z", src="elasticbeanstalk")])
+        self.assertEqual(sorted(f["event"] for f in found),
+                         ["CreateApplication", "CreateEnvironment"],
+                         "an environment must not be swallowed by an application of the same name")
+
+    def test_nested_nouns_are_still_one_resource(self):
+        """The guard must not undo the deployment dedupe it sits beside."""
+        self.assertTrue(ct._same_kind({"event": "CreateContainerServiceDeployment"},
+                                      {"event": "CreateContainerService"}))
+        self.assertTrue(ct._same_kind({"event": "PutBucketTagging"}, {"event": "CreateBucket"}))
+        self.assertFalse(ct._same_kind({"event": "CreateEnvironment"},
+                                       {"event": "CreateApplication"}))
+
     def test_two_different_resources_are_still_two(self):
         """The guard must not merge distinct resources: this is an UNDER-count if it goes wrong."""
         found, _u = self._discover([
