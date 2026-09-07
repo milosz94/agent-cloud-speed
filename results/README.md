@@ -29,6 +29,11 @@ serial sum, disclosed does not, which is what makes the A-vs-B comparison honest
 - [aws-medium-a](aws/aws-medium-a/) - n=10 fair (3 attempts excluded, unpriced standing EC2; see DATA-DEFECTS)
 - [aws-medium-b](aws/aws-medium-b/) - n=12
 
+This benchmark names the clouds it measures. `../BENCHMARK-TERMS.md` records what each provider's own
+terms say about publishing benchmark results, quoted from the primary source and dated, and how this
+project meets them. All three permit publication; the condition they share is that the disclosure
+carry enough to replicate it, which is what this tree is.
+
 **AWS cost was re-priced on 2026-09-07** across all 32 published AWS rows, from the settled CloudTrail
 log rather than the snapshot taken at end-of-run. `REPRICE-2026-09-07.md` holds the before/after and the
 control. GCP, Azure and redu are untouched.
