@@ -11,6 +11,7 @@
 | [7](sessions/bef9e3ac-b326-4c68-9755-2b6ae52c0238.jsonl) | 2914 | 1503 | 530 | 339 | 203 | 339 | $8.47 | $24.82 | $24.82 | $24.82 | $24.82 | 5/5 |
 | [8](sessions/f7c1868d-5cc5-4d0c-86a8-36b79253c21f.jsonl) | 2427 | 1521 | 49 | 452 | 166 | 239 | $5.51 | - | $39.77 | $41.22 | $69.24 | 5/5 |
 | [9](sessions/8af17e04-14aa-4732-bf68-dc67a798b8f9.jsonl) | 1315 | 740 | 48 | 251 | 134 | 142 | $10.23 | - | $39.77 | $41.22 | $69.24 | 5/5 |
+| [10](sessions/a29d63d5-dcc7-4065-934a-abec2b3647ca.jsonl) | 2879 | 2201 | 48 | 248 | 168 | 214 | $5.58 | - | $40.87 | $42.31 | $70.34 | 5/5 |
 
 `fixed $/mo` is a standing run-rate and exists only where the deployment has one. Runs 1-6 and 8-9
 landed on Azure Container Apps, which is usage-metered, so there is no fixed monthly figure for them
@@ -20,13 +21,16 @@ flexible Postgres, which is a standing rate, so it is flat at $24.82/mo across e
 Cost is per run, from that run's own record. The three traffic columns previously repeated run 1's
 estimate on every row; they now carry each run's measured figure.
 
-Run numbers are the table's own 1 to 9; each row's session file is its durable identifier.
+Run numbers are the table's own 1 to 10; each row's session file is its durable identifier.
 
-**One attempt was withdrawn on 2026-09-07 and will be re-run.** Its record carried `"split": null`, so
-it had no `critical_platform_s` and was already absent from the Part 3 floor ratio (which is why this
-cell read n=9 against a 10-row table). It reached the goal predicate and scored 5/5, but the split
-could not be recomputed from what was stored, so it was withdrawn rather than published with a hole.
-The re-run is appended as row 10 when it lands.
+**Three attempts were withdrawn on 2026-09-07, and row 10 is the replacement.** All three carried
+`"split": null`, so they had no `critical_platform_s` and were already absent from the Part 3 floor
+ratio. Each reached its goal predicate, but the split could not be recomputed from what was stored.
+The cause was found and closed the same day: the harness ran agent turns on the HOST when the microVM
+substrate was unavailable, warning rather than refusing, so every quantity read from the VM came back
+null while `time_to_serving_s` survived and made the run look successful. A second attempt failed a
+different way, deploying the acspeed checkout itself and overflowing the guest disk. `autorun.py` now
+refuses in all three cases before any cloud resource exists.
 
 `agent $` is the agent's LLM cost for **the task being measured**: the deploy round, plus each
 operation, plus the durability cycles. Teardown is harness bookkeeping and stays out, matching the rule

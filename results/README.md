@@ -42,7 +42,7 @@ control. GCP, Azure and redu are untouched.
 ### [azure/](azure/)
 
 - [azure-easy](azure/azure-easy/) - n=10
-- [azure-medium-a](azure/azure-medium-a/) - n=9
+- [azure-medium-a](azure/azure-medium-a/) - n=10
 - [azure-medium-b](azure/azure-medium-b/) - n=10
 
 ### [redu/](redu/)
