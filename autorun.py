@@ -2178,39 +2178,94 @@ def main() -> None:
                          "t1; teardown resumes the builder session to remove ALL resources it created. "
                          "Default None = Easy (deploy-only).")
     a = ap.parse_args()
+    # HARD BLOCK, 2026-09-07. This used to warn and continue on the host. It must not: a host run still
+    # serves a URL and still records time_to_serving_s, so it LOOKS successful, while every quantity read
+    # out of the microVM's out.json comes back null (the platform/agent split, the per-operation splits,
+    # the session id, steps, cost). That produced two unusable azure-medium-a runs, run03 and run11, each
+    # discovered only at ingest time, hours after the run was paid for. run11 was worse: its stale
+    # bootlogs came from a DIFFERENT run (token acsbceb0b48 against the record's acsf58e4305), so the
+    # directory looked complete. A run without the microVM is also not the hermetic per-cloud substrate
+    # the paper claims (C9), so its numbers are not the paper's numbers even when they are present.
+    ok, why = sandbox_available()
+    if a.no_sandbox or not ok:
+        reason = "--no-sandbox was passed" if a.no_sandbox else why
+        sys.exit(
+            f"\nREFUSING TO RUN: the microVM substrate is required and is not in use ({reason}).\n\n"
+            "A host run yields no platform/agent split, no per-operation splits, no session id, no steps\n"
+            "and no cost, and is not the hermetic per-cloud substrate the paper measures. It would burn\n"
+            "real cloud spend to produce a record that cannot become a published row.\n\n"
+            "Bring the substrate up, then re-run:\n"
+            "    sudo modprobe kvm_amd            # or kvm_intel\n"
+            "    sudo bash sandbox/net-setup.sh   # bring the acspeed tap(s) up\n\n"
+            "Confirm before spending anything:\n"
+            "    python3 -c \"import sys;sys.path.insert(0,'.');"
+            "from autorun import sandbox_available;print(sandbox_available())\"\n"
+            "Expect (True, '').\n")
     _install_signal_guards()   # Ctrl-C now kills agent turns + microVMs and returns the terminal
 
     adapter = ADAPTERS[a.adapter]
     app_dir = os.path.abspath(os.path.expanduser(a.app_dir)) if a.app_dir else os.getcwd()
     if not os.path.isdir(app_dir):
         ap.error(f"app dir is not a directory: {app_dir}")
+    # HARD BLOCK 2. The app dir defaults to the CURRENT directory, so running the tool from its own
+    # checkout silently makes the harness the app under test. Measured on azure-medium-a run11
+    # (2026-09-07): task recorded as "agent-cloud-speed", a 4.2 GB working copy, every operation VM
+    # dead in ~13s with "tar: No space left on device" because the guest disk cannot hold it, and
+    # results/ copied straight into the agent's cwd, which hands it every published run log. The run
+    # burned real cloud spend and scored 1/5 for reasons that had nothing to do with the cloud.
+    _self = os.path.dirname(os.path.abspath(__file__))
+    if app_dir == _self or app_dir.startswith(_self + os.sep) or _self.startswith(app_dir + os.sep):
+        sys.exit(
+            f"\nREFUSING TO RUN: --app-dir is the acspeed checkout itself ({app_dir}).\n\n"
+            "The app dir defaults to the current directory, so this happens by running the tool from\n"
+            "its own folder. The harness would deploy ITSELF: a multi-gigabyte working copy that\n"
+            "overflows the guest disk, and results/ handed to the agent as if it were application\n"
+            "code, which leaks every published run log into the measurement.\n\n"
+            "cd to the application first, or pass --app-dir explicitly:\n"
+            "    cd ~/Desktop/tests_lib/umami && acspeed-run --adapter <cloud> ...\n")
     # results + data are GROUPED BY CLOUD (see resolve_out_dir): <app>/acspeed-results/<adapter>/.
     out_dir, copy_ignore = resolve_out_dir(app_dir, a.adapter, a.out)
     # the working copy lives in a temp dir OUTSIDE the app folder, so it never pollutes it. The CLOUD is
     # in the path so the SAME app can run on multiple clouds CONCURRENTLY without clobbering one shared
     # working copy (the overnight parallel Easy batch: umami on redu/aws/gcp/azure at once).
+    # HARD BLOCK 3. The working copy is unpacked inside the guest, whose disk is fixed. A copy the guest
+    # cannot hold fails as `tar: No space left on device`, the agent never starts, and the harness
+    # records agent_error=True: an infrastructure failure attributed to the agent. Measured on
+    # azure-medium-a run11 (2026-09-07), a 4.2 GB copy. Checked here, before any cloud resource exists,
+    # so the answer costs nothing.
+    _bytes = 0
+    for _root, _dirs, _files in os.walk(app_dir):
+        _dirs[:] = [d for d in _dirs if d not in copy_ignore]
+        for _f in _files:
+            try:
+                _bytes += os.path.getsize(os.path.join(_root, _f))
+            except OSError:
+                pass
+    APP_COPY_LIMIT = 1_500_000_000
+    if _bytes > APP_COPY_LIMIT:
+        sys.exit(
+            f"\nREFUSING TO RUN: the app dir copies {_bytes / 1e9:.1f} GB into the guest "
+            f"(limit {APP_COPY_LIMIT / 1e9:.1f} GB).\n\n"
+            "The guest disk is fixed. A copy it cannot hold fails while unpacking, the agent never\n"
+            "starts, and the run is recorded as an AGENT error, which it is not.\n\n"
+            f"app dir: {app_dir}\n"
+            "Deploy a real application directory, or exclude the bulk from it.\n")
     work_cwd = os.path.join(tempfile.gettempdir(),
                             f"acspeed-work-{os.path.basename(app_dir.rstrip('/'))}-{a.adapter}")
     # the hermetic per-cloud substrate (C9): each agent turn runs in a fresh microVM holding ONLY the
     # target cloud's credentials. Same CLI; auto-enabled when built + KVM/tap present.
     sandbox = None
-    if not a.no_sandbox:
-        ok, why = sandbox_available()
-        if ok:
-            # generalized credential mounting: aws keeps ~/.aws (dot-aws, the existing path); gcp/azure
-            # mount ~/.config/gcloud / ~/.azure as dot-config-gcloud / dot-azure. Only the TARGET cloud's
-            # creds are staged, so the hermetic-substrate scoping (C9) holds across all clouds. The guest
-            # placement of the new dirs activates on the next rootfs rebuild (README); --no-sandbox uses
-            # host creds directly and needs no mount.
-            sandbox = {"keep_claude_tokens": adapter.get("keep_claude_tokens", []),
-                       "aws_dir": (os.path.expanduser(adapter["aws_creds"]) if adapter.get("aws_creds") else None),
-                       "creds_mounts": {name: os.path.expanduser(adapter[key])
-                                        for key, name in (("gcp_creds", "dot-config-gcloud"),
-                                                          ("azure_creds", "dot-azure"))
-                                        if adapter.get(key)},
-                       "session_store": None}
-        else:
-            _log(f"microVM substrate NOT used ({why}); running agent turns on the HOST.")
+    # generalized credential mounting: aws keeps ~/.aws (dot-aws, the existing path); gcp/azure mount
+    # ~/.config/gcloud / ~/.azure as dot-config-gcloud / dot-azure. Only the TARGET cloud's creds are
+    # staged, so the hermetic-substrate scoping (C9) holds across all clouds. The guest placement of
+    # the new dirs activates on the next rootfs rebuild (README).
+    sandbox = {"keep_claude_tokens": adapter.get("keep_claude_tokens", []),
+               "aws_dir": (os.path.expanduser(adapter["aws_creds"]) if adapter.get("aws_creds") else None),
+               "creds_mounts": {name: os.path.expanduser(adapter[key])
+                                for key, name in (("gcp_creds", "dot-config-gcloud"),
+                                                  ("azure_creds", "dot-azure"))
+                                if adapter.get(key)},
+               "session_store": None}
 
     cloud_label = adapter.get("cloud_label", a.adapter)
     prof = {**CONFIG, **adapter, "cloud": a.adapter, "task": os.path.basename(app_dir.rstrip("/")),
