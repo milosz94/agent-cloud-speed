@@ -12,15 +12,32 @@
       },
       "residue": 0,
       "source": "a36f967f-b3ad-4162-9d8f-9391e3470ecd.jsonl"
+    },
+    {
+      "bytes_in": 605482,
+      "bytes_out": 604498,
+      "lines": 378,
+      "name": "b3a253e8-873c-47d4-8468-79eddb206ff2.jsonl",
+      "redactions": {
+        "conn-password": 1,
+        "infra": 2,
+        "infra-host": 4,
+        "ip": 4,
+        "value": 44
+      },
+      "residue": 0,
+      "source": "b3a253e8-873c-47d4-8468-79eddb206ff2.jsonl"
     }
   ],
   "files_with_residue": {},
-  "inputs": 1,
+  "inputs": 2,
   "total_redactions": {
-    "conn-password": 1,
-    "ip": 6,
-    "value": 31
+    "conn-password": 2,
+    "ip": 10,
+    "value": 75,
+    "infra": 2,
+    "infra-host": 4
   },
-  "total_redactions_count": 38,
-  "written": 1
+  "total_redactions_count": 93,
+  "written": 2
 }

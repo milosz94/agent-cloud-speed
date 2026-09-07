@@ -11,6 +11,12 @@
 | [8](sessions/dc28d2fb-fdf0-4fe4-8ab0-53fb52a46800.jsonl) | 2043 | 1807 | 11 | 12 | 20 | 193 | $4.57 | - | $44.84 | $46.28 | $74.31 | 5/5 |
 | [9](sessions/4a7318ab-90b2-412c-b1e6-afb9e151b1d6.jsonl) | 1688 | 1428 | 13 | 30 | 22 | 195 | $6.00 | $37.23 | $37.23 | $37.23 | $37.23 | 5/5 |
 | [10](sessions/a36f967f-b3ad-4162-9d8f-9391e3470ecd.jsonl) | 1791 | 1477 | 12 | 96 | 31 | 175 | $4.00 | $37.23 | $37.23 | $37.23 | $37.23 | 5/5 |
+| [12](sessions/b3a253e8-873c-47d4-8468-79eddb206ff2.jsonl) | 2299 | 1999 | 14 | 51 | 25 | 210 | $4.74 | $40.81 | $40.81 | $40.81 | $40.81 | 5/5 |
+
+**Run 12 (2026-09-07) is the replacement for the withdrawn run 3**, bringing the cell back to n=10. It
+landed on a standing App Service plan (B2) plus a flexible Postgres at $40.81/mo, so its cost column is
+flat across traffic like the other standing-architecture rows. Attempt 11 of this batch is not published:
+it ended `FAILURE-no-url` with no served URL, so it fails the first fairness criterion.
 
 **Run 3 was removed on 2026-09-07 and will be re-run.** Its record carried `"split": null`, so it had
 no `critical_platform_s` and was already absent from the Part 3 floor ratio (which is why that row
