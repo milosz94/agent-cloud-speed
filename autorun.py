@@ -2241,6 +2241,9 @@ def main() -> None:
                 _bytes += os.path.getsize(os.path.join(_root, _f))
             except OSError:
                 pass
+    # 1.5 GB is measured, not guessed: the guest rootfs is 4.3 GB with 3.2 GB free (dumpe2fs on
+    # sandbox/images/rootfs.ext4, 2026-09-07), and the app is extracted into it, so the limit leaves
+    # ~1.7 GB of working room for what the agent then does inside the guest.
     APP_COPY_LIMIT = 1_500_000_000
     if _bytes > APP_COPY_LIMIT:
         sys.exit(
