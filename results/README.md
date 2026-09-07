@@ -26,7 +26,7 @@ serial sum, disclosed does not, which is what makes the A-vs-B comparison honest
 ### [aws/](aws/)
 
 - [aws-easy](aws/aws-easy/) - n=10
-- [aws-medium-a](aws/aws-medium-a/) - n=7 fair (excluded, see DATA-DEFECTS: 7/9/10 unpriced standing EC2)
+- [aws-medium-a](aws/aws-medium-a/) - n=10 fair (excluded, see DATA-DEFECTS: 7/9/10 unpriced standing EC2; rows 11-13 priced by the newer mechanism, see that cell's README)
 - [aws-medium-b](aws/aws-medium-b/) - n=12
 
 ### [gcp/](gcp/)
