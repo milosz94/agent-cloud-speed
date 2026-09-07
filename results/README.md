@@ -26,8 +26,12 @@ serial sum, disclosed does not, which is what makes the A-vs-B comparison honest
 ### [aws/](aws/)
 
 - [aws-easy](aws/aws-easy/) - n=10
-- [aws-medium-a](aws/aws-medium-a/) - n=10 fair (excluded, see DATA-DEFECTS: 7/9/10 unpriced standing EC2; rows 11-13 priced by the newer mechanism, see that cell's README)
+- [aws-medium-a](aws/aws-medium-a/) - n=10 fair (3 attempts excluded, unpriced standing EC2; see DATA-DEFECTS)
 - [aws-medium-b](aws/aws-medium-b/) - n=12
+
+**AWS cost was re-priced on 2026-09-07** across all 32 published AWS rows, from the settled CloudTrail
+log rather than the snapshot taken at end-of-run. `REPRICE-2026-09-07.md` holds the before/after and the
+control. GCP, Azure and redu are untouched.
 
 ### [gcp/](gcp/)
 
