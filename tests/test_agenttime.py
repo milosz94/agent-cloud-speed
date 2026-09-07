@@ -38,7 +38,14 @@ class TestAgentTime(unittest.TestCase):
         self.assertAlmostEqual(r["critical_components"]["orchestration"], 3.0)
 
     def test_inference_seconds(self):
-        self.assertAlmostEqual(at.inference_seconds(0.5, 0.01, 100), 1.5)
+        # TTFT prices the first token; TPOT prices the other 99, not all 100.
+        self.assertAlmostEqual(at.inference_seconds(0.5, 0.01, 100), 1.49)
+
+    def test_inference_seconds_first_token_not_double_charged(self):
+        # A one-token generation costs exactly TTFT: no inter-token gaps exist.
+        self.assertAlmostEqual(at.inference_seconds(0.5, 0.01, 1), 0.5)
+        # And no tokens means no generation latency at all.
+        self.assertAlmostEqual(at.inference_seconds(0.5, 0.01, 0), 0.0)
 
     def test_inference_seconds_negative(self):
         with self.assertRaises(ValueError):

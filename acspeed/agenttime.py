@@ -4,7 +4,8 @@ Raw agent-time is the sum of all agent spans (total effort). Critical agent-time
 is the subset on the critical path (the contribution to wall-clock that a user
 feels). ``overlap = raw - critical``. Components are labelled by kind:
 inference / orchestration / wait / rework. Inference seconds follow the
-standardized MLPerf metrics, ``TTFT + TPOT * output_tokens``.
+standardized MLPerf metrics, ``TTFT + TPOT * (output_tokens - 1)``: TTFT already
+prices the first token, so TPOT prices only the tokens generated after it.
 """
 from __future__ import annotations
 
@@ -24,10 +25,20 @@ COMPONENT_KINDS = (INFERENCE, ORCHESTRATION, WAIT, REWORK, OTHER)
 
 
 def inference_seconds(ttft: float, tpot: float, output_tokens: int) -> float:
-    """Model-generation latency = TTFT + TPOT * output_tokens (MLPerf TTFT/TPOT)."""
+    """Model-generation latency = TTFT + TPOT * (output_tokens - 1) (MLPerf TTFT/TPOT).
+
+    The ``- 1`` is the definition, not an off-by-one: MLPerf's TTFT is the latency
+    to the FIRST output token, and TPOT is the inter-token time over the tokens
+    generated after it, so pricing all ``n`` tokens at TPOT double-counts the first.
+    A single-token generation therefore costs exactly TTFT, and a generation that
+    produced no tokens costs nothing (there was no first token to wait for).
+    Mirrors Part 1 Eq. (agenttime); keep the two in step.
+    """
     if ttft < 0 or tpot < 0 or output_tokens < 0:
         raise ValueError("inference parameters must be non-negative")
-    return ttft + tpot * output_tokens
+    if output_tokens == 0:
+        return 0.0
+    return ttft + tpot * (output_tokens - 1)
 
 
 def decompose(spans: Sequence[Span], agent: str = AGENT, platform: str = PLATFORM) -> dict:
