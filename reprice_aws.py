@@ -102,17 +102,20 @@ def reprice(rec: dict, regions, profile=None) -> dict:
     return d
 
 
-def load(cell: str, run: int) -> dict:
-    return json.load(open(f"{STAGING}/{cell}/run{run:02d}.json"))
+# Resolving a cell's published rows to run records is NOT a run-number lookup. Cells renumber their
+# rows 1..n for display while staging ids stay non-contiguous (aws-medium-b publishes 12 rows whose
+# staging runs start at 03; a number join silently loads the WRONG runs). paper_tables already does
+# the correct join, through the session UUID in each row's link, so reuse it rather than repeat it.
+import paper_tables as pt   # noqa: E402
 
 
-def published_runs(cell: str):
-    """The run numbers this cell publishes, read from its README so a dropped run stays dropped."""
-    import re
-    cloud = cell.split("-")[0]
-    path = f"{REPO}/results/{cloud}/{cell}/README.md"
-    rows = re.findall(r"^\|\s*(?:\[(\d+)\]\(sessions/|(\d+)\s*\|)", open(path).read(), re.M)
-    return [int(a or b) for a, b in rows]
+def cell_records(cell: str) -> list:
+    """(record, label) for every PUBLISHED row of a cell, joined by session UUID."""
+    cloud, _, tier = cell.partition("-")
+    tier = tier or "easy"
+    suffix = "" if tier == "easy" else f"-{tier}"
+    recs = pt.published_records(cloud, suffix, tier)
+    return [(r, f"row{i + 1}(run{r.get('run')})") for i, r in enumerate(recs)]
 
 
 def main() -> None:
@@ -126,35 +129,36 @@ def main() -> None:
     a = ap.parse_args()
 
     regions = ["us-east-1"]        # every priced resource in these cells is us-east-1; verified
-    runs = ([int(x) for x in a.runs.split(",") if x.strip()] if a.runs
-            else published_runs(a.cell))
+    rows = cell_records(a.cell)
+    if a.runs:
+        want = {int(x) for x in a.runs.split(",") if x.strip()}
+        rows = [(r, lab) for r, lab in rows if r.get("run") in want]
 
     if a.control:
-        runs = [r for r in runs
-                if "cloudtrail" in str((load(a.cell, r).get("cost_run_rate") or {}).get("discovery"))]
-        if not runs:
+        rows = [(r, lab) for r, lab in rows
+                if "cloudtrail" in str((r.get("cost_run_rate") or {}).get("discovery"))]
+        if not rows:
             print("no CloudTrail-priced run in this cell to control against")
             return
-        print(f"CONTROL on {a.cell}: {runs}")
+        print(f"CONTROL on {a.cell}: {[lab for _, lab in rows]}")
 
     out = {}
-    for n in runs:
-        rec = load(a.cell, n)
+    for rec, n in rows:
         old = rec.get("cost_run_rate") or {}
         new = reprice(rec, regions, a.profile)
         o = old.get("monthly_usd")
         m = new.get("monthly_usd")
         tag = "old-mechanism" if "cloudtrail" not in str(old.get("discovery")) else "CONTROL"
         if m is None:
-            print(f"  run{n:02d} [{tag}] FAILED: {new.get('error')}")
+            print(f"  {n} [{tag}] FAILED: {new.get('error')}")
         else:
             delta = "" if o is None else f"  ({(m - o) / o * 100:+.1f}%)"
             match = ""
             if tag == "CONTROL":
                 match = "   MATCHES" if abs(m - (o or 0)) < 0.005 else "   *** DIFFERS ***"
-            print(f"  run{n:02d} [{tag}] ${o:>8.2f} -> ${m:>8.2f}{delta}"
+            print(f"  {n:<16} [{tag}] ${o:>8.2f} -> ${m:>8.2f}{delta}"
                   f"  resources={new.get('n_resources')} unpriced={len(new.get('unpriced_resources') or [])}{match}")
-        out[f"run{n:02d}"] = {"old": old, "new": new}
+        out[n] = {"old": old, "new": new}
 
     if a.apply:
         cloud = a.cell.split("-")[0]
