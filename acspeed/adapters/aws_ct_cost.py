@@ -1254,17 +1254,30 @@ def collapse_task_definitions(resources: List[dict]) -> Tuple[List[dict], List[s
     def family_of(arn: str) -> str:
         return arn.split("/")[-1].split(":")[0] if arn else ""
 
-    runners: Dict[str, int] = {}
+    # A family's STANDING count is not the number of runner EVENTS. Measured on aws-easy run03: one
+    # CreateService with desiredCount=1 plus THREE sequential RunTask attempts, which summed to 4 and
+    # priced 16 vCPU, $621.65/mo against a published $66.45. Retries are sequential, not concurrent.
+    # So: a service is a standing deployment and its LATEST desiredCount counts once per distinct
+    # service; standalone RunTask attempts are transient, and only their maximum is taken, never a sum.
+    svc: Dict[str, Dict[str, int]] = {}     # family -> {service identity: latest desiredCount}
+    tasks: Dict[str, int] = {}              # family -> max standalone task count
     for r in resources:
         p = r.get("params") or {}
         fam = family_of(str(p.get("taskDefinition") or ""))
         if not fam:
             continue
         try:
-            n = int(str(p.get("desiredCount") or p.get("count") or 1))
+            n = max(int(str(p.get("desiredCount") or p.get("count") or 1)), 0)
         except ValueError:
             n = 1
-        runners[fam] = runners.get(fam, 0) + max(n, 0)
+        if p.get("desiredCount") is not None:
+            ident = str(p.get("serviceName") or r.get("identity") or "?")
+            svc.setdefault(fam, {})[ident] = n          # latest write wins: an update is not a new service
+        else:
+            tasks[fam] = max(tasks.get(fam, 0), n)
+    runners: Dict[str, int] = {}
+    for fam in set(svc) | set(tasks):
+        runners[fam] = sum(svc[fam].values()) if fam in svc else tasks.get(fam, 1)
 
     latest: Dict[str, dict] = {}
     for r in resources:
@@ -1285,6 +1298,12 @@ def collapse_task_definitions(resources: List[dict]) -> Tuple[List[dict], List[s
             continue
         emitted.add(fam)
         keep = dict(r)
+        # `instances` is the multiplicity discover attaches to identical creates, and billable_parts
+        # multiplies the part quantity by it. For a task definition that multiplicity IS the revision
+        # count, which this function has just collapsed, so leaving it applies the same thing twice.
+        # Measured on aws-easy run03: 4 resources each carrying instances=4 priced 16 vCPU, $621.65/mo
+        # against a published $66.45. A bundle is one template; its only multiplicity is the runner.
+        keep["instances"] = 1
         keep["runner_count"] = runners.get(fam, 1)
         out.append(keep)
     for fam in sorted(emitted):
