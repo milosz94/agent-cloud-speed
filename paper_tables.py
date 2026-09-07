@@ -240,7 +240,6 @@ def table_51(cells: list) -> str:
             f"{c['live_k']}/{c['n']} [{c['live_lo']:.0f}, {c['live_hi']:.0f}]\\% & "
             f"$[{c['ratio_lo']:.2f},\\ {c['ratio_hi']:.2f}]$ & "
             f"{_n(c['sel'], 1)} / {_n(c['exec'], 1)} \\\\")
-    rows.append(r"\multicolumn{8}{l}{\emph{Hard tier: not run; no cell exists on any cloud.}} \\")
     return "\n".join(rows)
 
 
