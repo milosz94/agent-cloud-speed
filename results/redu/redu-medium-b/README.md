@@ -14,16 +14,16 @@ Postgres + a second-site VM.
 
 | run | total | deploy (t1) | register | site-b | integrate | durability | agent $ | fixed $/mo | $/mo @ 10k | $/mo @ 500k | $/mo @ 10M | tier |
 |----:|------:|------------:|---------:|-------:|----------:|-----------:|--------:|-----------:|-----------:|------------:|-----------:|:----:|
-| [1](sessions/487c40b0-96cd-4a15-8d48-cfd5b8dab90b.jsonl) | 456 | 267 | 18 | 44 | 27 | 101 | $6.72 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
-| [2](sessions/ddbf8c5d-2201-4fa8-ab7e-1e8e865d46ae.jsonl) | 473 | 331 | 11 | 18 | 22 | 92 | $6.77 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
-| [3](sessions/b661c2c6-4d64-4a2f-abb0-aad5353ddba5.jsonl) | 453 | 282 | 10 | 18 | 26 | 116 | $7.22 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
-| [4](sessions/24d38e9d-d877-4ebe-bf46-79ee566e70f2.jsonl) | 467 | 333 | 14 | 17 | 17 | 85 | $6.49 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
-| [5](sessions/4c66859f-bdf3-4312-aeb3-2d32700980b2.jsonl) | 642 | 308 | 15 | 53 | 35 | 232 | $9.25 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
-| [6](sessions/90b1dead-8df2-41b7-8149-0dc1e23e0241.jsonl) | 470 | 342 | 12 | 25 | 17 | 73 | $9.39 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
-| [7](sessions/6a7f6276-2ff4-4a53-a23d-fa43b9165915.jsonl) | 471 | 292 | 13 | 48 | 23 | 95 | $6.34 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
-| [8](sessions/1c237077-e4ee-4a3f-adf8-b5ff384bcb4d.jsonl) | 434 | 308 | 8 | 14 | 19 | 86 | $7.19 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
-| [9](sessions/6e3b0bdf-ec07-4d1d-9d83-5e80663a2dbc.jsonl) | 491 | 328 | 11 | 45 | 19 | 88 | $6.64 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
-| [10](sessions/74699e2c-79ad-4ba5-9b9a-20a99b01eb72.jsonl) | 413 | 281 | 12 | 15 | 15 | 90 | $5.48 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [1](sessions/487c40b0-96cd-4a15-8d48-cfd5b8dab90b.jsonl) | 456 | 267 | 18 | 44 | 27 | 101 | $4.33 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [2](sessions/ddbf8c5d-2201-4fa8-ab7e-1e8e865d46ae.jsonl) | 473 | 331 | 11 | 18 | 22 | 92 | $4.59 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [3](sessions/b661c2c6-4d64-4a2f-abb0-aad5353ddba5.jsonl) | 453 | 282 | 10 | 18 | 26 | 116 | $4.69 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [4](sessions/24d38e9d-d877-4ebe-bf46-79ee566e70f2.jsonl) | 467 | 333 | 14 | 17 | 17 | 85 | $4.30 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [5](sessions/4c66859f-bdf3-4312-aeb3-2d32700980b2.jsonl) | 642 | 308 | 15 | 53 | 35 | 232 | $6.40 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [6](sessions/90b1dead-8df2-41b7-8149-0dc1e23e0241.jsonl) | 470 | 342 | 12 | 25 | 17 | 73 | $7.27 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [7](sessions/6a7f6276-2ff4-4a53-a23d-fa43b9165915.jsonl) | 471 | 292 | 13 | 48 | 23 | 95 | $4.31 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [8](sessions/1c237077-e4ee-4a3f-adf8-b5ff384bcb4d.jsonl) | 434 | 308 | 8 | 14 | 19 | 86 | $4.97 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [9](sessions/6e3b0bdf-ec07-4d1d-9d83-5e80663a2dbc.jsonl) | 491 | 328 | 11 | 45 | 19 | 88 | $4.36 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
+| [10](sessions/74699e2c-79ad-4ba5-9b9a-20a99b01eb72.jsonl) | 413 | 281 | 12 | 15 | 15 | 90 | $3.55 | $44.65 | $44.65 | $44.65 | $44.65 | 5/5 |
 
 Cost is a **standing** run-rate, flat at **$44.65/mo** (compute VM + managed Postgres). Captured 2026-09-02.
 
@@ -45,3 +45,9 @@ tokens was not separately run).
 Redacted transcripts (one resumed session per run) are in `sessions/`; see `sessions/REDACTION-MANIFEST.json`
 (residue 0, n=10). Being the platform under test, redu stays out of the paper's anonymized cross-cloud
 tables; these numbers are a validation reference only.
+
+`agent $` is the agent's LLM cost for **the task being measured**: the deploy round, plus each
+operation, plus the durability cycles. Teardown is harness bookkeeping and stays out, matching the rule
+`PLAYBOOK.md` states for the easy tier. The parts are disjoint time windows of one session (verified:
+zero overlapping windows across all 81 medium rows), so they sum without double counting, and the
+`deploy-serve` operation carries no cost of its own on any row because the deploy round already holds it.

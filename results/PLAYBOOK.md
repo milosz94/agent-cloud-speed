@@ -91,6 +91,13 @@ req` columns are the traffic estimates (total monthly cost at that volume). A fi
 `$/mo` columns all equal its `fixed $/mo`; a serverless front rises with traffic. Every money value carries
 a `$` sign.
 
+**Medium tier `agent $` (decided 2026-09-07):** the deploy round + every operation + the durability
+cycles, and NOT deprovision. Same rule as the easy tier's: the task being measured, teardown out. Before
+this the column held five different compositions across the eight medium cells (medium-a omitted the
+deploy round, medium-b omitted every operation), so the A-vs-B regime comparison on that axis was not
+measuring one quantity; see `DATA-DEFECTS.md` item 14. The parts are disjoint windows of one session, so
+they sum without double counting; re-verify that before adding a new part.
+
 **One composition, same on every cloud (decided 2026-09-04):** `platform`/`agent` are the current tool's
 critical-path split (C6: the post-handoff platform wait is inside `platform`, so `platform + agent = t1` on
 every row); `steps`, `tokens` and `agent $` are the DEPLOY LANE ONLY (the task being measured; teardown is

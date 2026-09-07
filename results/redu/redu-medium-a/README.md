@@ -17,16 +17,16 @@ found on other adapters 2026-09-03, and none is excluded by the first-poll rule 
 
 | run | total | deploy (t1) | register | site-b | integrate | durability | agent $ | fixed $/mo | $/mo @ 10k | $/mo @ 500k | $/mo @ 10M | tier |
 |----:|------:|------------:|---------:|-------:|----------:|-----------:|--------:|-----------:|-----------:|------------:|-----------:|:----:|
-| [1](sessions/5c8d930c-4a9a-41f9-b5da-9534545993fc.jsonl) | 1139 | 440 | 26 | 202 | 252 | 219 | $7.88 | $44.67 | $44.67 | $44.67 | $44.67 | 5/5 |
-| [2](sessions/822f7785-dc35-4b19-8e07-0e7a9bbaddc5.jsonl) | 1328 | 238 | 489 | 240 | 211 | 151 | $9.00 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
-| [3](sessions/bf0451fb-95af-4b26-984d-c5d49882ed02.jsonl) | 1374 | 208 | 14 | 289 | 383 | 480 | $6.88 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
-| [4](sessions/2a6a8e9a-747a-4889-8bd8-7c5265382b1c.jsonl) | 2612 | 283 | 1139 | 319 | 346 | 524 | $12.74 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
-| [5](sessions/fc1c53c8-0436-4c9c-852b-441909d7a81c.jsonl) | 1602 | 502 | 24 | 329 | 328 | 419 | $6.10 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
-| [6](sessions/8c36ac3c-d83f-4294-a0f6-7aebe5407310.jsonl) | 956 | 278 | 20 | 207 | 238 | 212 | $6.09 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
-| [7](sessions/91372ec4-50b5-4ca1-90d0-0e7095cfa939.jsonl) | 1294 | 244 | 16 | 360 | 364 | 310 | $6.60 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
-| [8](sessions/079325b1-9a4a-44fe-84e4-368626c4e403.jsonl) | 2281 | 310 | 17 | 521 | 704 | 730 | $7.10 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
-| [9](sessions/6dc203d7-7213-4101-8b3a-2509c8cf3a53.jsonl) | 2116 | 235 | 16 | 1080 | 492 | 293 | $10.57 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
-| [10](sessions/6c88956e-0aae-4718-bfb2-f931d4e2049f.jsonl) | 1863 | 319 | 25 | 640 | 453 | 426 | $6.08 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
+| [1](sessions/5c8d930c-4a9a-41f9-b5da-9534545993fc.jsonl) | 1139 | 440 | 26 | 202 | 252 | 219 | $6.55 | $44.67 | $44.67 | $44.67 | $44.67 | 5/5 |
+| [2](sessions/822f7785-dc35-4b19-8e07-0e7a9bbaddc5.jsonl) | 1328 | 238 | 489 | 240 | 211 | 151 | $7.02 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
+| [3](sessions/bf0451fb-95af-4b26-984d-c5d49882ed02.jsonl) | 1374 | 208 | 14 | 289 | 383 | 480 | $5.96 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
+| [4](sessions/2a6a8e9a-747a-4889-8bd8-7c5265382b1c.jsonl) | 2612 | 283 | 1139 | 319 | 346 | 524 | $12.38 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
+| [5](sessions/fc1c53c8-0436-4c9c-852b-441909d7a81c.jsonl) | 1602 | 502 | 24 | 329 | 328 | 419 | $4.97 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
+| [6](sessions/8c36ac3c-d83f-4294-a0f6-7aebe5407310.jsonl) | 956 | 278 | 20 | 207 | 238 | 212 | $5.27 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
+| [7](sessions/91372ec4-50b5-4ca1-90d0-0e7095cfa939.jsonl) | 1294 | 244 | 16 | 360 | 364 | 310 | $5.47 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
+| [8](sessions/079325b1-9a4a-44fe-84e4-368626c4e403.jsonl) | 2281 | 310 | 17 | 521 | 704 | 730 | $5.77 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
+| [9](sessions/6dc203d7-7213-4101-8b3a-2509c8cf3a53.jsonl) | 2116 | 235 | 16 | 1080 | 492 | 293 | $10.05 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
+| [10](sessions/6c88956e-0aae-4718-bfb2-f931d4e2049f.jsonl) | 1863 | 319 | 25 | 640 | 453 | 426 | $5.39 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
 
 `agent $` is the **whole workflow**: deploy + the four operations + the durability cycle + teardown,
 computed with that one composition for every row so the rows are comparable.
@@ -73,3 +73,9 @@ bracket ratio moves 1.494 to 1.826 at F_C(1 +/- 0.1). Selection excess is 0 by c
 
 Redacted, infrastructure-neutral transcripts (one resumed session per run, covering all operations and
 the teardown) are in `sessions/`; see `sessions/REDACTION-MANIFEST.json` (residue 0).
+
+`agent $` is the agent's LLM cost for **the task being measured**: the deploy round, plus each
+operation, plus the durability cycles. Teardown is harness bookkeeping and stays out, matching the rule
+`PLAYBOOK.md` states for the easy tier. The parts are disjoint time windows of one session (verified:
+zero overlapping windows across all 81 medium rows), so they sum without double counting, and the
+`deploy-serve` operation carries no cost of its own on any row because the deploy round already holds it.
