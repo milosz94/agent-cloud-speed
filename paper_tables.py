@@ -18,6 +18,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import random
 import re
 import sys
 from collections import OrderedDict
@@ -201,6 +202,7 @@ def cell(cloud: str, suffix: str, tier_key: str, tier_name: str) -> dict:
         "exec": sum(exc) / len(exc) if exc else None,
         "arch": classes,
         "cost": [(r.get("cost_run_rate") or {}) for r in recs],
+        "Ms": Ms,          # per-run makespans: the resampling unit for the suite bootstrap
     }
 
 
@@ -241,6 +243,79 @@ def table_51(cells: list) -> str:
             f"$[{c['ratio_lo']:.2f},\\ {c['ratio_hi']:.2f}]$ & "
             f"{_n(c['sel'], 1)} / {_n(c['exec'], 1)} \\\\")
     return "\n".join(rows)
+
+
+# ------------------------------------------------------------------------------------------------
+# Uncertainty on the suite summaries (Part 4, the per-task bootstrap)
+# ------------------------------------------------------------------------------------------------
+
+BOOT_B = 10000
+BOOT_SEED = 20260907
+
+
+def _suite_replicates(cells: list):
+    """Resample RUNS within each task, recompute E_X, G_X and the frontier on every replicate.
+
+    The suite is fixed by design, so runs are the only resampled unit for a sampling interval: task-level
+    sensitivity is carried separately by leave-one-out, never folded in here. Returns per-cloud lists of
+    (E_X, G_X) plus the frontier-membership count, i.e. exactly the three quantities Part 4 promises.
+    """
+    rnd = random.Random(BOOT_SEED)
+    by_cloud, rates = {}, {}
+    for c in cells:
+        by_cloud.setdefault(c["cloud"], {})[c["tier"]] = c["Ms"]
+        if c["tier"] == "Easy":
+            rs = [_hourly(x) for x in c["cost"]]
+            rates[c["cloud"]] = [r for r in rs if r is not None]
+    clouds = list(by_cloud)
+    ex = {c: [] for c in clouds}
+    gx = {c: [] for c in clouds}
+    front = {c: 0 for c in clouds}
+    for _ in range(BOOT_B):
+        means = {c: {t: (sum(rnd.choices(ms, k=len(ms))) / len(ms)) if ms else None
+                     for t, ms in tiers.items()}
+                 for c, tiers in by_cloud.items()}
+        tot = {c: weighting.suite_total(m) for c, m in means.items()}
+        ref = means[GX_NORMALIZER]
+        cost = {}
+        for c in clouds:
+            rs = rates.get(c) or []
+            cost[c] = sum(rnd.choices(rs, k=len(rs))) / len(rs) if rs else None
+        runs = [weighting.Run(label=c, time=tot[c], cost=cost[c]) for c in clouds if cost[c] is not None]
+        on = {r.label for r in weighting.pareto_frontier(runs)} if runs else set()
+        for c in clouds:
+            ex[c].append(tot[c])
+            gx[c].append(weighting.geomean_ratio(means[c], ref))
+            if c in on:
+                front[c] += 1
+    return ex, gx, front
+
+
+def _pct(xs, lo=2.5, hi=97.5):
+    ys = sorted(xs)
+    n = len(ys)
+    at = lambda q: ys[min(n - 1, max(0, int(round(q / 100.0 * (n - 1)))))]   # noqa: E731
+    return at(lo), at(hi)
+
+
+def suite_uncertainty(cells: list) -> dict:
+    """Per-cloud percentile intervals on E_X and G_X, frontier-membership frequency, and the pairwise
+    difference verdicts Part 1's rule asks for (interval on the DIFFERENCE excluding zero)."""
+    ex, gx, front = _suite_replicates(cells)
+    out = {}
+    for c in ex:
+        out[c] = {"ex_ci": _pct(ex[c]), "gx_ci": _pct(gx[c]),
+                  "front_pct": 100.0 * front[c] / BOOT_B}
+    pairs = {}
+    for a in ex:
+        for b in ex:
+            if a >= b:
+                continue
+            d = [x - y for x, y in zip(ex[a], ex[b])]
+            lo, hi = _pct(d)
+            pairs[(a, b)] = {"ci": (lo, hi), "decided": not (lo <= 0 <= hi)}
+    out["_pairs"] = pairs
+    return out
 
 
 def table_52(cells: list) -> str:
