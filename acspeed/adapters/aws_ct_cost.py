@@ -1225,6 +1225,76 @@ def _ipv4_usagetype(region: str) -> str:
     return "PublicIPv4:InUseAddress"
 
 
+def collapse_task_definitions(resources: List[dict]) -> Tuple[List[dict], List[str]]:
+    """Collapse ECS task-definition REVISIONS to one billable bundle per family.
+
+    RegisterTaskDefinition matches the create verb, and a task definition declares Cpu and Memory, so
+    every registration was emitted as its own Fargate compute part. A task definition is a TEMPLATE:
+    registering revision 5 supersedes revision 4, and AWS bills the running task or service, never the
+    template. An agent that iterates its container config registers several revisions and was charged
+    for all of them. Measured 2026-09-07 on aws-medium-a: priced vCPU parts equalled task definitions
+    registered, exactly, on every run checked (7, 4, 4, 2) against 1, 0, 0 and 0 standalone tasks.
+    run08 was charged $192.08/mo of Fargate vCPU for one running task.
+
+    Two rules, both structural rather than vendor knowledge:
+
+    * One bundle per ``family``, the latest revision. A revision is not a new resource.
+    * Quantity is the recorded runner count (a service's ``desiredCount``, a RunTask's ``count``)
+      summed over everything referencing that family, and 1 when no runner was recorded.
+
+    The fallback of 1 is deliberate and is NOT "assume it runs once for free". CloudTrail does not
+    always hold the runner: run08 served its app from a family with no CreateService and no RunTask in
+    the window, while its only recorded runner was a one-shot ``umami-migrate`` job. Dropping
+    runner-less families would therefore have turned a measured over-count into a silent under-count,
+    which is the worse error for this axis. Returns (resources, notes) with notes naming what collapsed.
+    """
+    if not any(r.get("kind") == "taskdefinition" for r in resources):
+        return resources, []
+
+    def family_of(arn: str) -> str:
+        return arn.split("/")[-1].split(":")[0] if arn else ""
+
+    runners: Dict[str, int] = {}
+    for r in resources:
+        p = r.get("params") or {}
+        fam = family_of(str(p.get("taskDefinition") or ""))
+        if not fam:
+            continue
+        try:
+            n = int(str(p.get("desiredCount") or p.get("count") or 1))
+        except ValueError:
+            n = 1
+        runners[fam] = runners.get(fam, 0) + max(n, 0)
+
+    latest: Dict[str, dict] = {}
+    for r in resources:
+        if r.get("kind") != "taskdefinition":
+            continue
+        fam = str((r.get("params") or {}).get("family") or r.get("identity") or "")
+        cur = latest.get(fam)
+        if cur is None or str(r.get("at") or "") >= str(cur.get("at") or ""):
+            latest[fam] = r
+
+    out, notes, emitted = [], [], set()
+    for r in resources:
+        if r.get("kind") != "taskdefinition":
+            out.append(r)
+            continue
+        fam = str((r.get("params") or {}).get("family") or r.get("identity") or "")
+        if latest.get(fam) is not r or fam in emitted:
+            continue
+        emitted.add(fam)
+        keep = dict(r)
+        keep["runner_count"] = runners.get(fam, 1)
+        out.append(keep)
+    for fam in sorted(emitted):
+        n = sum(1 for r in resources
+                if r.get("kind") == "taskdefinition"
+                and str((r.get("params") or {}).get("family") or r.get("identity") or "") == fam)
+        notes.append(f"{fam}: {n} revision(s) -> 1 bundle x {runners.get(fam, 1)} runner(s)")
+    return out, notes
+
+
 def run_rate_universal(run_token: str, capture_date: str, regions: Optional[List[str]] = None,
                        profile: Optional[str] = None, lookback_hours: int = 8,
                        describe=None) -> Optional[dict]:
@@ -1248,6 +1318,7 @@ def run_rate_universal(run_token: str, capture_date: str, regions: Optional[List
     start = (now - dt.timedelta(hours=lookback_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
     end = (now + dt.timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
     resources, unclassified = discover(start, end, run_token, regions, profile)
+    resources, td_notes = collapse_task_definitions(resources)
     if describe is None:
         describe = lambda r: describe_live(r, profile)   # noqa: E731 - the default IS the live describe
     comps: List[RateComponent] = []
@@ -1259,7 +1330,8 @@ def run_rate_universal(run_token: str, capture_date: str, regions: Optional[List
         # an RDS instance's storage and an internet-facing ALB's public IPv4 addresses have NO create
         # call of their own but ARE on the bill, so pricing only the parent under-charges silently.
         for part in billable_parts(r):
-            qty = float(part.get("quantity") or 1.0)
+            # a task-definition bundle bills once per RUNNING unit, not once per registration
+            qty = float(part.get("quantity") or 1.0) * float(r.get("runner_count") or 1)
             # PROFILE MUST REACH THE CATALOGUE LOOKUP. Without it `resolve_catalog_id` shells out with no
             # --profile, so on any account driven by a named profile the call fails and the resource is
             # reported as carrying no SKU. Measured on run22 (2026-09-06, the first live run after the
@@ -1302,5 +1374,7 @@ def run_rate_universal(run_token: str, capture_date: str, regions: Optional[List
     d["priced_resources"] = priced_detail
     d["unpriced_resources"] = unpriced
     d["no_sku_match"] = sorted(set(no_sku))
+    if td_notes:
+        d["task_definition_collapse"] = td_notes
     d["ok"] = not unpriced
     return d

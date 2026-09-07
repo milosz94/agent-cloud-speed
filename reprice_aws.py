@@ -61,11 +61,12 @@ def reprice(rec: dict, regions, profile=None) -> dict:
         return {"ok": False, "error": "no run token to scope by"}
     start, end = window(rec)
     resources, unclassified = ct.discover(start, end, token, regions, profile)
+    resources, td_notes = ct.collapse_task_definitions(resources)
 
     comps, unpriced, no_sku, detail = [], list(unclassified), [], []
     for r in resources:
         for part in ct.billable_parts(r):
-            qty = float(part.get("quantity") or 1.0)
+            qty = float(part.get("quantity") or 1.0) * float(r.get("runner_count") or 1)
             # describe=None everywhere: the resource is gone, so every selector must come from the
             # create event. A vendor whose create vocabulary the price list does not share will land
             # in `unpriced` rather than be guessed at.
@@ -98,7 +99,8 @@ def reprice(rec: dict, regions, profile=None) -> dict:
     d = rr.to_dict()
     d.update({"discovery": "cloudtrail", "priced_resources": detail,
               "unpriced_resources": unpriced, "no_sku_match": sorted(set(no_sku)),
-              "ok": not unpriced, "window": [start, end], "n_resources": len(resources)})
+              "ok": not unpriced, "window": [start, end], "n_resources": len(resources),
+              "task_definition_collapse": td_notes})
     return d
 
 
