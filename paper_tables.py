@@ -33,7 +33,11 @@ RESULTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 
 # The paper's anonymization. Kept here, deliberately NOT in the .tex, so the tables can be
 # regenerated without the key leaking into the manuscript.
-ANON = OrderedDict([("aws", "A"), ("gcp", "B"), ("azure", "C")])
+# Providers are NAMED. The paper published anonymized clouds until 2026-09-07; the benchmark is
+# released open-source with the runs and transcripts attached, so anonymity was decorative once a
+# reader could map a number to a provider in a minute. All three providers' terms permit named
+# publication (BENCHMARK-TERMS.md); what they ask for is a disclosure that can be replicated.
+ANON = OrderedDict([("aws", "AWS"), ("gcp", "GCP"), ("azure", "Azure")])
 
 # Tier label -> (stage suffix, the paper's tier name). Easy has no regime; Medium is crossed with
 # the online/disclosed regime, which is what medium-a and medium-b are.
@@ -141,20 +145,35 @@ def arch_class(rec: dict) -> str:
     crr = rec.get("cost_run_rate") or {}
     names = {c.get("name", "") for c in crr.get("components") or []}
     svc = (crr.get("service") or "").lower()
-    has_db = any("rds" in n or "sql" in n or "postgres" in n or "relationaldatabase" in n
-                 for n in names)
-    if any("fargate" in n for n in names):
-        base = "serverless container"
-    elif any("containerservice" in n for n in names) or "container app" in svc:
+    # The vocabulary changed under this function twice: the CloudTrail pricer emits the CREATE EVENT's
+    # noun (dbinstance, containerservice, vcpu, instances) where the inventory pricer emitted a
+    # hand-written label (compute:fargate-vcpu, compute:rds). Measured 2026-09-07: every AWS run fell
+    # through to the catch-all and every managed database went unseen, so Table 5.1's strata were wrong
+    # for the whole cloud. Both vocabularies are matched here, and an UNRECOGNIZED bundle now says so
+    # instead of silently reporting "managed container".
+    has_db = any(("rds" in n or "sql" in n or "postgres" in n or "relationaldatabase" in n
+                  or n == "dbinstance") for n in names)
+    # The SERVICE field decides before any component heuristic, because Azure Container Apps and Cloud
+    # Run emit byte-identical components (compute-active-cpu, compute-active-mem, requests) and differ
+    # only by name. Classifying on components alone put Azure in the Cloud Run bucket.
+    if "container app" in svc:
         base = "managed container"
     elif "cloud run" in svc:
         base = "serverless container"
+    elif any("fargate" in n for n in names) or {"vcpu", "gb"} <= names:
+        base = "serverless container"          # Fargate: billed per vCPU-hour and GB-hour
+    elif any("containerservice" in n for n in names):
+        base = "managed container"
+    elif any("compute-active-cpu" in n or "compute-active-mem" in n for n in names):
+        base = "serverless container"          # per active CPU and memory, no named service
     elif any("app-service" in n or "appservice" in n for n in names):
         base = "managed PaaS"
-    elif any(n.startswith("compute") for n in names):
+    elif any(n == "instances" or n.startswith("compute:") for n in names):
         base = "VM"
+    elif not names:
+        base = "unpriced"
     else:
-        base = "managed container"
+        base = "unclassified"                  # visible, never a silent default
     return base + (" + managed DB" if has_db else "")
 
 
@@ -343,11 +362,18 @@ def table_52(cells: list) -> str:
 
     rows = []
     for cl in ANON:
+        # Report WHICH pair and WHICH task, not a per-cloud yes/no. Leave-one-out is a PAIRWISE
+        # property, so collapsing it per cloud made one fragile pair read as two unstable clouds, and
+        # read as a verdict withheld rather than a workload sensitivity disclosed (Part 4, S3).
         loo = "n/a (single pair)"
         others = [o for o in ANON if o != cl]
         if others:
-            checks = [weighting.leave_one_out(by_cloud[cl], by_cloud[o])["robust"] for o in others]
-            loo = "yes" if all(checks) else "no"
+            flips = []
+            for o in others:
+                r = weighting.leave_one_out(by_cloud[cl], by_cloud[o])
+                for t in r["flips_on"]:
+                    flips.append(f"{t} vs {ANON[o]}")
+            loo = "stable" if not flips else "; ".join(flips)
         rows.append(f"{ANON[cl]} & {_n(totals[cl])} & {gx[cl]:.3f} & {agree} & {loo} & "
                     f"{'yes' if cl in front else 'no'} \\\\")
     return "\n".join(rows)
