@@ -211,6 +211,24 @@ class TestPreservesTimingAndTokens(unittest.TestCase):
             self.assertEqual(transcript.dedupe_token_usage(orig), transcript.dedupe_token_usage(redp))
             self.assertGreater(sum(counts.values()), 0)
 
+    def test_json_keys_are_never_rewritten(self):
+        """Regression: the harvest cue matched INSIDE a compound identifier.
+
+        ``bearerTokenAuthenticationEnabled`` gave cue ``token`` + value ``AuthenticationEnabled``, and the
+        global literal strip then blanked that substring inside the JSON KEY, changing the message shape
+        this module promises to preserve. Real AWS CloudWatch output carries this key.
+        """
+        row = {"type": "user", "timestamp": "2026-08-26T10:00:05.000Z",
+               "message": {"content": [{"type": "tool_result", "tool_use_id": "t1",
+                                        "content": "listed log groups"}]},
+               "mcpMeta": {"logGroups": [{"logGroupName": "/aws/lambda/x",
+                                          "bearerTokenAuthenticationEnabled": False}]}}
+        text = json.dumps(row) + "\n"
+        red, _ = redact.redact_transcript(text, substrate=False)
+        self.assertIn("bearerTokenAuthenticationEnabled", red)
+        self.assertEqual(sorted(json.loads(red)["mcpMeta"]["logGroups"][0]),
+                         sorted(row["mcpMeta"]["logGroups"][0]))
+
 
 class TestBundle(unittest.TestCase):
     def test_bundle_writes_manifest_and_verifies_clean(self):

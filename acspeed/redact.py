@@ -108,7 +108,11 @@ def _json_kv_sub(m: "re.Match") -> str:
 # password/token/pw/secret/admin cue -- from ANY of those spots -- then strip that literal EVERYWHERE
 # (see redact_transcript). One clean sighting scrubs the value in the prose spots a pattern can't reach.
 _CUE = r"(?i)(?:password|passwd|\bpw\b|new_?pw|secret|token|admin\s*[:/])"
-_HARVEST = re.compile(_CUE + r"[\s:=/'\"`()\-]{0,8}['\"`]?([A-Za-z0-9][A-Za-z0-9_+/.=@!-]{7,})")
+# The cue must be SEPARATED from the value by at least one delimiter. With {0,8} the cue also matched
+# inside a compound identifier (``bearerTokenAuthenticationEnabled`` -> cue ``token``, value
+# ``AuthenticationEnabled``), and because the harvest strips its literal EVERYWHERE that blanked the
+# substring inside a JSON KEY, breaking the structure-preservation contract this module promises.
+_HARVEST = re.compile(_CUE + r"[\s:=/'\"`()\-]{1,8}['\"`]?([A-Za-z0-9][A-Za-z0-9_+/.=@!-]{7,})")
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 # The acspeed run token (``acs`` + hex) is a PUBLIC identifier: it is the app-name segment of every
 # deployed URL and every resource name. It is credential-SHAPED (letters+digits), so without this guard
