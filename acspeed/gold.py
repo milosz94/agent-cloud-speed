@@ -34,8 +34,16 @@ _SERVED = "served"
 _PROVISIONED = "provisioned"
 
 # The authored gold is a DATED, VERSIONED artifact (literature: a refutable reference must be versioned
-# so a floor revision does not silently change every previously reported ratio; IPC revises its reference
-# plan the same way, AI Magazine 2024). Bump this when the floor-estimation rule or the graph structure
+# so a floor revision does not silently change every previously reported ratio). The IPC precedent is
+# NOT symmetric with ours and Part 5 is careful about this: the IPC's competitive score C*/C is taken
+# against a PARTICIPANT-INDEPENDENT reference plan, and the best plan discovered is used as the
+# reference only as a DOCUMENTED FALLBACK when no independent optimum is available (Taitler et al.,
+# AI Magazine 45(2):280-296, 2024). Our floor is not the participant-independent case; it stands on
+# the fallback's side of that distinction without sharing its mechanism, "that fallback being a
+# documented last resort where ours is a standing rule that revises toward the best observed whenever
+# a trace undercuts it" (Part 5, S3). Do not restate this as "IPC revises its reference plan the same
+# way": that was the earlier wording here and it collapses the distinction the paper draws.
+# Bump this when the floor-estimation rule or the graph structure
 # changes; the per-run floor itself is data-derived (min-observed) and moves WITHIN a version, disclosed
 # as ``floor_estimated_from_n`` and re-attributed by the refutation protocol.
 # 1.1.0 (2026-09-04): the first-poll exclusion was refined from "any first-poll run" to "a first-poll run

@@ -9,8 +9,9 @@ The headline is the total per-task wall-clock over a matched, capability-normali
 companion (:func:`geomean_ratio`, the symbol ``G_X``); a cross-cloud claim stands only when both agree
 (:func:`suite_verdict`), defended by a drop-any-task sensitivity check (:func:`leave_one_out`). Each per-task
 comparison is a matched-block comparison (task = block, cloud = treatment, wall-clock = response; Fisher's
-blocking) decided by non-overlapping confidence intervals (:func:`more_efficient`, reusing Part 1's
-reproducibility), never by a single pair of runs.
+blocking), never by a single pair of runs. NOTE: :func:`more_efficient` decides that comparison by CI
+non-overlap, which is NOT Part 1's difference rule (Part 1 S6 rejects non-overlap as a conservative
+surrogate). It produces no published number; see :func:`more_efficient` and :func:`repro.different`.
 
 The one direction wall-clock is gameable -- buying speed with a bigger, costlier machine -- is closed not by
 a chosen time-versus-cost exchange rate but by a two-input (wall-clock, resource-cost) cost-performance
@@ -43,10 +44,13 @@ def more_efficient(a_samples: Sequence[float], b_samples: Sequence[float],
                    confidence: float = 0.95) -> str:
     """Matched-block per-task verdict: on one fixed task, is cloud ``"A"`` or ``"B"`` more efficient?
 
-    Lower wall-clock wins, but only when the two clouds' makespan distributions are distinguishable:
-    the verdict is decided by non-overlapping confidence intervals over repeated runs (Part 1's
-    reproducibility protocol), never by a single pair of runs. Returns ``"A"``, ``"B"``, or
-    ``"indistinguishable"``.
+    Lower wall-clock wins, but only when the two clouds' makespan distributions are distinguishable.
+
+    WARNING: distinguishability here is CI NON-OVERLAP (:func:`repro.different`), which Part 1 S6
+    explicitly rejects as the criterion ("a conservative surrogate ... it loses power against a test
+    on the difference itself"). Part 1's rule is a bootstrap CI on the DIFFERENCE excluding zero,
+    plus Mann-Whitney agreement at per-cell n below thirty. This function does not implement it and
+    is cited by no published result. Returns ``"A"``, ``"B"``, or ``"indistinguishable"``.
     """
     if not a_samples or not b_samples:
         raise ValueError("both clouds need at least one makespan sample")

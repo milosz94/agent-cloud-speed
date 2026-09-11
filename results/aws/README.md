@@ -3,7 +3,7 @@
 | tier | floor-ratio | 95% CI | n | F_C (s) | bracket (s) | gold |
 |:-----|------------:|:-------|--:|--------:|:------------|:-----|
 | [easy](aws-easy/) | 6.0x | [4.5, 7.5] | 10 | 152.6 | [152.6, 256.3] = x1.68 | provision-deploy/1.1.0 |
-| [medium-a](aws-medium-a/) | 7.8x | [5.4, 10.5] | 7 | 110.3 | [110.3, 267.5] = x2.425 | provision-deploy/1.1.0 |
+| [medium-a](aws-medium-a/) | 7.0x | [5.0, 9.3] | 10 | 109.8 | [109.8, 226.6] = x2.064 | provision-deploy/1.1.0 |
 | [medium-b](aws-medium-b/) | 5.7x | [4.5, 6.8] | 12 | 158.3 | [158.3, 427.3] = x2.699 | provision-deploy/1.1.0 |
 
 - **floor-ratio**: mean deploy time / F_C; deploy time = seconds until the app's public URL first answers (polled externally)

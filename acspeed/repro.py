@@ -2,9 +2,13 @@
 
 Report distributions and confidence intervals, never a single number. The
 geometric mean summarises ratios (Hoefler and Belli 2015). CONFIRM repeats until
-the interval is tight enough (Maricq et al. 2018). Two results differ only if
-their confidence intervals do not overlap. A non-parametric percentile bootstrap
-is provided as the recommended interval; a normal approximation is a convenience.
+the interval is tight enough (Maricq et al. 2018). A non-parametric percentile
+bootstrap is provided as the recommended interval; a normal approximation is a
+convenience.
+
+WARNING: this module's ``different()`` is CI non-overlap, which Part 1 S6
+explicitly rejects as the criterion. Part 1's actual difference rule is not
+implemented here. See ``different()`` for the full statement.
 """
 from __future__ import annotations
 
@@ -93,5 +97,25 @@ def confirm(sampler: Callable[[], float], target_rel_halfwidth: float = 0.01,
 
 
 def different(a: Estimate, b: Estimate) -> bool:
-    """Two results differ iff their confidence intervals do NOT overlap."""
+    """Non-overlap of two separately drawn intervals. NOT the paper's difference rule.
+
+    WARNING. Part 1, S6 names this criterion and REJECTS it: "Non-overlap of two
+    separately drawn intervals is never the criterion: it is a conservative surrogate,
+    and at the per-cell repetition counts realistic here (five to ten runs) it loses
+    power against a test on the difference itself."
+
+    Part 1's actual rule, stated there once and reused by every later part, is a
+    percentile-bootstrap confidence interval on the DIFFERENCE of the two statistics,
+    resampling runs within each cell, which must exclude zero; and at per-cell n below
+    thirty a difference is claimed only when a two-sample rank test (Mann-Whitney) on
+    the raw runs agrees. An interval covering zero is reported UNDECIDED, never equality.
+    That rule is not implemented in this module.
+
+    This function is kept as the conservative surrogate it is, and it produces NO
+    published number: the table generators use bootstrap_ci, suite_total,
+    pareto_frontier, geomean_ratio and leave_one_out, and the only non-test caller of
+    this function is weighting.more_efficient, which nothing but tests calls. Changing
+    what it computes would change verdicts and is a deliberate decision for the author,
+    not a docstring fix.
+    """
     return not a.overlaps(b)

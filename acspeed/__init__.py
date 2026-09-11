@@ -7,7 +7,7 @@ Modules map to the paper's Part 1:
     capability     delivered-capability normalization      (Section 3)
     discriminator  control- vs data-plane fixed+variable   (Section 3)
     agenttime      raw vs critical agent-time              (Section 4)
-    repro          error bars, CONFIRM, non-overlapping CI (Section 6)
+    repro          error bars, CONFIRM; non-overlap surrogate Part 1 S6 rejects (see different())
     probes         probe output parsers                    (Section 3)
 
 Part 2 (the operation):
