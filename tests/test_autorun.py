@@ -541,6 +541,8 @@ class TestClaudeAuthPreflight(unittest.TestCase):
         self.assertIn("LOW", why)
 
 
+@unittest.skipUnless(getattr(autorun, "vmjob", None) is not None,
+                     "sandbox/vmjob.py not present (private microVM substrate; gitignored)")
 class TestVmBootFlakeRetry(unittest.TestCase):
     """A microVM turn that yields NO agent result (empty out.json / session=None, exit 143) is an infra
     boot-flake and is retried in a fresh VM; a real result (even an error) is returned immediately and NEVER
