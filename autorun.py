@@ -289,15 +289,8 @@ def _claude(prompt: str, *, cwd: str, mcp: str, model: str | None, resume: str |
         return _claude_vm(prompt, app_dir=cwd, mcp=mcp, model=model, resume=resume, max_turns=max_turns,
                           timeout=timeout, system=system, sandbox=sandbox, boot_log=boot_log,
                           resume_transcript=resume_transcript)
-    cmd = ["claude", "-p", prompt, "--mcp-config", mcp, "--strict-mcp-config",
-           "--permission-mode", "bypassPermissions", "--output-format", "json",
-           "--max-turns", str(max_turns)]
-    if system:
-        cmd += ["--append-system-prompt", system]
-    if model:
-        cmd += ["--model", model]
-    if resume:
-        cmd += ["--resume", resume]
+    cmd = build_agent_cmd(AGENT, prompt, mcp=mcp, model=model, resume=resume,
+                          max_turns=max_turns, system=system)
     # spawn in its OWN session (process-group leader) with stdin detached, so Ctrl-C reaches the host
     # and the signal handler can group-kill claude AND its MCP-server grandchildren (procguard).
     proc = procguard.spawn(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -314,6 +307,74 @@ def _claude(prompt: str, *, cwd: str, mcp: str, model: str | None, resume: str |
     finally:
         procguard.untrack(proc.pid)
     out = (out_s or "").strip()
+    return parse_agent_result(AGENT, out, err_s)
+
+
+# --------------------------------------------------------------------------------------------------
+# Agent CLIs. The measurement is agent-agnostic (acspeed/transcript.py normalizes either agent's
+# transcript onto one row shape), so the only agent-specific things left are HOW to invoke the CLI
+# headlessly and HOW to read its result. Both live here, one entry per agent, so adding a third agent
+# is a dict entry plus a transcript mapping, not a fork of the runner.
+# --------------------------------------------------------------------------------------------------
+AGENT = os.environ.get("ACSPEED_AGENT", "claude")
+AGENT_CHOICES = ("claude", "codex")
+
+
+def build_agent_cmd(agent: str, prompt: str, *, mcp: str | None, model: str | None,
+                    resume: str | None, max_turns: int, system: str | None) -> list[str]:
+    """The headless invocation for one turn, per agent."""
+    if agent == "codex":
+        # `codex exec --json` streams JSONL events; --skip-git-repo-check because an app folder is
+        # usually not a repo; full access because the turn already runs inside the microVM.
+        cmd = ["codex", "exec", "--json", "--skip-git-repo-check",
+               "--dangerously-bypass-approvals-and-sandbox"]
+        if model:
+            cmd += ["-m", model]
+        if resume:
+            cmd += ["resume", resume]
+        if system:                      # codex has no append-system flag; prepend it to the prompt
+            prompt = system + "\n\n" + prompt
+        return cmd + [prompt]
+    cmd = ["claude", "-p", prompt, "--mcp-config", mcp, "--strict-mcp-config",
+           "--permission-mode", "bypassPermissions", "--output-format", "json",
+           "--max-turns", str(max_turns)]
+    if system:
+        cmd += ["--append-system-prompt", system]
+    if model:
+        cmd += ["--model", model]
+    if resume:
+        cmd += ["--resume", resume]
+    return cmd
+
+
+def parse_agent_result(agent: str, out: str, err_s: str | None) -> dict:
+    """Normalize a turn's stdout onto the one result shape every caller reads:
+    {is_error, result, session_id}. Claude prints one JSON object; codex prints JSONL events."""
+    if agent == "codex":
+        sid = None
+        last_msg = ""
+        err = None
+        for line in (out or "").splitlines():
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            t = d.get("type")
+            if t == "thread.started":
+                sid = d.get("thread_id") or sid
+            elif t in ("error", "turn.failed"):
+                err = d.get("message") or (d.get("error") or {}).get("message") or "turn failed"
+            elif t == "item.completed":
+                item = d.get("item") or {}
+                if item.get("type") in ("agent_message", "message"):
+                    last_msg = item.get("text") or item.get("message") or last_msg
+        if err:
+            return {"is_error": True, "result": str(err)[-2000:], "session_id": sid,
+                    "stderr": (err_s or "")[-2000:]}
+        return {"is_error": False, "result": last_msg, "session_id": sid}
     try:
         return json.loads(out)
     except ValueError:
@@ -2109,6 +2170,23 @@ def preflight_credentials(prof: dict) -> tuple[bool, str]:
     return True, ""
 
 
+def preflight_agent_auth(agent: str) -> tuple[bool, str]:
+    """Same fail-fast contract as the Claude check, for whichever agent drives the run."""
+    if agent == "codex":
+        try:
+            r = subprocess.run(["codex", "login", "status"], capture_output=True, text=True, timeout=60)
+        except Exception as e:  # noqa: BLE001
+            return False, f"Codex auth preflight could not run `codex` ({e}); is it on PATH?"
+        blob = ((r.stdout or "") + (r.stderr or "")).strip()
+        if r.returncode != 0 or "not logged in" in blob.lower():
+            return False, ("Codex login is unusable. Run `codex login` before running: refusing to "
+                           "deploy on a dead login and risk agent turns that fail after a partial, "
+                           "un-torn-down deploy.")
+        first = next((ln for ln in blob.splitlines() if ln.strip()), "")   # status may go to stderr
+        return True, ("host Codex login OK" + (f" ({first[:60]})" if first else ""))
+    return preflight_claude_auth()
+
+
 def preflight_claude_auth() -> tuple[bool, str]:
     """Fail FAST, before any deploy, if the host's Claude login is dead or expired. The microVM seeds the
     host's claudeAiOauth (access + refresh token) and the host-side teardown runs `claude` under the SAME
@@ -2208,6 +2286,10 @@ def main() -> None:
                     help="off-clock (DEFAULT ON; --no-cost to skip): price the deployment's standing hourly "
                          "RUN-RATE (C19) from dated PUBLIC LIST prices, the Part-4 cost input (redu + aws "
                          "Lightsail; disclosed N/A for an unsupported service; never affects timing)")
+    ap.add_argument("--agent", default=AGENT, choices=AGENT_CHOICES,
+                    help="which agent CLI drives the run (default: claude, or $ACSPEED_AGENT). The "
+                         "measurement is identical either way: acspeed normalizes both transcript "
+                         "formats onto one row shape before any split is computed.")
     ap.add_argument("--suite", default=None, choices=acs_suites.instance_names(),
                     help="run a benchmark TIER instance (e.g. umami-medium) instead of Easy deploy-only: "
                          "after the deploy serves, the agent performs the tier's operations "
@@ -2393,7 +2475,8 @@ def main() -> None:
     # Claude-login preflight: the microVM (and the host-side teardown) run `claude` under the host's
     # subscription login. A dead/expired token makes EVERY turn fail 'OAuth session expired' -> no URL and
     # a possible un-torn-down orphan. Fail fast here (the 2026-08-31 4-cloud wipeout), before any spend.
-    claude_ok, claude_why = preflight_claude_auth()
+    globals()["AGENT"] = a.agent
+    claude_ok, claude_why = preflight_agent_auth(a.agent)
     if not claude_ok:
         _log(f"PREFLIGHT FAILED: {claude_why}")
         sys.exit(2)
