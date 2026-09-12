@@ -122,8 +122,23 @@ if [ -n "$ADAPTER" ]; then
              echo "      bash scripts/aws-bootstrap-credentials.sh --dry-run"
              echo "      bash scripts/aws-bootstrap-credentials.sh"
            fi ;;
-    gcp)   note gcloud || echo "  install the Google Cloud SDK: https://cloud.google.com/sdk/docs/install" ;;
-    azure) note az     || { [ -z "$CHECK" ] && curl -fsSL https://aka.ms/InstallAzureCLIDeb | sudo bash || true; } ;;
+    gcp)   note gcloud || echo "  install the Google Cloud SDK: https://cloud.google.com/sdk/docs/install"
+           # same check autorun's preflight makes, so setup reports what a run would refuse on
+           if gcloud auth print-access-token >/dev/null 2>&1; then
+             say "gcloud credentials" "usable"
+           else
+             say "gcloud credentials" "NOT SET UP"; miss=$((miss+1))
+             echo "      gcloud auth login && gcloud config set project <id>"
+             echo "      gcloud services enable cloudbilling.googleapis.com   # for the cost axis"
+             echo "      then put the project id in \$ACSPEED_DATA/_config/gcp.mcp.json"
+           fi ;;
+    azure) note az     || { [ -z "$CHECK" ] && curl -fsSL https://aka.ms/InstallAzureCLIDeb | sudo bash || true; }
+           if az account show >/dev/null 2>&1; then
+             say "az credentials" "usable"
+           else
+             say "az credentials" "NOT SET UP"; miss=$((miss+1))
+             echo "      az login    (or set AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET)"
+           fi ;;
     redu)  say "redu" "no CLI needed (HTTP MCP)" ;;
     *) echo "  unknown adapter: $ADAPTER" >&2 ;;
   esac
