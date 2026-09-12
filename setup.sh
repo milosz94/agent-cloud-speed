@@ -112,7 +112,16 @@ if [ -n "$ADAPTER" ]; then
   echo
   echo "[6b/9] cloud CLI for --adapter $ADAPTER"
   case "$ADAPTER" in
-    aws)   note aws    || { [ -z "$CHECK" ] && pkg_install awscli || true; } ;;
+    aws)   note aws    || { [ -z "$CHECK" ] && pkg_install awscli || true; }
+           if aws sts get-caller-identity --profile acspeed-batch >/dev/null 2>&1; then
+             say "acspeed-batch profile" "authenticates"
+           else
+             say "acspeed-batch profile" "NOT SET UP"; miss=$((miss+1))
+             echo "  acspeed signs AWS with a dedicated static key, so a lapsed session cannot strand a"
+             echo "  billing orphan mid-run. Create it once (it makes an admin IAM user, so run it yourself):"
+             echo "      bash scripts/aws-bootstrap-credentials.sh --dry-run"
+             echo "      bash scripts/aws-bootstrap-credentials.sh"
+           fi ;;
     gcp)   note gcloud || echo "  install the Google Cloud SDK: https://cloud.google.com/sdk/docs/install" ;;
     azure) note az     || { [ -z "$CHECK" ] && curl -fsSL https://aka.ms/InstallAzureCLIDeb | sudo bash || true; } ;;
     redu)  say "redu" "no CLI needed (HTTP MCP)" ;;

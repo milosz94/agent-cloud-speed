@@ -241,7 +241,21 @@ to the same `acspeed-results/<adapter>/` folder, so give one of them `--out` (or
   mid-run the deprovision agent has no credentials and leaves a **live, billing orphan**. A static key
   never expires, so deploy and deprovision always authenticate.
 
-  **AWS static-key setup (once):**
+  **AWS static-key setup (once).** The repo does this for you:
+
+  ```bash
+  bash scripts/aws-bootstrap-credentials.sh --dry-run   # show what it would create
+  bash scripts/aws-bootstrap-credentials.sh             # create it
+  ```
+
+  It creates the IAM user, attaches AdministratorAccess, mints a non-expiring key, writes the
+  `acspeed-batch` profile and verifies it. It is idempotent and refuses if your shell has no admin
+  credentials for the target account, since it cannot bootstrap itself. `setup.sh --adapter aws`
+  checks whether the profile authenticates and points here when it does not. It is a separate,
+  deliberate command rather than part of `setup.sh` because it creates an admin IAM user in your
+  account. `config/aws.mcp.json` already passes `--profile acspeed-batch`, so nothing else to wire.
+
+  The equivalent by hand:
   ```bash
   # a dedicated benchmark IAM user + a non-expiring key, written straight into a named profile
   U=acspeed-batch
