@@ -55,7 +55,10 @@ is standard library only.
 - **Linux with KVM.** `ls /dev/kvm` must succeed. On a physical machine, enable virtualization in
   the BIOS; in a cloud VM, enable nested virtualization.
 - **The agent CLI.** `acspeed-run` shells out to `claude -p ...`, so Claude Code must be installed
-  and authenticated. Any model string you pass with `--model` must be one your account can use.
+  and authenticated (`setup.sh` installs it; authentication is yours to do). Any model string you
+  pass with `--model` must be one your account can use. **Only Claude Code is supported**: the
+  runner hardcodes the `claude` invocation and parses its JSON result and session id, so Codex and
+  other agent CLIs need a code change in `autorun.py`, not a config switch.
 - **Node.js** (for `npx`) and **uv** (for `uvx`), which is how the per-cloud MCP servers are
   launched: `mcp-proxy-for-aws` via `uvx`, `@google-cloud/cloud-run-mcp` and `@azure/mcp` via `npx`.
 - **The vendor CLI for each cloud you target**: `aws`, `gcloud`, or `az`, authenticated. The agent
@@ -66,21 +69,30 @@ is standard library only.
 
 ### Linux (full: analysis + live benchmark)
 
+One command takes a clean machine to a machine that can run the benchmark:
+
 ```bash
 git clone https://github.com/milosz94/agent-cloud-speed.git
 cd agent-cloud-speed
-python3 -m venv .venv && . .venv/bin/activate
-pip install -e .                       # gives you `acspeed` and `acspeed-run`
-python -m unittest discover -s tests -t . -v    # verify: the suite should pass
-
-# per-cloud config (templates ship in the repo)
-mkdir -p ~/.acspeed/_config && cp -r config/* ~/.acspeed/_config/
-
-# one-time microVM substrate, in two steps (see "Setup for live runs" below)
-bash sandbox/build-images.sh           # fetch Firecracker + kernel, build the rootfs
-sudo bash sandbox/install-sandbox.sh 8 # KVM + tap pool, persists across reboots
-ls /dev/kvm                            # must exist before a live run
+bash setup.sh --check                  # report what is missing, install NOTHING
+bash setup.sh --adapter aws            # install it all, then build the substrate
 ```
+
+`setup.sh` installs whatever is missing and skips whatever is not: curl/git/e2fsprogs, a container
+runtime, Node 22 (for `npx`), uv (for `uvx`), the Claude Code CLI, acspeed itself, the per-cloud
+config templates, the Firecracker binary + kernel + rootfs, and finally KVM and the tap pool. The
+last step configures kernel modules, systemd and host networking, so it uses `sudo` and says so
+before it does. `--slots N` sets how many runs can go at once (default 8).
+
+Verify when it finishes:
+
+```bash
+python3 -c "import sys;sys.path.insert(0,'.');from autorun import sandbox_available;print(sandbox_available())"
+# expect (True, '')
+```
+
+The individual steps are documented under "Setup for live runs" below if you would rather run them
+by hand.
 
 ### macOS (analysis only)
 
