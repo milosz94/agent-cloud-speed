@@ -105,8 +105,19 @@ if ! note claude; then
     else echo "  install Node first, then: npm install -g @anthropic-ai/claude-code" >&2; fi
   fi
 fi
-echo "  NOTE: acspeed drives 'claude -p' specifically (autorun.py). Codex and other agent CLIs are"
-echo "        not supported by the runner today; that is a code change, not a setup step."
+if have claude; then
+  if claude -p "reply with the single word READY" --output-format json --max-turns 1 >/dev/null 2>&1; then
+    say "claude login" "authenticated"
+  else
+    say "claude login" "NOT LOGGED IN"; miss=$((miss+1))
+    echo "      claude auth login          # interactive"
+    echo "      claude setup-token         # long-lived, survives an overnight batch"
+    echo "      a run refuses on a dead login rather than stranding a half-deployed stack."
+  fi
+fi
+echo "  NOTE: acspeed drives 'claude -p' specifically and parses Claude Code's transcript format."
+echo "        Codex and other agent CLIs need an adapter in autorun.py and acspeed/transcript.py;"
+echo "        see docs/adapters/README.md. That is a code change, not a setup step."
 
 if [ -n "$ADAPTER" ]; then
   echo

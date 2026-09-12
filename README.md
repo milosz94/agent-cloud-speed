@@ -150,6 +150,14 @@ Then edit the one for your cloud (`gcp.mcp.json` needs your project id; `aws.mcp
 IAM profile name). `config/README.md` says what to change in each, and `acspeed-run` refuses to
 start, **before provisioning anything**, if the config for your adapter is missing.
 
+## Per-adapter setup
+
+What each cloud needs from you, and what the repo does for you, is one file per adapter in
+[`docs/adapters/`](docs/adapters/): [aws](docs/adapters/aws.md), [gcp](docs/adapters/gcp.md),
+[azure](docs/adapters/azure.md), [redu](docs/adapters/redu.md). Only two things are never
+automatable: owning the cloud account, and an interactive login. `setup.sh --check --adapter <cloud>`
+reports the same list against your machine.
+
 ## Repo layout
 
 ```
