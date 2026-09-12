@@ -27,6 +27,27 @@ you can clone and run it without installing anything.
 The measurement *method* is the contribution; specific clouds are validation
 instances (Part 5), not the subject.
 
+## Start here
+
+| I want to... | go to |
+|---|---|
+| know if it runs on my machine | [What runs where](#what-runs-where) |
+| install everything in one command | [Install](#install) |
+| set up a specific cloud | [`docs/adapters/`](docs/adapters/) |
+| run the benchmark on my own app | [Run the speed test on your own app](#run-the-speed-test-on-your-own-app-acspeed-run) |
+| reproduce a published number | [Reproduce a published cell](#reproduce-a-published-cell) |
+| find my results, or the published ones | [Where results go](#where-results-go) |
+| understand what is being measured | [The idea in one example](#the-idea-in-one-example) |
+
+**The short version, on Linux:**
+
+```bash
+git clone https://github.com/milosz94/agent-cloud-speed.git && cd agent-cloud-speed
+bash setup.sh --check          # what is missing
+bash setup.sh --adapter aws    # install it all
+cd /path/to/your/app && acspeed-run --adapter aws --model claude-opus-5
+```
+
 ## What runs where
 
 acspeed has two halves with very different requirements. Read this table before installing.
@@ -358,6 +379,51 @@ before it is torn down, the tool saves a full-page picture to `run<NN>.png`. Thi
 not part of the paper: it runs after `t1`, never affects timing, and sends no agent prompt. It uses
 Playwright if installed, otherwise a headless chromium/chrome on your PATH, otherwise it skips with
 a hint. It is a keepsake / proof artifact, nothing the measurement depends on.
+
+## Where results go
+
+**Your own runs.** Every run writes into `./acspeed-results/<adapter>/` under the app folder, so the
+same app measured on several clouds sits side by side and compares directly. `--out` overrides it.
+
+```
+acspeed-results/aws/
+  run01.json      one run: the splits, the cost, the session ids, every axis
+  tables.txt      the same thing as a readable table
+  tables.json     the same thing for a machine
+```
+
+**The published runs.** The 94 runs behind the paper are in [`results/`](results/), one folder per
+cloud and one per **cell** (a cloud x tier x regime cut):
+
+```
+results/
+  README.md              what a cell is, and how to read the tables
+  PLAYBOOK.md            how a run becomes a published row
+  DATA-DEFECTS.md        known defects in the published numbers, and the exclusions
+  aws/aws-medium-a/
+    README.md            this cell's table and its n
+    sessions/*.jsonl     the agent transcript for every run in it, redacted
+```
+
+Every published number traces back to a transcript in the same folder, so any row can be checked
+against the run that produced it.
+
+## Reproduce a published cell
+
+The application under test ships with the repo and is pinned by image digest, which is what makes a
+re-run comparable with a published row:
+
+```bash
+mkdir -p ~/acspeed-medium-a && cd ~/acspeed-medium-a
+acspeed-run --adapter aws --suite umami-medium --model claude-opus-5 --n 10
+```
+
+`--suite umami-medium` is the Medium A (online) tier, the same one behind `results/aws/aws-medium-a/`.
+The app folder is created for you on first run. Compare your `tables.txt` against that cell's
+`README.md`.
+
+**It costs real money**, on your own cloud account, and a Medium cell is ten deploys plus their
+operations and teardown.
 
 ## What maps to what (paper Parts 1-4)
 
