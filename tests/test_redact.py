@@ -52,6 +52,24 @@ class TestRedactText(unittest.TestCase):
         self.assertNotIn("MIIEabc", s)
         self.assertEqual(c["private-key"], 1)
 
+
+    def test_truncated_pem_without_end_marker(self):
+        """A key printed into a transcript is usually cut off, so -----END----- never arrives.
+
+        The closed-block pattern cannot match that and caught 0 of 16 real blocks across the eight
+        GCP sessions that carried one. Regression for that gap.
+        """
+        body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCabcdefghijklmn"
+        s, c = redact.redact_text("-----BEGIN PRIVATE KEY-----\\n" + body + "\\nMOREKEYMATERIAL")
+        self.assertNotIn("BEGIN PRIVATE KEY", s)
+        self.assertNotIn(body, s)
+        self.assertGreaterEqual(c["private-key"], 1)
+
+    def test_plain_prose_is_not_touched_by_the_pem_rule(self):
+        """The base64 sweep must engage only when a BEGIN marker survives."""
+        text = "the agent deployed the application and it served normally"
+        s, _ = redact.redact_text(text)
+        self.assertEqual(s, text)
     def test_non_secret_survives(self):
         # a uuid, an ISO timestamp, and a plain sentence must pass through untouched
         txt = "id 9e196df2-e1a3-470a-81c2-880abb3fbc81 at 2026-08-26T10:00:00.000Z ok"

@@ -32,6 +32,14 @@ def _ph(cat: str) -> str:
 
 # -- Pattern layer: secrets recognizable by their own shape, anywhere in a string ------------------
 _PEM = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----", re.S)
+# A key printed into a transcript is usually TRUNCATED, so the -----END----- marker never arrives and
+# _PEM above cannot match: measured over the 8 GCP sessions that carried one, 16 BEGIN markers and 0 END
+# markers, so the closed pattern caught 0 of 16. When a BEGIN survives _PEM, treat the string as holding
+# key material and scrub the PEM-length base64 runs in it. PEM lines are 64 chars; ordinary prose words
+# are far shorter, so a 40-char floor separates them. Applied ONLY to strings with a surviving BEGIN, so
+# legitimate base64 elsewhere is untouched (verified: 158 clean transcripts stay byte-identical).
+_PEM_OPEN = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
+_PEM_B64 = re.compile(r"[A-Za-z0-9+/=]{40,}")
 _SSH = re.compile(r"\b(ssh-(?:rsa|ed25519|dss))\s+[A-Za-z0-9+/]{40,}={0,3}")
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}")
 _BEARER = re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{12,}")
@@ -156,6 +164,10 @@ def redact_text(s: str) -> Tuple[str, Counter]:
         s, n = rx.subn(repl, s)
         if n:
             counts[cat] += n
+    if _PEM_OPEN.search(s):                      # truncated key: no -----END----- to close on
+        s, n1 = _PEM_OPEN.subn(_ph("private-key"), s)
+        s, n2 = _PEM_B64.subn(_ph("private-key"), s)
+        counts["private-key"] += n1 + n2
     s, n = _JSON_KV.subn(_json_kv_sub, s)  # secret inside a "key":"value" string (tool output)
     if n:
         counts["value"] += n
