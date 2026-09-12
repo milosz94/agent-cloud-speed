@@ -2202,6 +2202,18 @@ def main() -> None:
             f"    cp -r {_tpl}/* {DATA}/_config/\n\n"
             f"Then set your project/profile in {DATA}/_config/{a.adapter}.mcp.json\n"
             "(see 'Per-cloud credentials' in README.md for what each cloud needs).\n")
+    if _cfg:
+        # Existence is not enough: the shipped templates carry placeholders. A run launched with an
+        # unedited template reaches the cloud and fails there, after the clock and the money started.
+        try:
+            _raw = open(_cfg).read()
+        except OSError:
+            _raw = ""
+        if "REPLACE_WITH" in _raw:
+            sys.exit(
+                f"\nREFUSING TO RUN: {_cfg} still contains a template placeholder.\n\n"
+                + "\n".join("    " + ln.strip() for ln in _raw.splitlines() if "REPLACE_WITH" in ln)
+                + "\n\nEdit that file before running (config/README.md says what each cloud needs).\n")
 
     ok, why = sandbox_available()
     if a.no_sandbox or not ok:
