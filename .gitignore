@@ -8,8 +8,13 @@ dist/
 venv/
 .DS_Store
 
-# local microVM sandbox (rootfs/images, ~1GB) -- never commit
-sandbox/
+# microVM build OUTPUTS and vendored binaries: large and rebuildable by sandbox/build-images.sh.
+# The sandbox SOURCE (scripts, Containerfile, vmjob.py) ships, or nobody else can run the benchmark.
+sandbox/images/
+sandbox/bin/
+sandbox/boot.log
+sandbox/.pstore/
+sandbox/vmconfig-local.json
 
 # private substrate denylist (names the infra we strip -- never publish)
 /acspeed/_substrate_rules.py

@@ -76,8 +76,9 @@ python -m unittest discover -s tests -t . -v    # verify: the suite should pass
 # per-cloud config (templates ship in the repo)
 mkdir -p ~/.acspeed/_config && cp -r config/* ~/.acspeed/_config/
 
-# one-time microVM substrate (see "Setup for live runs" below for what this does)
-sudo bash sandbox/install-sandbox.sh 8
+# one-time microVM substrate, in two steps (see "Setup for live runs" below)
+bash sandbox/build-images.sh           # fetch Firecracker + kernel, build the rootfs
+sudo bash sandbox/install-sandbox.sh 8 # KVM + tap pool, persists across reboots
 ls /dev/kvm                            # must exist before a live run
 ```
 
@@ -182,7 +183,19 @@ neutral vantage), and the transcript is byte-identical to a plain `claude -p` ru
 **Platform support.** Linux + KVM only, as "What runs where" above explains. The one-time installer
 refuses on any other OS and says so.
 
-**1. The microVM substrate (once per machine, right after install).** KVM and the tap pool are ephemeral
+**0. Build the microVM images (once per machine).** The Firecracker binary, the kernel and the agent
+rootfs are too large for git, so the repo ships the recipe rather than the artifacts:
+
+```bash
+bash sandbox/build-images.sh          # ~1 GB of downloads + a container build; idempotent
+```
+
+It fetches Firecracker (pinned, default v1.16.1) and a 6.1 CI kernel, then builds `images/rootfs.ext4`
+from `rootfs/Containerfile`. It needs `curl`, `tar`, `mke2fs` and either docker or podman, skips
+anything already present, and takes `--force` to rebuild. Override `FC_VERSION`, `KERNEL` or
+`KERNEL_URL` to pin different versions.
+
+**1. The microVM substrate (once per machine, right after the images).** KVM and the tap pool are ephemeral
 kernel state (wiped on reboot), so instead of setting them up by hand every boot, run the one-time
 installer, which makes them **persist across reboots** (loads KVM on boot via `modules-load.d`, and
 installs a systemd oneshot that brings the tap pool up on boot) and brings everything up now:
