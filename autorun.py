@@ -92,7 +92,9 @@ def sandbox_available() -> tuple[bool, str]:
     if not vmjob.discover_slots():
         return False, "no acspeed tap(s) up (sudo bash sandbox/net-setup.sh [N])"
     return True, ""
-DATA = "/home/milos/Desktop/research_paper_data"
+# Where the per-adapter MCP configs and the reference machine live. Overridable so a clone works on
+# any machine: set ACSPEED_DATA, or drop the configs in ~/.acspeed/_config/.
+DATA = os.environ.get("ACSPEED_DATA") or os.path.expanduser("~/.acspeed")
 
 # --adapter selects the cloud. Same cloud names as acspeed.adapters.profiles (redu, aws, gcp, azure);
 # the analysis is identical across clouds, only this per-cloud driver config differs: which MCP server

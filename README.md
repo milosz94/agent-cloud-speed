@@ -4,9 +4,13 @@ A reference implementation of **Parts 1, 2, 3, and 4** of a cloud-agnostic frame
 measuring **agent-cloud operation efficiency** as a *speed* test.
 
 It implements the computational core of the paper's Part 1 baseline: the
-critical-path split of wall-clock into agent versus platform time, the measured
-delivered-capability normalization, the control-plane versus data-plane
-discriminator, the agent-time decomposition, and the reproducibility statistics.
+critical-path split of wall-clock into agent versus platform time, and the
+reproducibility statistics. The harness also carries machinery the paper does
+not use and does not describe: the delivered-capability probe and its
+normalization, the control-plane versus data-plane discriminator, and the
+four-component agent-time decomposition. Those produced no measurement in the
+published wave, which is why the paper drops them; they remain here as working
+code for anyone who wants to exercise them.
 **Part 2** adds the operation model: the seven-slot schema, the three-type
 typology, the atom registers, the reused SSH-ready milestone split, and the
 session-as-trace efficiency metric. **Part 3** adds the reference-optimal: the
@@ -23,22 +27,117 @@ you can clone and run it without installing anything.
 The measurement *method* is the contribution; specific clouds are validation
 instances (Part 5), not the subject.
 
-## Install / run
+## What runs where
+
+acspeed has two halves with very different requirements. Read this table before installing.
+
+| | what it does | Linux | macOS | Windows |
+|---|---|---|---|---|
+| **Analysis** (`acspeed`, tests, examples) | reads traces and run records, computes the splits and tables | yes | yes | yes |
+| **Live benchmark** (`acspeed-run`) | drives a real agent against a real cloud and times it | yes | **no** | **no** |
+
+The live benchmark runs every agent turn inside a fresh **Firecracker microVM**, which needs
+`/dev/kvm`. Firecracker is Linux-only, so `acspeed-run` is Linux-only. It does **not** fall back to
+running on the host: without the microVM it refuses to start, and `--no-sandbox` triggers the same
+refusal, because a host run produces no platform/agent split, no session id and no cost, and would
+spend real money to produce a record that cannot become a published row.
+
+On macOS or Windows, run the live benchmark inside a Linux VM or WSL2 that exposes `/dev/kvm`
+(nested virtualization). The analysis half needs none of that and runs natively everywhere.
+
+## Requirements
+
+**Analysis half** - Python >= 3.10 and nothing else. There are no runtime dependencies; the package
+is standard library only.
+
+**Live benchmark**, in addition:
+
+- **Linux with KVM.** `ls /dev/kvm` must succeed. On a physical machine, enable virtualization in
+  the BIOS; in a cloud VM, enable nested virtualization.
+- **The agent CLI.** `acspeed-run` shells out to `claude -p ...`, so Claude Code must be installed
+  and authenticated. Any model string you pass with `--model` must be one your account can use.
+- **Node.js** (for `npx`) and **uv** (for `uvx`), which is how the per-cloud MCP servers are
+  launched: `mcp-proxy-for-aws` via `uvx`, `@google-cloud/cloud-run-mcp` and `@azure/mcp` via `npx`.
+- **The vendor CLI for each cloud you target**: `aws`, `gcloud`, or `az`, authenticated. The agent
+  drives these directly for anything its MCP server cannot create.
+- **`sudo`**, once, for the microVM installer.
+
+## Install
+
+### Linux (full: analysis + live benchmark)
 
 ```bash
-# no dependencies; Python >= 3.10
+git clone https://github.com/milosz94/agent-cloud-speed.git
+cd agent-cloud-speed
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e .                       # gives you `acspeed` and `acspeed-run`
+python -m unittest discover -s tests -t . -v    # verify: the suite should pass
+
+# one-time microVM substrate (see "Setup for live runs" below for what this does)
+sudo bash sandbox/install-sandbox.sh 8
+ls /dev/kvm                            # must exist before a live run
+```
+
+### macOS (analysis only)
+
+```bash
+git clone https://github.com/milosz94/agent-cloud-speed.git
+cd agent-cloud-speed
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+python -m unittest discover -s tests -t . -v
+```
+
+`acspeed-run` will refuse here. For live runs, use a Linux VM with nested virtualization (UTM,
+Lima, or a cloud VM) and follow the Linux instructions inside it.
+
+### Windows (analysis natively; live benchmark via WSL2)
+
+Analysis, in PowerShell:
+
+```powershell
+git clone https://github.com/milosz94/agent-cloud-speed.git
+cd agent-cloud-speed
+py -3 -m venv .venv; .\.venv\Scripts\Activate.ps1
+pip install -e .
+py -m unittest discover -s tests -t . -v
+```
+
+For the live benchmark, install WSL2 with a Linux distribution, confirm `/dev/kvm` exists inside it
+(WSL2 exposes KVM on recent Windows builds with nested virtualization enabled), then follow the
+Linux instructions **inside WSL2**. Clone into the WSL filesystem, not `/mnt/c`, or the microVM and
+file copies will be slow.
+
+## Quick start (analysis, any OS)
+
+```bash
 python -m unittest discover -s tests -t . -v      # run the test suite
 python examples/run_example.py                    # worked example
 python -m acspeed agent-time examples/example_trace.json
 python -m acspeed critical-path examples/example_trace.json
+python -m acspeed --help                          # agent-time | critical-path | sessions
 ```
+
+## Where acspeed keeps its config
+
+The per-adapter MCP configs and the frozen reference machine live in a data directory, resolved as:
+
+1. `$ACSPEED_DATA` if set, else
+2. `~/.acspeed`
+
+Create `$ACSPEED_DATA/_config/` and put `redu.mcp.json`, `aws.mcp.json`, `gcp.mcp.json` or
+`azure.mcp.json` there, one per cloud you intend to run. What goes in each is under
+"Per-cloud credentials" below.
 
 ## Run the speed test on your own app (`acspeed-run`)
 
+Linux only, and it spends real money on the cloud you point it at.
+
 ```bash
-pipx install --editable .            # gives you `acspeed-run` (and `acspeed`)
+pip install -e .                     # gives you `acspeed-run` (and `acspeed`); pipx also works
+export ACSPEED_DATA=~/.acspeed       # where the per-cloud MCP configs live (see below)
 cd /path/to/your/app                 # any folder an agent could deploy: a repo, a compose stack
-acspeed-run --adapter redu --model claude-opus-5
+acspeed-run --adapter aws --model claude-opus-5
 ```
 
 One run = the two operations of the paper's Part 2 typology, both performed by a fresh headless
@@ -54,11 +153,8 @@ directly. `--out` overrides the path.
 substrate): the VM holds only the target cloud's credentials, readiness is polled from the host (a
 neutral vantage), and the transcript is byte-identical to a plain `claude -p` run. Setup is one-time.
 
-**Platform support.** The microVM substrate is **Linux + KVM only** (a Firecracker constraint). On
-**macOS / Windows**, acspeed runs each agent turn on the **host** (`--no-sandbox`): everything still works
-(deploy, all five axes, teardown) except the hermetic per-cloud credential isolation of C9 (the host holds
-whatever creds you have). To get the microVM on a non-Linux machine, run acspeed inside a Linux VM / WSL2
-that exposes `/dev/kvm`. The one-time installer below is therefore Linux-only and says so if run elsewhere.
+**Platform support.** Linux + KVM only, as "What runs where" above explains. The one-time installer
+refuses on any other OS and says so.
 
 **1. The microVM substrate (once per machine, right after install).** KVM and the tap pool are ephemeral
 kernel state (wiped on reboot), so instead of setting them up by hand every boot, run the one-time
@@ -73,8 +169,10 @@ After this you never touch `net-setup` again: KVM auto-loads and `acspeed-tap0..
 (The lower-level `sudo modprobe kvm_amd` + `sudo bash sandbox/net-setup.sh N` still work if you want a
 one-off, non-persistent setup.) The prebuilt kernel and rootfs live under `sandbox/` (`bin/`, `images/`);
 rebuilding the rootfs (only if you edit `sandbox/rootfs/vm-runner.sh` or the `Containerfile`) is documented
-in `sandbox/STATE.md`. If the substrate is not available the run falls back to the host and says so;
-`--no-sandbox` forces that.
+in `sandbox/STATE.md`. If the substrate is not available the run **refuses to start** rather than
+falling back to the host, and `--no-sandbox` produces the same refusal: a host run yields no
+platform/agent split, no session id and no cost, so it would spend real money for an unpublishable
+record.
 
 **2. Concurrency (run multiple speed tests at the same time).** With `SLOTS` taps up, just launch up to
 `SLOTS` `acspeed-run` processes at once: each **claims a free tap slot** (a file-lock held for the VM's
