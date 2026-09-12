@@ -1,0 +1,24 @@
+services:
+  umami:
+    # Pinned by DIGEST, not tag: postgresql-latest is a rolling build that matches no
+    # published version tag, so there is no version to pin. Resolved 2026-08-23
+    # (image built 2026-08-20). Re-resolve with a HEAD on the manifest before redeploying.
+    #
+    # This digest is the one every published run in results/ used. Changing it makes your
+    # numbers incomparable with the published cells, which is the whole point of pinning.
+    image: docker.umami.is/umami-software/umami@sha256:fa32d116cf20cad52cbc3fad9a63b46e7fa02299d8f967168eb453d49c476b4a
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      # Written into the project .env by the deploy step (database: managed).
+      DATABASE_URL: "${DATABASE_URL}"
+      # Passed explicitly so session cookies survive a DB password rotation.
+      # Generated per checkout when acspeed materializes this folder; never shared.
+      APP_SECRET: "${APP_SECRET}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/heartbeat || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
