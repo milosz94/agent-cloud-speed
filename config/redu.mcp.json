@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "redu": {
+      "type": "http",
+      "url": "https://mcp.redu.cloud/mcp"
+    }
+  }
+}

@@ -29,13 +29,14 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root
 
 from acspeed.adapters import aws_ct_cost as ct
 from acspeed.cost import RateComponent, compose_run_rate
 
-STAGING = "/home/milos/Desktop/tests_lib/umami/acspeed-results"
-REPO = os.path.dirname(os.path.abspath(__file__))
+STAGING = os.environ.get("ACSPEED_STAGING") or os.path.join(
+    os.environ.get("ACSPEED_DATA") or os.path.expanduser("~/.acspeed"), "_staging")
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # The window is scoped by the run token, so it only has to be generous enough to contain the run's
 # creates. The live path looks back 8h from the snapshot; measured_at IS that snapshot.

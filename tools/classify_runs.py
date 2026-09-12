@@ -21,7 +21,7 @@ import os
 import re
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root
 from acspeed import transcript as acs  # noqa: E402
 from autorun import pick_url, _BASE, all_text  # noqa: E402
 
@@ -61,8 +61,8 @@ def classify(rec: dict) -> dict:
 
 
 def main() -> None:
-    d = sys.argv[1] if len(sys.argv) > 1 else \
-        "/home/milos/Desktop/research_paper_data/_measurements/redu"
+    d = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
+        os.environ.get("ACSPEED_DATA") or os.path.expanduser("~/.acspeed"), "_measurements")
     for p in sorted(glob.glob(os.path.join(d, "run??.json"))):
         rec = json.load(open(p))
         if not (isinstance(rec.get("recovery"), dict) and "first_attempt_functional" in rec):

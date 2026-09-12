@@ -281,7 +281,8 @@ def report(out_dir: str) -> str | None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dir", default="/home/milos/Desktop/research_paper_data/_measurements/redu")
+    ap.add_argument("--dir", default=os.path.join(
+        os.environ.get("ACSPEED_DATA") or os.path.expanduser("~/.acspeed"), "_measurements"))
     a = ap.parse_args()
     txt = report(a.dir)
     if txt is None:

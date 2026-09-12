@@ -23,13 +23,16 @@ import re
 import sys
 from collections import OrderedDict
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root
 
 from acspeed import gold, repro, weighting  # noqa: E402
 from build_tables import wilson  # noqa: E402
 
-STAGING = "/home/milos/Desktop/tests_lib/umami/acspeed-results"
-RESULTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+# Raw per-run records. Not part of the published artifact (see docs/notes/REPRO-TODO.md): point
+# ACSPEED_STAGING at your own acspeed-results tree to regenerate tables from your own runs.
+STAGING = os.environ.get("ACSPEED_STAGING") or os.path.join(
+    (os.environ.get("ACSPEED_DATA") or os.path.expanduser("~/.acspeed")), "_staging")
+RESULTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "results")
 
 # The paper's anonymization. Kept here, deliberately NOT in the .tex, so the tables can be
 # regenerated without the key leaking into the manuscript.
@@ -388,13 +391,17 @@ def _hourly(crr: dict):
     return te["low"] / 730.0 if te.get("low") is not None else None
 
 
-TEX = ("/home/milos/Desktop/redu-webservice/internal/proof-comparison-2026-08/"
-       "PAPER/combined_p5body.tex")
+# Author-only: --check diffs the generated rows against the paper source. Set ACSPEED_PAPER_TEX
+# to combined_p5body.tex to use it; without it, --check skips the comparison.
+TEX = os.environ.get("ACSPEED_PAPER_TEX", "")
 
 
 def check_against_tex(cells: list) -> list:
     """Every generated row must appear verbatim in the paper. Catches the paper drifting from the
     results tree, in either direction."""
+    if not TEX or not os.path.exists(TEX):
+        print("SKIP: set ACSPEED_PAPER_TEX to combined_p5body.tex to diff the rows against the paper.")
+        return []
     tex = open(TEX).read()
     missing = []
     for body in (table_51(cells), table_52(cells)):

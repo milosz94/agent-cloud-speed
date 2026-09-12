@@ -1,0 +1,4 @@
+[
+  {"name": "dashboard", "weight": 3, "path": "/"},
+  {"name": "login-page", "weight": 1, "path": "/login"}
+]

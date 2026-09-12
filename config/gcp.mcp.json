@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "cloud-run": {
+      "command": "npx",
+      "args": ["-y", "@google-cloud/cloud-run-mcp"],
+      "env": {
+        "GOOGLE_CLOUD_PROJECT": "REPLACE_WITH_YOUR_GCP_PROJECT_ID",
+        "GOOGLE_CLOUD_REGION": "europe-west1"
+      }
+    }
+  }
+}

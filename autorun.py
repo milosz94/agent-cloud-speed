@@ -2188,6 +2188,21 @@ def main() -> None:
     # bootlogs came from a DIFFERENT run (token acsbceb0b48 against the record's acsf58e4305), so the
     # directory looked complete. A run without the microVM is also not the hermetic per-cloud substrate
     # the paper claims (C9), so its numbers are not the paper's numbers even when they are present.
+    # Config preflight: a missing MCP config used to surface deep in the run, after the agent had
+    # already been launched and money spent. Check it here, before anything is provisioned, and point
+    # at the templates the repo ships.
+    _cfg = (ADAPTERS.get(a.adapter) or {}).get("mcp_config")
+    if _cfg and not os.path.exists(_cfg):
+        _tpl = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config")
+        sys.exit(
+            f"\nREFUSING TO RUN: no MCP config for adapter '{a.adapter}' at {_cfg}.\n\n"
+            f"acspeed reads its per-cloud config from $ACSPEED_DATA (currently {DATA}).\n"
+            "The repo ships templates. Copy them once, then edit the one for your cloud:\n\n"
+            f"    mkdir -p {DATA}/_config\n"
+            f"    cp -r {_tpl}/* {DATA}/_config/\n\n"
+            f"Then set your project/profile in {DATA}/_config/{a.adapter}.mcp.json\n"
+            "(see 'Per-cloud credentials' in README.md for what each cloud needs).\n")
+
     ok, why = sandbox_available()
     if a.no_sandbox or not ok:
         reason = "--no-sandbox was passed" if a.no_sandbox else why

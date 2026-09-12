@@ -73,6 +73,9 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -e .                       # gives you `acspeed` and `acspeed-run`
 python -m unittest discover -s tests -t . -v    # verify: the suite should pass
 
+# per-cloud config (templates ship in the repo)
+mkdir -p ~/.acspeed/_config && cp -r config/* ~/.acspeed/_config/
+
 # one-time microVM substrate (see "Setup for live runs" below for what this does)
 sudo bash sandbox/install-sandbox.sh 8
 ls /dev/kvm                            # must exist before a live run
@@ -120,14 +123,37 @@ python -m acspeed --help                          # agent-time | critical-path |
 
 ## Where acspeed keeps its config
 
-The per-adapter MCP configs and the frozen reference machine live in a data directory, resolved as:
+The per-adapter MCP configs, the frozen reference machine and the pinned STREAM source live in a
+data directory, resolved as `$ACSPEED_DATA`, or `~/.acspeed` when that is unset.
 
-1. `$ACSPEED_DATA` if set, else
-2. `~/.acspeed`
+**The repo ships working templates.** Copy them once:
 
-Create `$ACSPEED_DATA/_config/` and put `redu.mcp.json`, `aws.mcp.json`, `gcp.mcp.json` or
-`azure.mcp.json` there, one per cloud you intend to run. What goes in each is under
-"Per-cloud credentials" below.
+```bash
+mkdir -p ~/.acspeed/_config
+cp -r config/* ~/.acspeed/_config/
+```
+
+Then edit the one for your cloud (`gcp.mcp.json` needs your project id; `aws.mcp.json` needs your
+IAM profile name). `config/README.md` says what to change in each, and `acspeed-run` refuses to
+start, **before provisioning anything**, if the config for your adapter is missing.
+
+## Repo layout
+
+```
+acspeed/        the package: traces, splits, floors, adapters, redaction
+autorun.py      the live benchmark runner (`acspeed-run`)
+build_tables.py table generation used by autorun at the end of a run
+config/         MCP + reference templates to copy into $ACSPEED_DATA/_config
+examples/       a worked example and a sample trace
+results/        the published 94-run artifact: per-cell records, transcripts, exclusion ledger
+tests/          the test suite (746 tests, standard library only)
+tools/          author-only analysis scripts, not needed to run the benchmark
+docs/notes/     working notes kept for provenance, not documentation
+```
+
+Everything in `tools/` reads `$ACSPEED_STAGING` for raw run records; those are **not** part of the
+published artifact, so a third party regenerates tables from their own runs, not from this repo's.
+`docs/notes/REPRO-TODO.md` records what that costs.
 
 ## Run the speed test on your own app (`acspeed-run`)
 

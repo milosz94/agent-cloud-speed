@@ -1,0 +1,50 @@
+{
+  "cvector": null,
+  "scalars": {
+    "compute": 12323.66,
+    "memory": 18.7577,
+    "disk": 225378.041464,
+    "network": null
+  },
+  "axes_present": [
+    "compute",
+    "disk",
+    "memory"
+  ],
+  "raw": {
+    "sysbench_single_eps": 1875.28,
+    "sysbench_allcore_eps": 12323.66,
+    "stream_gbps": {
+      "copy": 33.576699999999995,
+      "scale": 18.231,
+      "add": 19.3571,
+      "triad": 18.7577
+    },
+    "fio_iops": {
+      "read_iops": 225378.041464,
+      "write_iops": 0.0,
+      "read_bw_kbps": 901512.0,
+      "write_bw_kbps": 0.0
+    },
+    "fio_bw_kbps": {
+      "read_iops": 3286.142572,
+      "write_iops": 0.0,
+      "read_bw_kbps": 3365009.0,
+      "write_bw_kbps": 0.0
+    },
+    "fio_lat_us_qd1": 61.645721079000005
+  },
+  "errors": {
+    "network": "no neutral-vantage iperf server provided (C10)"
+  },
+  "host": {
+    "nproc": "12",
+    "mem_kb": "32784316",
+    "kernel": "7.0.0-30-generic",
+    "cpu": "AMD Ryzen 5 5600X 6-Core Processor"
+  },
+  "disclosure": {
+    "residency": "idle (dedicated reference host)",
+    "note": "C is delivered capability UNDER RESIDENCY measured in situ on the operation's own VM (CR C12/C14), not a clean-boot peak; on contention-bound axes it can read low by ~10-18%. Probe in a quiescent post-serving window; the cross-platform ratio cancels the resident-app term as common mode (Duet)."
+  }
+}
