@@ -86,10 +86,55 @@ _USAGE_KEYS = ("input_tokens", "output_tokens",
 # Transcript parsing (schema-minimal: only the fields the attribution needs)
 # --------------------------------------------------------------------------------------------------
 
+# Codex writes its session rollout as {"timestamp", "type", "payload"} rather than Claude Code's
+# assistant/user rows. The ATTRIBUTION RULE above is about lanes and gaps, not about either vendor's
+# JSON, so the agent-agnostic move is to normalize at load time: every row below becomes the canonical
+# shape, and lane_of / _spans_from_rows / agenttime then run byte-identically for both agents. That
+# keeps ONE measurement implementation rather than a second one that has to be kept in step.
+_CODEX_ROW_TYPES = {"response_item", "event_msg", "session_meta", "turn_context"}
+# A gap ENDING on one of these ends with the model having produced something: agent lane.
+_CODEX_AGENT = {"message", "agent_message", "reasoning"}
+# A gap ENDING on one of these ends with a tool/environment result: platform lane, exactly as a
+# Claude Code tool_result does.
+_CODEX_PLATFORM = {"function_call_output", "custom_tool_call_output", "patch_apply_end",
+                   "exec_command_end", "mcp_tool_call_end", "web_search_end"}
+
+
+def _is_codex_rollout(rows: Sequence[dict]) -> bool:
+    """True when these raw rows are a Codex rollout rather than a Claude Code transcript."""
+    seen = {r.get("type") for r in rows[:50]}
+    return bool(seen & _CODEX_ROW_TYPES) and any("payload" in r for r in rows[:50])
+
+
+def _normalize_codex(raw: Sequence[dict]) -> List[dict]:
+    """Map Codex rollout rows onto the canonical assistant/user rows the rest of this module reads."""
+    out: List[dict] = []
+    for d in raw:
+        ts = d.get("timestamp")
+        pay = d.get("payload")
+        if not ts or not isinstance(pay, dict):
+            continue
+        kind = pay.get("type")
+        if kind in _CODEX_AGENT:
+            out.append({"type": "assistant", "timestamp": ts, "message": {"content": []}})
+        elif kind in _CODEX_PLATFORM:
+            # An unknown tool id is fine: lane_of only special-cases the ask-the-human tool, and
+            # names.get(None) is None, so anything else lands on the platform lane as intended.
+            out.append({"type": "user", "timestamp": ts,
+                        "message": {"content": [{"type": "tool_result",
+                                                 "tool_use_id": pay.get("call_id") or pay.get("id")}]}})
+        elif kind == "user_message":
+            out.append({"type": "user", "timestamp": ts, "message": {"content": []}})
+    return out
+
+
 def _load_rows(path: str) -> List[dict]:
     """Rows of type assistant/user carrying a timestamp, sorted by time. Everything else in the
-    transcript (summaries, snapshots, mode markers) is not a timed event and is dropped."""
-    rows: List[dict] = []
+    transcript (summaries, snapshots, mode markers) is not a timed event and is dropped.
+
+    Accepts either a Claude Code transcript or a Codex rollout; a Codex rollout is normalized to the
+    same row shape first, so everything downstream is agent-agnostic."""
+    raw: List[dict] = []
     with open(path) as fh:
         for line in fh:
             line = line.strip()
@@ -99,8 +144,11 @@ def _load_rows(path: str) -> List[dict]:
                 d = json.loads(line)
             except ValueError:
                 continue
-            if d.get("type") in _KEEP_TYPES and d.get("timestamp"):
-                rows.append(d)
+            raw.append(d)
+    if _is_codex_rollout(raw):
+        rows = _normalize_codex(raw)
+    else:
+        rows = [d for d in raw if d.get("type") in _KEEP_TYPES and d.get("timestamp")]
     rows.sort(key=lambda r: r["timestamp"])
     return rows
 
