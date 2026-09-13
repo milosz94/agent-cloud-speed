@@ -82,6 +82,45 @@ except Exception:  # noqa: BLE001
     vmjob = None
 
 
+def kvm_vendor_module() -> str:
+    """The KVM module this CPU needs, read from the CPU rather than assumed."""
+    try:
+        with open("/proc/cpuinfo") as fh:
+            flags = fh.read()
+    except OSError:
+        return "kvm_intel-or-kvm_amd"
+    if " vmx" in flags or "\tvmx" in flags:
+        return "kvm_intel"
+    if " svm" in flags or "\tsvm" in flags:
+        return "kvm_amd"
+    return "kvm_intel-or-kvm_amd"
+
+
+def kvm_usable() -> tuple[bool, str]:
+    """Is /dev/kvm actually usable by THIS process, not merely present?
+
+    Existence is the wrong test and produced a false positive on the case that matters most: under
+    WSL2 the node is commonly created as ``crw------- root root`` because the distro udev rule is not
+    applied, so ``os.path.exists`` says yes and Firecracker then fails to open it. Firecracker's own
+    getting-started checks read AND write access, so check the same thing.
+    """
+    import stat as _stat
+    if not os.path.exists("/dev/kvm"):
+        return False, (f"/dev/kvm absent (sudo modprobe {kvm_vendor_module()}; "
+                       "on a VM, enable nested virtualization)")
+    try:
+        mode = os.stat("/dev/kvm").st_mode
+    except OSError as e:
+        return False, f"/dev/kvm cannot be stat'd ({e})"
+    if not _stat.S_ISCHR(mode):
+        return False, "/dev/kvm is not a character device"
+    if not os.access("/dev/kvm", os.R_OK | os.W_OK):
+        return False, ("/dev/kvm exists but is not readable+writable by this user "
+                       "(sudo usermod -aG kvm \"$USER\" then log back in; under WSL2 also "
+                       "sudo chmod 666 /dev/kvm, whose udev rule is not applied there)")
+    return True, ""
+
+
 def sandbox_available() -> tuple[bool, str]:
     """Is the microVM substrate usable right now? Returns (ok, reason-if-not)."""
     if vmjob is None:
@@ -89,8 +128,9 @@ def sandbox_available() -> tuple[bool, str]:
     for p in (vmjob.BIN_FC, vmjob.KERNEL, vmjob.BASE_ROOTFS):
         if not os.path.exists(p):
             return False, f"missing {os.path.basename(p)} (build it: bash sandbox/build-images.sh)"
-    if not os.path.exists("/dev/kvm"):
-        return False, "/dev/kvm absent (sudo modprobe kvm_amd)"
+    ok_kvm, why_kvm = kvm_usable()
+    if not ok_kvm:
+        return False, why_kvm
     if not vmjob.discover_slots():
         return False, "no acspeed tap(s) up (sudo bash sandbox/net-setup.sh [N])"
     return True, ""

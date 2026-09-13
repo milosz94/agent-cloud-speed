@@ -197,11 +197,10 @@ to the same `acspeed-results/<adapter>/` folder, so give one of them `--out` (or
   For both **gcp** and **azure**, the credential preflight (`gcloud auth print-access-token` / `az account
   show`) runs before the deploy and **refuses to deploy** if it fails, exactly as for AWS.
 
-  **microVM note (gcp/azure):** the hermetic microVM mounts `~/.config/gcloud` / `~/.azure` only after the
-  rootfs is rebuilt to pick up the generalized `vm-runner` (the host-side staging and `vm-runner.sh` are
-  already generalized; the running rootfs image is not). Until you rebuild it, run gcp/azure with
-  `--no-sandbox` (agent turns on the host, using the host's creds directly). AWS and redu microVM runs are
-  unaffected.
+  **microVM note (gcp/azure):** the microVM mounts `~/.config/gcloud` / `~/.azure` from a rootfs built
+  with the generalized `vm-runner`. If yours predates that, rebuild it with
+  `bash sandbox/build-images.sh --force`. There is no host-mode fallback: a run without the microVM is
+  refused, because it produces no platform/agent split, no session id and no cost.
 
 **3b. Cost coverage: the complete-inventory sweep (one-time per cloud, off-clock).**
 
@@ -230,9 +229,9 @@ inventory API below is not enabled it no-ops and the run says so. Enable it once
 ```bash
 acspeed-run --adapter redu  --model claude-opus-5     # time + liveness + cost + capability
 acspeed-run --adapter aws   --model claude-opus-5     # same, on AWS (uses the static-key profile)
-acspeed-run --adapter azure --model claude-opus-5 --no-sandbox   # Azure (host creds; cost is public-priced)
-acspeed-run --adapter gcp   --model claude-opus-5 --no-sandbox   # GCP  (host creds; Cloud Run + gcloud)
-# --no-cost / --no-capability skip those off-clock measures; --n N repeats the run
+acspeed-run --adapter azure --model claude-opus-5     # same, on Azure
+acspeed-run --adapter gcp   --model claude-opus-5     # same, on GCP (Cloud Run + gcloud)
+# --n N repeats the run
 ```
 
 **The clock, pinned.** `t0` = the deploy request. `t1` = the first response the deployed URL gives

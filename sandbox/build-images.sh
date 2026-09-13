@@ -10,7 +10,21 @@ set -euo pipefail
 
 FC_VERSION="${FC_VERSION:-v1.16.1}"
 KERNEL="${KERNEL:-6.1.155}"
-KERNEL_URL="${KERNEL_URL:-https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.15/x86_64/vmlinux-${KERNEL}}"
+# Architecture is read from the machine, not assumed. Firecracker ships x86_64 and aarch64 builds and
+# a guest must match its host's architecture, so a hardcoded x86_64 made every aarch64 host (Graviton,
+# Ampere, and an Apple-silicon Linux guest) fail at download time with a 404.
+ARCH="${ARCH:-$(uname -m)}"
+case "$ARCH" in
+  x86_64|amd64)  ARCH=x86_64 ;;
+  aarch64|arm64) ARCH=aarch64 ;;
+  *) echo "unsupported architecture '$ARCH'; Firecracker builds x86_64 and aarch64 only." >&2; exit 1 ;;
+esac
+# OCI platform strings use different names than uname does.
+case "$ARCH" in
+  x86_64)  OCI_PLATFORM="linux/amd64" ;;
+  aarch64) OCI_PLATFORM="linux/arm64" ;;
+esac
+KERNEL_URL="${KERNEL_URL:-https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.15/${ARCH}/vmlinux-${KERNEL}}"
 ROOTFS_MB="${ROOTFS_MB:-1048576}"          # 4 GiB in 4k blocks
 HERE="$(cd "$(dirname "$0")" && pwd)"
 FORCE=""; [ "${1:-}" = "--force" ] && FORCE=1
@@ -32,7 +46,7 @@ if [ -n "$FORCE" ] || [ ! -x "$HERE/bin/firecracker" ]; then
   echo "downloading Firecracker $FC_VERSION ..."
   TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
   curl -fsSL -o "$TMP/fc.tgz" \
-    "https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VERSION}/firecracker-${FC_VERSION}-x86_64.tgz"
+    "https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VERSION}/firecracker-${FC_VERSION}-${ARCH}.tgz"
   tar -xzf "$TMP/fc.tgz" -C "$TMP"
   find "$TMP" -name 'firecracker-*' -type f -perm -u+x -exec cp {} "$HERE/bin/firecracker" \;
   find "$TMP" -name 'jailer-*'      -type f -perm -u+x -exec cp {} "$HERE/bin/jailer" \; || true
@@ -56,7 +70,9 @@ fi
 # NOTE the -f: the file is Containerfile, so a plain `build rootfs/` looks for Dockerfile and fails.
 if [ -n "$FORCE" ] || [ ! -s "$HERE/images/rootfs.ext4" ]; then
   echo "building rootfs (this pulls ubuntu:24.04 and the agent toolchain; several minutes) ..."
-  "$RUNTIME" build -f "$HERE/rootfs/Containerfile" -t acspeed-agent-rootfs "$HERE/rootfs/"
+  # --platform is explicit: a guest must match its host architecture, and a machine with a default
+  # platform configured would otherwise silently produce a rootfs Firecracker cannot boot.
+  "$RUNTIME" build --platform "$OCI_PLATFORM" -f "$HERE/rootfs/Containerfile" -t acspeed-agent-rootfs "$HERE/rootfs/"
   EXP="$(mktemp -d)"
   CID="$("$RUNTIME" create acspeed-agent-rootfs)"
   "$RUNTIME" export "$CID" | tar -x -C "$EXP"

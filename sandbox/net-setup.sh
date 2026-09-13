@@ -6,7 +6,21 @@
 #   sudo bash net-setup.sh [N]      # N = number of concurrent slots (default 8)
 set -e
 N="${1:-8}"
-USER_OWNER="${SUDO_USER:-milos}"
+# Whoever will RUN the VMs must own the taps: Firecracker opens them as that user, not as root.
+# $SUDO_USER is the invoking user under sudo. Falling back to a hardcoded name (this once said
+# "milos") hands every other machine a tap owned by a user that does not exist there, and the first
+# run fails with a permission error that says nothing about taps.
+USER_OWNER="${ACSPEED_TAP_USER:-${SUDO_USER:-}}"
+if [ -z "$USER_OWNER" ] || [ "$USER_OWNER" = "root" ]; then
+  echo "net-setup: cannot tell which user will run the VMs." >&2
+  echo "  Run it with sudo from your normal login:   sudo bash sandbox/net-setup.sh [N]" >&2
+  echo "  or name the user explicitly:               sudo ACSPEED_TAP_USER=<you> bash sandbox/net-setup.sh [N]" >&2
+  exit 1
+fi
+if ! id -u "$USER_OWNER" >/dev/null 2>&1; then
+  echo "net-setup: user '$USER_OWNER' does not exist on this machine." >&2
+  exit 1
+fi
 for k in $(seq 0 $((N - 1))); do
   TAP="acspeed-tap$k"
   ip tuntap add "$TAP" mode tap user "$USER_OWNER" 2>/dev/null || true

@@ -14,20 +14,19 @@ SLOTS="${1:-8}"
 HERE="$(cd "$(dirname "$0")" && pwd)"          # .../acspeed/sandbox
 NET_SETUP="$HERE/net-setup.sh"
 
-# --- platform guard: the microVM substrate is Linux + KVM ONLY (Firecracker's constraint) ------------
-# It cannot run on macOS or Windows. There, acspeed runs each agent turn on the HOST (--no-sandbox),
-# which works but forgoes the hermetic per-cloud credential isolation (paper C9); to get the microVM on a
-# non-Linux machine, run acspeed inside a Linux VM / WSL2 that exposes /dev/kvm (nested virtualization).
+# --- platform guard: THIS installer sets up the Firecracker substrate, which is Linux + KVM only ------
+# macOS and Windows use their own native hypervisor instead of Firecracker; see docs/install.md.
+# There is no host-mode fallback on any OS: a run without a per-turn VM produces no platform/agent
+# split, no session id and no cost, so it is refused rather than silently producing a worse number.
 OS="$(uname -s)"
 if [ "$OS" != "Linux" ]; then
-  echo "acspeed microVM substrate is Linux + KVM only (Firecracker); detected: $OS." >&2
-  echo "On $OS, run:  acspeed-run --adapter <cloud> --no-sandbox   (host mode; no hermetic C9 isolation)." >&2
-  echo "To get the microVM here, run acspeed inside a Linux VM / WSL2 that exposes /dev/kvm." >&2
+  echo "This installer builds the Firecracker substrate, which is Linux + KVM only; detected: $OS." >&2
+  echo "On $OS acspeed uses that platform's own hypervisor. See docs/install.md." >&2
   exit 2
 fi
 if ! grep -qiE 'vmx|svm' /proc/cpuinfo 2>/dev/null; then
   echo "WARNING: no hardware virtualization (vmx/svm) in /proc/cpuinfo; KVM likely unavailable" >&2
-  echo "  (a nested VM without exposed virtualization, or it is disabled in BIOS). --no-sandbox still works." >&2
+  echo "  (a nested VM without exposed virtualization, or it is disabled in BIOS)." >&2
 fi
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -68,7 +67,7 @@ echo "[3/3] verify"
 N=$(ip -o link show 2>/dev/null | grep -oE 'acspeed-tap[0-9]+' | sort -u | wc -l)
 echo "  acspeed taps up: $N (requested $SLOTS)"
 if [ -e /dev/kvm ] && [ "$N" -ge 1 ]; then
-  echo "OK: microVM substrate ready. Run 'acspeed-run --adapter <cloud>' (no --no-sandbox needed)."
+  echo "OK: microVM substrate ready. Run 'acspeed-run --adapter <cloud>'."
 else
-  echo "PARTIAL: see warnings above; --no-sandbox still works as a host fallback."
+  echo "INCOMPLETE: see the warnings above. A run will refuse until this is fixed."
 fi
