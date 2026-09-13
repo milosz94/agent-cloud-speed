@@ -49,12 +49,32 @@ _VENDOR = re.compile(
     r"|xox[baprs]-[A-Za-z0-9-]{10,})\b"
 )
 _CONN = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^:/@\s]+:)([^@/\s]{1,})(@)")
+# ...and the same thing with the host cut off. A cloud log routinely prints a connection string
+# truncated before the '@', and _CONN cannot match that: it REQUIRES the '@' as its terminator. Nine
+# real database passwords reached the published bundle through this hole, and because the residue
+# re-scan uses the same rule, all twelve manifests reported residue 0 while the secrets sat there.
+# A check that cannot fail on the case that got through is not a check.
+#
+# The scheme list is deliberate rather than a wildcard: without the '@' anchor, a generic
+# "scheme://host:1234" is indistinguishable from "scheme://user:password", so a wildcard would
+# redact every port number in the corpus. These schemes carry credentials in that position.
+_CONN_NOHOST = re.compile(
+    r"(?i)\b((?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis(?:s)?|amqps?|"
+    r"clickhouse|mssql|cockroachdb)://[^:/@\s]+:)([^@/\s\"\'`\\]{1,})"
+)
 
 # env / inline assignment: KEY=value or KEY: value, quoted or not. Key must END in a secret word so
 # POSTGRES_PASSWORD / MINIO_ROOT_PASSWORD / JWT_SECRET match but OUTPUT_TOKENS (count) does not.
 _SECRET_WORD = (r"(?:PASSWORD|PASSWD|SECRET|SECRET_KEY|TOKEN|APIKEY|API_KEY|ACCESS_KEY|PRIVATE_KEY|"
                 r"ENCRYPTION_KEY|CLIENT_SECRET|REFRESH_TOKEN|ACCESS_TOKEN|AUTH_TOKEN|APP_KEY|"
-                r"DB_PASS(?:WORD)?|PASSPHRASE|CREDENTIAL|SALT)")
+                r"DB_PASS(?:WORD)?|PASSPHRASE|CREDENTIAL|SALT|"
+                # Bare PASS and PWD. The list covered PASSWORD and PASSWD but not the short forms an
+                # agent actually writes in a shell line, so DBPASS=, PGPASS=, ADMINPASS= and PWD= all
+                # walked through and two of them reached the published bundle. Checked against the
+                # corpus before widening: the keys present are DBPASS, PGPASS, DB_PASS, NEWPASS,
+                # ADMINPASS, PASS, PWD and OLDPWD, and none of the classic false friends (BYPASS,
+                # COMPASS) occurs, so this costs nothing here and closes a real hole.
+                r"PASS|PWD)")
 # allow underscore-delimited prefix (POSTGRES_) and suffix (_BASE, _ID) segments so POSTGRES_PASSWORD,
 # SECRET_KEY_BASE and ACCESS_KEY_ID all match, while the trailing "S" of OUTPUT_TOKENS still breaks it.
 _KEYNAME = r"((?:[A-Za-z0-9]+_)*" + _SECRET_WORD + r"(?:_[A-Za-z0-9]+)*)"
@@ -160,6 +180,7 @@ def redact_text(s: str) -> Tuple[str, Counter]:
         ("bearer", _BEARER, r"\1" + _ph("bearer")),
         ("vendor-token", _VENDOR, _ph("vendor-token")),
         ("conn-password", _CONN, r"\1" + _ph("conn-password") + r"\3"),
+        ("conn-password", _CONN_NOHOST, r"\1" + _ph("conn-password")),
     ):
         s, n = rx.subn(repl, s)
         if n:
@@ -351,6 +372,11 @@ def scan_for_secrets(text: str) -> List[Tuple[str, str]]:
             if _MARK not in m.group(0):
                 hits.append((cat, m.group(0)[:24]))
     for m in _CONN.finditer(text):
+        if _MARK not in m.group(2):
+            hits.append(("conn-password", m.group(0)[:24]))
+    # The host-optional form is scanned too. Scanning only _CONN is what let the residue check
+    # report clean on nine files that still carried a password.
+    for m in _CONN_NOHOST.finditer(text):
         if _MARK not in m.group(2):
             hits.append(("conn-password", m.group(0)[:24]))
     for m in _ASSIGN.finditer(text):

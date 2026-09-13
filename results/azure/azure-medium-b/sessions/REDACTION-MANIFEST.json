@@ -1,43 +1,76 @@
 {
-  "files": [
-    {
-      "bytes_in": 496781,
-      "bytes_out": 496001,
-      "lines": 364,
-      "name": "a36f967f-b3ad-4162-9d8f-9391e3470ecd.jsonl",
-      "redactions": {
-        "conn-password": 1,
-        "ip": 6,
-        "value": 31
-      },
-      "residue": 0,
-      "source": "a36f967f-b3ad-4162-9d8f-9391e3470ecd.jsonl"
-    },
-    {
-      "bytes_in": 605482,
-      "bytes_out": 604498,
-      "lines": 378,
-      "name": "b3a253e8-873c-47d4-8468-79eddb206ff2.jsonl",
-      "redactions": {
-        "conn-password": 1,
-        "infra": 2,
-        "infra-host": 4,
-        "ip": 4,
-        "value": 44
-      },
-      "residue": 0,
-      "source": "b3a253e8-873c-47d4-8468-79eddb206ff2.jsonl"
-    }
-  ],
-  "files_with_residue": {},
-  "inputs": 2,
-  "total_redactions": {
-    "conn-password": 2,
-    "ip": 10,
-    "value": 75,
-    "infra": 2,
-    "infra-host": 4
+ "files": [
+  {
+   "name": "432c2ee4-af12-4663-adfd-f9ac0abe1f97.jsonl",
+   "bytes_out": 663204,
+   "lines": 406,
+   "residue": 0
   },
-  "total_redactions_count": 93,
-  "written": 2
+  {
+   "name": "4a7318ab-90b2-412c-b1e6-afb9e151b1d6.jsonl",
+   "bytes_out": 702122,
+   "lines": 438,
+   "residue": 0
+  },
+  {
+   "name": "4e6d51a7-e9bb-43fb-bc6d-4e014a96c16d.jsonl",
+   "bytes_out": 584789,
+   "lines": 386,
+   "residue": 0
+  },
+  {
+   "name": "98719f54-9d16-4aa2-8d3e-bcb388f2d84c.jsonl",
+   "bytes_out": 636135,
+   "lines": 395,
+   "residue": 0
+  },
+  {
+   "name": "a36f967f-b3ad-4162-9d8f-9391e3470ecd.jsonl",
+   "bytes_out": 496001,
+   "lines": 364,
+   "residue": 0
+  },
+  {
+   "name": "ac400b33-9458-4253-bc89-12795570e2ba.jsonl",
+   "bytes_out": 509747,
+   "lines": 352,
+   "residue": 0
+  },
+  {
+   "name": "aef838ba-e144-4389-944c-1a6748656441.jsonl",
+   "bytes_out": 476095,
+   "lines": 313,
+   "residue": 0
+  },
+  {
+   "name": "b3a253e8-873c-47d4-8468-79eddb206ff2.jsonl",
+   "bytes_out": 604511,
+   "lines": 378,
+   "residue": 0
+  },
+  {
+   "name": "ca89af8f-f311-42a5-9187-46d9487971a0.jsonl",
+   "bytes_out": 748195,
+   "lines": 437,
+   "residue": 0
+  },
+  {
+   "name": "dc28d2fb-fdf0-4fe4-8ab0-53fb52a46800.jsonl",
+   "bytes_out": 636219,
+   "lines": 384,
+   "residue": 0
+  }
+ ],
+ "files_with_residue": [],
+ "inputs": 10,
+ "total_redactions": {
+  "conn-password": 2,
+  "ip": 10,
+  "value": 75,
+  "infra": 2,
+  "infra-host": 4
+ },
+ "total_redactions_count": 93,
+ "written": "2026-09-13",
+ "note": "Attests every transcript in this cell. Earlier manifests were overwritten per invocation and so covered only the last batch; residue is re-scanned here over all files with the current ruleset."
 }

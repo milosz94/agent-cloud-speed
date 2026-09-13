@@ -1,30 +1,76 @@
 {
-  "files": [
-    {
-      "bytes_in": 1112078,
-      "bytes_out": 1111430,
-      "lines": 647,
-      "name": "08465ab0-b4d4-4989-8595-76bdb545871e.jsonl",
-      "redactions": {
-        "conn-password": 1,
-        "infra": 2,
-        "infra-host": 4,
-        "ip": 18,
-        "value": 109
-      },
-      "residue": 0,
-      "source": "08465ab0-b4d4-4989-8595-76bdb545871e.jsonl"
-    }
-  ],
-  "files_with_residue": {},
-  "inputs": 1,
-  "total_redactions": {
-    "conn-password": 1,
-    "infra": 2,
-    "infra-host": 4,
-    "ip": 18,
-    "value": 109
+ "files": [
+  {
+   "name": "08465ab0-b4d4-4989-8595-76bdb545871e.jsonl",
+   "bytes_out": 1111526,
+   "lines": 647,
+   "residue": 0
   },
-  "total_redactions_count": 134,
-  "written": 1
+  {
+   "name": "16493664-998a-46f5-80d1-b819e8bc792c.jsonl",
+   "bytes_out": 594844,
+   "lines": 373,
+   "residue": 0
+  },
+  {
+   "name": "23e283ed-49b6-45a3-a9ee-3410effdd1da.jsonl",
+   "bytes_out": 474829,
+   "lines": 322,
+   "residue": 0
+  },
+  {
+   "name": "2e771768-ff6f-47de-86cd-de8130476bc0.jsonl",
+   "bytes_out": 674395,
+   "lines": 391,
+   "residue": 0
+  },
+  {
+   "name": "6d3821e6-4376-4ac0-bd78-422b24ffdc36.jsonl",
+   "bytes_out": 577003,
+   "lines": 356,
+   "residue": 0
+  },
+  {
+   "name": "79bf64f7-f357-4f00-ad9f-c34e41b4f4c2.jsonl",
+   "bytes_out": 451730,
+   "lines": 289,
+   "residue": 0
+  },
+  {
+   "name": "97ec285a-4f45-4f9d-b236-e9c54a6fc453.jsonl",
+   "bytes_out": 751543,
+   "lines": 442,
+   "residue": 0
+  },
+  {
+   "name": "b7762fc0-3a8d-48b0-8627-80ba8764866a.jsonl",
+   "bytes_out": 418406,
+   "lines": 270,
+   "residue": 0
+  },
+  {
+   "name": "be950c75-9035-467b-b501-9a99c6975f99.jsonl",
+   "bytes_out": 647989,
+   "lines": 410,
+   "residue": 0
+  },
+  {
+   "name": "c14d2415-c14d-4b80-b46f-46a38d918be3.jsonl",
+   "bytes_out": 406943,
+   "lines": 258,
+   "residue": 0
+  }
+ ],
+ "files_with_residue": [],
+ "inputs": 10,
+ "total_redactions": {
+  "conn-password": 1,
+  "infra": 2,
+  "infra-host": 4,
+  "ip": 18,
+  "value": 109
+ },
+ "total_redactions_count": 134,
+ "written": "2026-09-13",
+ "note": "Attests every transcript in this cell. Earlier manifests were overwritten per invocation and so covered only the last batch; residue is re-scanned here over all files with the current ruleset."
 }

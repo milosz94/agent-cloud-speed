@@ -1,38 +1,158 @@
 {
-  "files": [
-    {
-      "bytes_in": 202833,
-      "bytes_out": 202754,
-      "lines": 115,
-      "name": "5398c084-55c3-417d-b60e-3b8da0535d7a.jsonl",
-      "redactions": {
-        "conn-password": 4,
-        "value": 5
-      },
-      "residue": 0,
-      "source": "5398c084-55c3-417d-b60e-3b8da0535d7a.jsonl"
-    },
-    {
-      "bytes_in": 251329,
-      "bytes_out": 251575,
-      "lines": 149,
-      "name": "c0e10cd0-b4d4-4662-8c9b-f5596e961015.jsonl",
-      "redactions": {
-        "conn-password": 1,
-        "ip": 6,
-        "value": 57
-      },
-      "residue": 0,
-      "source": "c0e10cd0-b4d4-4662-8c9b-f5596e961015.jsonl"
-    }
-  ],
-  "files_with_residue": {},
-  "inputs": 2,
-  "total_redactions": {
-    "conn-password": 5,
-    "ip": 6,
-    "value": 62
+ "files": [
+  {
+   "name": "01ed91e8-a9c9-49a4-835d-7f49a8851964.jsonl",
+   "bytes_out": 116780,
+   "lines": 91,
+   "residue": 0
   },
-  "total_redactions_count": 73,
-  "written": 2
+  {
+   "name": "0d582bca-9b93-41ae-9286-fd4e44bb42ae.jsonl",
+   "bytes_out": 197956,
+   "lines": 139,
+   "residue": 0
+  },
+  {
+   "name": "16829751-5f2e-4079-8677-8ee7d3821caa.jsonl",
+   "bytes_out": 118496,
+   "lines": 91,
+   "residue": 0
+  },
+  {
+   "name": "1cd61707-568d-4e56-b000-aaad239cd1cb.jsonl",
+   "bytes_out": 111407,
+   "lines": 86,
+   "residue": 0
+  },
+  {
+   "name": "3017f213-67db-4318-aa50-1785d325d530.jsonl",
+   "bytes_out": 187066,
+   "lines": 100,
+   "residue": 0
+  },
+  {
+   "name": "30b69065-c45a-4497-a9cc-752981960dfd.jsonl",
+   "bytes_out": 171426,
+   "lines": 108,
+   "residue": 0
+  },
+  {
+   "name": "372b611a-8ba3-4c6d-baea-86c856e7112b.jsonl",
+   "bytes_out": 226580,
+   "lines": 157,
+   "residue": 0
+  },
+  {
+   "name": "3d982983-4a23-43ad-9a19-94a3b9bb2e4c.jsonl",
+   "bytes_out": 207983,
+   "lines": 124,
+   "residue": 0
+  },
+  {
+   "name": "43297332-bc42-4701-9250-63d1a948d3b8.jsonl",
+   "bytes_out": 137088,
+   "lines": 107,
+   "residue": 0
+  },
+  {
+   "name": "47991253-8cd4-4866-9b22-3e195c4414cd.jsonl",
+   "bytes_out": 157146,
+   "lines": 103,
+   "residue": 0
+  },
+  {
+   "name": "4e39cdd5-d0af-4d7a-a07d-5066af30827b.jsonl",
+   "bytes_out": 162954,
+   "lines": 100,
+   "residue": 0
+  },
+  {
+   "name": "5398c084-55c3-417d-b60e-3b8da0535d7a.jsonl",
+   "bytes_out": 202754,
+   "lines": 115,
+   "residue": 0
+  },
+  {
+   "name": "53fe8bf5-f5ab-4b58-9ff0-888c88690dc7.jsonl",
+   "bytes_out": 186921,
+   "lines": 135,
+   "residue": 0
+  },
+  {
+   "name": "54f850b1-ef4c-4813-b167-9b223c56d573.jsonl",
+   "bytes_out": 147078,
+   "lines": 106,
+   "residue": 0
+  },
+  {
+   "name": "5b76910b-d37d-4a29-a6bd-f550d2df753d.jsonl",
+   "bytes_out": 183974,
+   "lines": 116,
+   "residue": 0
+  },
+  {
+   "name": "6bf58af9-fcc1-49eb-88fe-f26027a8ff59.jsonl",
+   "bytes_out": 271176,
+   "lines": 168,
+   "residue": 0
+  },
+  {
+   "name": "749ce217-dce5-4656-9e12-439c787232df.jsonl",
+   "bytes_out": 146958,
+   "lines": 110,
+   "residue": 0
+  },
+  {
+   "name": "a3a6398a-31ae-45e9-a09f-dba9eddd56c2.jsonl",
+   "bytes_out": 147093,
+   "lines": 113,
+   "residue": 0
+  },
+  {
+   "name": "ae357d2a-7313-4485-b97a-3a59fcbfc659.jsonl",
+   "bytes_out": 213628,
+   "lines": 132,
+   "residue": 0
+  },
+  {
+   "name": "c0e10cd0-b4d4-4662-8c9b-f5596e961015.jsonl",
+   "bytes_out": 251591,
+   "lines": 149,
+   "residue": 0
+  },
+  {
+   "name": "c9010463-76e0-4497-acae-06d519c34100.jsonl",
+   "bytes_out": 137504,
+   "lines": 102,
+   "residue": 0
+  },
+  {
+   "name": "cbd440cc-4b13-4673-b536-ecb8076be966.jsonl",
+   "bytes_out": 303988,
+   "lines": 185,
+   "residue": 0
+  },
+  {
+   "name": "f934b27e-19f4-4bcf-b814-dd7b7b0a8b7b.jsonl",
+   "bytes_out": 238287,
+   "lines": 131,
+   "residue": 0
+  },
+  {
+   "name": "fa09ba5b-75f4-43e8-bb8d-50afecec4da3.jsonl",
+   "bytes_out": 234038,
+   "lines": 150,
+   "residue": 0
+  }
+ ],
+ "files_with_residue": [],
+ "inputs": 24,
+ "total_redactions": {
+  "conn-password": 5,
+  "ip": 6,
+  "value": 62
+ },
+ "total_redactions_count": 73,
+ "written": "2026-09-13",
+ "note": "Attests every transcript in this cell. Earlier manifests were overwritten per invocation and so covered only the last batch; residue is re-scanned here over all files with the current ruleset."
 }

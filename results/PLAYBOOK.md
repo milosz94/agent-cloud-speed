@@ -119,14 +119,14 @@ cd .. && python3 -m unittest discover -s tests -q   # suite still green
 ```bash
 git add results/
 git commit -m "docs(results): <cloud> run(s) YYYY-MM-DD (n=N, fair)"
-git push origin main   # private repo; push freely
+git push origin main
 ```
 
 ## Notes
 
 - **Never fabricate or reconstruct a cost.** Every figure must come from `cost_run_rate` (a live list
   price). If a run is unpriced, exclude it or disclose the unpriced item by type - never a silent $0.
-- **redu is an adapter + validation baseline, never a paper subject.** It can live in `results/` (private
-  repo); the paper anonymizes clouds and never names redu.
+- **redu is an adapter + validation baseline, never a paper subject.** It lives in `results/`; the
+  paper names the three clouds it reports and does not report redu.
 - **The dataset grows.** Re-run this playbook after each batch; the per-cloud table gains rows as more fair
   runs land. n=1 is a single observation, not a distribution - say so until n is real.

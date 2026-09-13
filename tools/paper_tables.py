@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Emit the LaTeX bodies for the paper's Part 5 result tables from the published results tree.
 
-The paper anonymizes clouds and never names the validation instance, so redu is excluded here by
-construction, not by a flag. Every number is read from a run record; nothing is typed by hand, so
+The paper names the three clouds it reports and does not report the validation instance, so redu is
+excluded here by construction, not by a flag. Every number is read from a run record; nothing is typed by hand, so
 re-running this after a batch is the whole update procedure.
 
     python3 paper_tables.py            # print the table bodies
