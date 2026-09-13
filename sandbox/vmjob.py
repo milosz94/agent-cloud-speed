@@ -364,6 +364,19 @@ def run_vm_job(*, prompt: str, model: str | None, mcp_config: str | None, app_di
             src = os.path.join(tdir, "projects")
             if os.path.isdir(src):
                 shutil.copytree(src, os.path.join(session_store, "projects"), dirs_exist_ok=True)
+    # codex writes its rollouts to ~/.codex/sessions/YYYY/MM/DD/ instead of ~/.claude/projects/, so it
+    # comes back on its own artifact. Without this the guest wrote the transcript and the host never
+    # collected it, leaving a codex run with NO transcript and therefore no platform/agent split at all.
+    ctar = os.path.join(work, "codex_sessions.tar")
+    if _debugfs_dump(job, "/codex_sessions.tar", ctar) and os.path.getsize(ctar) > 0:
+        tdir = out.get("transcripts_dir") or os.path.join(work, "transcripts")
+        os.makedirs(tdir, exist_ok=True)
+        subprocess.run(["tar", "-xf", ctar, "-C", tdir], check=False)
+        out["transcripts_dir"] = tdir
+        if session_store:
+            src = os.path.join(tdir, "sessions")
+            if os.path.isdir(src):
+                shutil.copytree(src, os.path.join(session_store, "sessions"), dirs_exist_ok=True)
     # recover the deploy's SSH key(s) (the per-app keypair the deploy minted lives only in the VM) so the
     # host can reach the deploy VM for the off-clock capability pass. The caller installs them to ~/.ssh.
     star = os.path.join(work, "agent_ssh.tar")
@@ -377,10 +390,20 @@ def run_vm_job(*, prompt: str, model: str | None, mcp_config: str | None, app_di
 
 
 def find_transcript_in(transcripts_dir: str | None, session_id: str) -> str | None:
+    """Locate this session's transcript in a recovered tree, for either agent.
+
+    Claude names the file exactly ``<session_id>.jsonl``. Codex names it
+    ``rollout-<timestamp>-<thread_id>.jsonl`` and reports the thread_id as the session id, so the
+    id is a SUFFIX of the stem rather than the whole stem. Matching only the exact name silently
+    found nothing for every codex run.
+    """
     if not transcripts_dir or not session_id:
         return None
     hits = glob.glob(os.path.join(transcripts_dir, "**", f"{session_id}.jsonl"), recursive=True)
-    return hits[0] if hits else None
+    if hits:
+        return hits[0]
+    hits = glob.glob(os.path.join(transcripts_dir, "**", f"*{session_id}.jsonl"), recursive=True)
+    return sorted(hits)[0] if hits else None
 
 
 if __name__ == "__main__":

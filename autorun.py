@@ -932,13 +932,22 @@ _SESSION_STORE: str | None = None   # set when a microVM run's transcripts are p
 
 
 def find_transcript(session_id: str) -> str | None:
-    roots = ["~/.claude/projects"]
+    """The transcript for a session, wherever the agent that ran it puts transcripts.
+
+    Claude writes ``<project>/<session_id>.jsonl`` under ~/.claude/projects. Codex writes
+    ``sessions/YYYY/MM/DD/rollout-<ts>-<thread_id>.jsonl`` under ~/.codex and reports the thread_id
+    as the session id, so the id is a SUFFIX of the stem. Searching only the claude tree, for an
+    exact filename, found nothing at all for a codex run.
+    """
+    roots = ["~/.claude/projects", "~/.codex/sessions"]
     if _SESSION_STORE:
+        roots.insert(0, os.path.join(_SESSION_STORE, "sessions"))
         roots.insert(0, os.path.join(_SESSION_STORE, "projects"))
-    for root in roots:
-        hits = glob.glob(os.path.expanduser(f"{root}/**/{session_id}.jsonl"), recursive=True)
-        if hits:
-            return hits[0]
+    for pattern in (f"{session_id}.jsonl", f"*{session_id}.jsonl"):
+        for root in roots:
+            hits = glob.glob(os.path.expanduser(f"{root}/**/{pattern}"), recursive=True)
+            if hits:
+                return sorted(hits)[0]
     return None
 
 
