@@ -131,6 +131,12 @@ def sandbox_available() -> tuple[bool, str]:
     ok_kvm, why_kvm = kvm_usable()
     if not ok_kvm:
         return False, why_kvm
+    # vm-runner.sh is COPIED into the rootfs at build time, so editing it changes nothing until the
+    # image is rebuilt. A run against a stale image looks completely normal and produces a wrong
+    # result, which is the same class of silent, paid failure the substrate refusal exists for.
+    stale, why_stale = vmjob.runner_is_stale()
+    if stale:
+        return False, why_stale
     if not vmjob.discover_slots():
         return False, "no acspeed tap(s) up (sudo bash sandbox/net-setup.sh [N])"
     return True, ""

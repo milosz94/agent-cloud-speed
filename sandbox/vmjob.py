@@ -49,6 +49,8 @@ BASE_ROOTFS = os.path.join(HERE, "images", "rootfs.ext4")
 # it carries virtio-MMIO and has ZERO virtio-PCI symbols, and booting it under QEMU panics in
 # console_init before reaching init. So the QEMU path brings its own distro kernel + initrd, which
 # build-images.sh extracts from the same rootfs image.
+# QEMU user-mode networking's fixed layout: guest .15, gateway and NAT .2, its DNS forwarder .3.
+QEMU_IPCFG = 'IP_ADDR=10.0.2.15\nIP_PREFIX=24\nIP_GW=10.0.2.2\n'
 QEMU_KERNEL = os.path.join(HERE, "images", "vmlinuz")
 QEMU_INITRD = os.path.join(HERE, "images", "initrd.img")
 
@@ -286,6 +288,8 @@ def build_job_drive(job_ext4: str, *, prompt: str, model: str | None, mcp_config
         _w("model.txt", model or "")
         _w("max_turns.txt", str(max_turns))
         _w("resolv.conf", f"nameserver {DNS}\n")
+        if default_vmm() == "qemu":
+            _w("ipcfg", QEMU_IPCFG)   # vm-runner applies this once the NIC exists
         if system:
             _w("system.txt", system)
         if resume_sid:
@@ -307,6 +311,37 @@ def build_job_drive(job_ext4: str, *, prompt: str, model: str | None, mcp_config
         used = sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(staging) for f in fs)
         blocks = max(16384, int(used * 3 / 4096) + 8192)   # 4k blocks
         _mkext4(staging, job_ext4, blocks)
+
+
+def runner_is_stale() -> tuple[bool, str]:
+    """Is the vm-runner baked into the rootfs image older than the one in the repo?
+
+    vm-runner.sh is COPIED into the image at build time, so editing it changes nothing until
+    build-images.sh is re-run. That is a silent trap and it cost three end-to-end runs to find: the
+    guest booted, the agent ran, and the network fix simply was not in there. Compare the two and
+    say so, rather than letting a run behave like the edit never happened.
+
+    Best-effort: a failure to read the image is reported as not-stale, because refusing a run over a
+    debugfs hiccup would be worse than the trap.
+    """
+    src = os.path.join(HERE, "rootfs", "vm-runner.sh")
+    if not (os.path.exists(src) and os.path.exists(BASE_ROOTFS)):
+        return False, ""
+    try:
+        r = subprocess.run(["debugfs", "-R", "cat /usr/local/bin/vm-runner", BASE_ROOTFS],
+                           capture_output=True, timeout=60)
+        inside = (r.stdout or b"").decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001
+        return False, ""
+    if not inside.strip():
+        return False, ""
+    import hashlib
+    a = hashlib.sha256(open(src, "rb").read()).hexdigest()
+    b = hashlib.sha256(inside.encode()).hexdigest()
+    if a == b:
+        return False, ""
+    return True, ("the rootfs image carries an OLDER vm-runner than sandbox/rootfs/vm-runner.sh; "
+                  "rebuild it with: bash sandbox/build-images.sh --force")
 
 
 def describe_substrate() -> dict:
@@ -404,8 +439,11 @@ def _launch_qemu(*, rootfs: str, job: str, vcpus: int, mem_mib: int, boot_log: s
         "-machine", f"q35,accel={accel}",
         "-m", str(mem_mib), "-smp", str(vcpus),
         "-kernel", QEMU_KERNEL,
-        "-append", ("console=ttyS0 root=/dev/vda rw init=/usr/local/bin/vm-runner "
-                    "panic=1 reboot=t"),
+        # No ip= here on purpose. The kernel's ipconfig runs inside the initrd, before the
+        # virtio-PCI NIC is probed, and fails with "eth0: SIOCGIFINDEX: No such device". vm-runner
+        # applies the address instead, from the ipcfg file on the job drive.
+        "-append", ("console=ttyS0 root=/dev/vda rw "
+                    "init=/usr/local/bin/vm-runner panic=1 reboot=t"),
         "-drive", f"id=root,file={rootfs},format=raw,if=none",
         "-device", "virtio-blk-pci,drive=root",
         "-drive", f"id=job,file={job},format=raw,if=none",

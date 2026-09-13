@@ -29,8 +29,31 @@ if [ ! -f "$JOB/prompt.txt" ]; then
   sleep 5; exit 0
 fi
 
-# bring up networking (the host configures a tap; kernel cmdline ip= sets the address). DNS via the job.
+# bring up networking. Firecracker sets the address from the kernel cmdline (ip=...), which works
+# there because it has no initrd and its virtio-mmio NIC exists before init runs. Under QEMU the NIC
+# is virtio-PCI and is probed inside the initrd AFTER the kernel's ipconfig has already given up
+# ("eth0: SIOCGIFINDEX: No such device"), so the address is applied here instead, once the real root
+# is mounted and the driver is loaded. The job drive says whether to do that, so the Firecracker path
+# is untouched.
 if [ -f "$JOB/resolv.conf" ]; then cp "$JOB/resolv.conf" /etc/resolv.conf; fi
+if [ -f "$JOB/ipcfg" ]; then
+  # shellcheck disable=SC1090
+  . "$JOB/ipcfg"          # sets IP_ADDR, IP_PREFIX, IP_GW
+  NIC=""
+  for _try in 1 2 3 4 5 6 7 8 9 10; do
+    NIC="$(ip -o link show 2>/dev/null | awk -F': ' '$2 != "lo" {print $2; exit}')"
+    [ -n "$NIC" ] && break
+    sleep 0.5           # the PCI probe can land a moment after init starts
+  done
+  if [ -n "$NIC" ]; then
+    ip addr add "$IP_ADDR/$IP_PREFIX" dev "$NIC" 2>/dev/null || true
+    ip link set "$NIC" up 2>/dev/null || true
+    ip route add default via "$IP_GW" 2>/dev/null || true
+    log "net: $NIC $IP_ADDR/$IP_PREFIX via $IP_GW"
+  else
+    log "net: NO network interface appeared; the agent will not reach the cloud"
+  fi
+fi
 
 # The agent runs as NON-ROOT (Claude Code refuses --dangerously-skip-permissions as root). Install the
 # SCOPED agent config into the agent user's HOME: ONLY the target cloud's creds + the agent's own
