@@ -1409,7 +1409,12 @@ def build_op_split(tx: str | None, time_to_serving_s: float | None,
                    agent_wall_s: float | None, serving_epoch: float | None = None) -> dict | None:
     """Route the agent-vs-platform split THROUGH the paper's implementation (acspeed), in SECONDS.
 
-    The paper (Part 1 spine): wall-clock = critical_platform + critical_agent, overlap = raw - critical.
+    The paper (Part 1 spine) is THREE terms: wall-clock = critical_platform + critical_agent
+    + a held-out idle term carrying on-path time in the window that neither owner holds (see
+    makespan_s above). `overlap = raw - critical` is a SEPARATE, per-owner quantity: the free
+    OFF-path work. It is 0 on every published run because acspeed.transcript builds one linear
+    chain of spans (transcript.py:260), so raw == critical by construction. Do not confuse the
+    two; paper_tables.py calls the idle term 'overlap' in one docstring, which is a misnomer.
     We take the transcript trace (acspeed.transcript) CLIPPED at t1 (the operation ends at its slot-5
     readiness signal; agent events after the app first served are outside it), append one
     platform-owned span for the boot between the agent's last in-operation event and t1 (per PAPER

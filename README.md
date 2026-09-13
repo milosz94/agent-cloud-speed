@@ -1,50 +1,8 @@
 # acspeed
 
-**When an AI agent deploys an app to a cloud, how long does it take, and who caused the wait:
-the cloud, or the agent?**
-
-acspeed measures that. You point it at an app folder and a cloud account. It hands a coding
-agent the job of actually deploying that app, for real, on your account, and it times the whole
-thing with a stopwatch. Then it splits the total time into the part where the cloud was working
-and the part where the agent was working:
-
-```
-total wall-clock  =  time the cloud was busy  +  time the agent was busy
-```
-
-**That split is the whole point.** "This cloud deploys in four minutes" is not a number you can
-act on, because some of those minutes are the platform provisioning a machine and some are the
-agent reading docs, polling to see if the thing is up yet, or repairing its own mistake. Those
-two problems have nothing to do with each other and completely different fixes. A single total
-hides which one you are paying for. acspeed separates them, so you can point at the actual cause.
-
-**What one run gives you:** total wall-clock, the cloud's share, the agent's share, how much
-agent work was hidden underneath a cloud wait (work that was effectively free), the dollar cost
-of the resources it created, and the agent's full transcript so any of it can be audited.
-
-## Who this is for
-
-- **You build a cloud, an API, or an MCP server.** Find out whether your interface makes an agent
-  fast or slow, and show it as a measured number instead of an opinion. A blocking "wait until
-  ready" call and a status-polling loop take about the same wall-clock, but one of them spends
-  the agent and the other does not. acspeed prices that difference.
-- **You are choosing where to run agent-driven deploys.** Put the same app on AWS, GCP and Azure
-  and compare like for like, on your own accounts, with your own app.
-- **You do research on agents or on clouds.** 94 completed runs, with every agent transcript, are
-  published in [`results/`](results/), and every number in them traces back to a transcript in
-  the same folder.
-
-## The paper
-
-acspeed is the reference implementation for a paper, *A Reproducible, Cloud-Agnostic Baseline for
-Measuring Agent-Cloud Operation Efficiency*, which defines the measurement precisely and reports
-the 94-run study in `results/`. **You do not need the paper to use this tool.** Read it if you
-want to know why the split is defined the way it is, or if you want to cite the numbers.
-[What maps to what](#what-maps-to-what-paper-parts-1-4) says which module implements which part
-of it. (A link goes here when the paper is posted.)
-
-The measurement *method* is what the paper contributes; the specific clouds are validation
-instances, not the subject.
+acspeed is a harness that times an automated coding agent (an LLM issuing tool calls) performing a
+real deployment and the operations that follow it against a live billed cloud account, and splits
+the elapsed time between the cloud, the agent, and a remainder that neither holds.
 
 ## Start here
 
@@ -56,7 +14,9 @@ instances, not the subject.
 | run the benchmark on my own app | [Run the speed test on your own app](#run-the-speed-test-on-your-own-app-acspeed-run) |
 | reproduce a published number | [Reproduce a published cell](#reproduce-a-published-cell) |
 | find my results, or the published ones | [Where results go](#where-results-go) |
-| understand what is being measured | [The idea in one example](#the-idea-in-one-example) |
+| understand what is being measured | [What is measured](#what-is-measured), then [The idea in one example](#the-idea-in-one-example) |
+| know what this does NOT measure | [Limits](#limits) |
+| see the published data | [The published corpus](#the-published-corpus) |
 
 **The short version, on Linux:**
 
@@ -66,6 +26,90 @@ bash setup.sh --check          # what is missing
 bash setup.sh --adapter aws    # install it all
 cd /path/to/your/app && acspeed-run --adapter aws --model claude-opus-5
 ```
+
+
+## What a run does
+
+Every agent turn executes in a fresh Firecracker microVM, so no turn inherits state from the one
+before it. The agent receives a task from the suite and a set of live credentials, and drives the
+cloud over MCP (the Model Context Protocol, through which a model calls tools a server exposes).
+An adapter is an MCP client plus a `CloudProfile`, a mapping from four canonical operations
+(`provision`, `wait_ready`, `status`, `teardown`) onto one server's tool names, falling back to that
+cloud's CLI where its MCP server cannot create or delete. Readiness is observed from outside the
+run: a prober polls the deployment URL until it answers with an HTTP status below 500, and that
+timestamp closes the deploy leg. Agent-reported completion is never used. A run is timed in legs:
+the deploy, one leg per scored operation, and each durability cycle, in which the services are
+restarted and the earlier state must survive.
+
+## What is measured
+
+A span is one timed interval carrying a duration, its dependency on the preceding interval, and an
+owner label. **Makespan** is the wall-clock length of a leg, from its first request to the signal
+that closes it. The **critical path** is the chain of dependent spans whose length is the makespan.
+Each on-path span is labelled with the party the run is waiting on, and on-path time that reaches
+neither label is carried explicitly rather than assigned by default:
+
+```
+makespan = T_crit_platform + T_crit_agent + T_crit_other
+```
+
+`T_crit_platform` is on-path time the cloud holds: a provisioning call that has not returned, a
+resource converging to ready, a retry the cloud forced. `T_crit_agent` is on-path time the agent
+holds: model inference, orchestration, the calls it issues while polling, its own rework.
+`T_crit_other` is held-out idle, on-path time inside the operation's window that neither owner
+holds, such as the gap between a provisioning call returning and the agent's next turn beginning.
+It is computed as `makespan - T_crit_platform - T_crit_agent`, floored at zero, and reported rather
+than dropped; the published tables are refused if a cell's three terms miss its mean makespan by
+more than 0.5 s. Attribution is asymmetric by construction: an unassigned gap ending in a platform
+event is charged wholly to the platform, so **the agent term is a lower bound and the platform term
+an upper bound**. The split separates two causes a makespan alone conflates: an interface that costs
+the agent many turns, and a control plane that returns slowly.
+
+Per leg a run records makespan, `critical_platform_s`, `critical_agent_s` and held-out idle. Per run
+it records a resource cost (the standing hourly run-rate of what the run leaves provisioned, priced
+from a dated snapshot of public list prices, egress separate, and not the cost of completing the
+task), session identifiers, and the redacted agent transcript.
+
+## Limits
+
+- **The off-path overlap term is 0 and this instrument cannot report otherwise.** Overlap is raw
+  agent time minus critical agent time, that is, agent work hidden underneath a platform wait. It is
+  0 s on all 359 timed legs (94 deploy, 186 operation, 79 durability), on every cloud and in every
+  cell. This is structural, not empirical: the instrument reads a session as one chain of spans, each
+  depending on its predecessor, so it cannot represent concurrent work. A genuinely concurrent
+  session would also print 0. The zero is a property of the session model, is not evidence about the
+  agent, and overlap is not reported as a result.
+- **The lane boundary moves with the shape of the call.** A blocking readiness call returns only when
+  the resource is ready, so its wait is one platform-owned span; a polling loop breaks the same wait
+  into alternating agent-owned and platform-owned spans at nearly identical makespan. The split
+  therefore characterizes a cloud's interface and the agent's strategy against it jointly, not the
+  cloud alone.
+- **The agent factor sits at one level.** One frozen reference agent executed every published run, so
+  the corpus varies clouds and their interfaces, not agents.
+- **Runs are dated, not version-pinned.** The MCP servers are installed from manifests that pin no
+  version (AWS and Azure request `@latest`, the GCP entry names none), and no run record stores the
+  model build, the harness version, or the versions that resolved at run time. Each run used whatever
+  was current on its own date.
+- **Known defects in the published cost numbers** are enumerated in
+  [`results/DATA-DEFECTS.md`](results/DATA-DEFECTS.md), and the per-run records the tables are
+  derived from are not part of this release; the tables and the transcripts behind them are.
+- **Live runs require Linux with KVM**, since each agent turn executes in a fresh microVM. The
+  analysis and reporting code is pure standard-library Python and has no platform requirement.
+
+## The published corpus
+
+94 admitted runs, meaning runs that served and passed the protocol's exclusion rules, across nine
+cells. A cell is one cloud crossed with one task: three large public clouds (AWS, GCP, Azure)
+crossed with a two-tier suite, an Easy tier and a Medium tier run under two information regimes,
+online (each operation revealed on arrival) and disclosed (the full plan stated up front). Cell
+sizes are unequal, 10 to 12. The nine cells are under [`results/`](results/), one folder each,
+holding a table of its admitted runs and the redacted transcript behind every row; the tree also
+carries a fourth instance that is excluded from every published number.
+
+The definitions above, the admission rule, the published reference-optimal gold each admitted run is
+scored against, and the full results with their limits are specified in *A Reproducible,
+Cloud-Agnostic Baseline for Measuring Agent-Cloud Operation Efficiency*, which is not yet posted.
+The framework is the contribution; the three clouds are validation instances, not the subject.
 
 ## What runs where
 
@@ -455,7 +499,7 @@ Each module implements a named piece of the paper. Section numbers are the paper
 
 | Module | Paper section | Implements |
 |---|---|---|
-| `acspeed/criticalpath.py` | Part 1, Section 2 (the spine) | Build the dependency DAG, longest path = wall-clock, slack, and the **owner split**: `wall-clock = critical-platform + critical-agent`, `overlap = raw - critical`. Method reused from the critical-path method (Kelley and Walker 1959; Blumofe and Leiserson 1999) and trace-based critical-path analysis (The Mystery Machine, OSDI 2014; CRISP, USENIX ATC 2022). |
+| `acspeed/criticalpath.py` | Part 1, Section 2 (the spine) | Build the dependency DAG, longest path = makespan, slack, and the **owner split**: each span is attributed to an owner and the critical time across owners sums to the makespan. The records name two owner lanes plus a held-out idle lane, so `makespan = critical-platform + critical-agent + idle`. Also `overlap = raw - critical` per owner, the off-path work (see the note under the example below). Method reused from the critical-path method (Kelley and Walker 1959; Blumofe and Leiserson 1999) and trace-based critical-path analysis (The Mystery Machine, OSDI 2014; CRISP, USENIX ATC 2022). |
 | `acspeed/agenttime.py` | Part 1, Section 3 (the agent segments) | Raw versus critical agent-time: the agent's total effort against only the part of it that sat on the critical path. The difference is the overlap, the agent work that a platform wait hid for free. |
 | `acspeed/adapters/` | Part 1, Section 4 (coupling) | MCP-based cloud adapters. To measure a cloud you point an `MCPAdapter` at that cloud's **MCP server**; the same code serves redu, AWS, GCP and Azure via per-cloud `CloudProfile` tool maps. |
 | `acspeed/repro.py` | Part 1, Section 5 (reproducibility) | Geometric mean, bootstrap and normal CIs, the CONFIRM repeat-until-tight rule (Maricq et al. 2018), and the non-overlapping-CI comparison rule. |
@@ -489,8 +533,22 @@ the cloud provisions. The critical path is `s1 -> s2 -> s4 -> s5 -> s6` (23s):
 - raw agent-time: **11s** (its total effort)
 - **overlap: 4s** of agent work hidden under the provision = free
 
-So `critical_agent + critical_platform = wall-clock`, and the agent's efficiency
-shows up as the 4s it overlapped rather than added to the clock.
+This trace has no idle span, so here the split is exactly
+`critical_platform + critical_agent = makespan` (16 + 7 = 23). On a real run a third
+term appears: `makespan = critical-platform + critical-agent + held-out idle`, the
+idle being on-path time inside the operation's window that neither owner holds.
+
+> **The overlap term is 0 on every published run, and this harness cannot report
+> otherwise.** `examples/example_trace.json` is a hand-written DAG: `s3` is declared
+> to run beside `s2`, which is what produces the 4s. The span builder that reads a
+> real agent transcript does not emit a DAG. It emits a single chain, one span per
+> consecutive transcript row, each depending on the one before
+> (`acspeed/transcript.py:260`), so `raw == critical` for every owner and
+> `overlap = raw - critical` is identically 0 no matter what the session did. Over
+> the 94 published runs it is 0 on all 359 timed legs. A genuinely concurrent
+> session would print the same 0, so that zero is not evidence about the agent.
+> The example shows what the *analysis core* computes given concurrency; it is not
+> a result the live harness has ever produced.
 
 ## Where the interface (MCP, raw API, IaC) fits
 
@@ -534,7 +592,8 @@ turned into a measured number (`tests/test_adapters.py`).
 is fully tested, the live harness drives real agents against real cloud accounts,
 and the 94 runs in [`results/`](results/) were produced by the code in this repo.
 
-Two honest limits, so nothing here reads as more finished than it is:
+[Limits](#limits) covers what the *measurement* does and does not establish. This section is
+about the *implementation*, so nothing here reads as more finished than it is:
 
 - **Live runs need Claude Code.** The Codex path is implemented and tested for
   reading transcripts, but the microVM does not yet carry Codex. See
