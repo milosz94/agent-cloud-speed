@@ -18,9 +18,6 @@ acspeed-run --adapter <cloud> --model claude-opus-5
 
 ## Example results
 
-Four runs from [`results/aws/aws-medium-a/`](results/aws/aws-medium-a/), as published. Seconds per
-leg; each run number links to that run's transcript.
-
 | run | total | deploy (t1) | register | site-b | integrate | durability | agent $ | fixed $/mo | tier |
 |----:|------:|------------:|---------:|-------:|----------:|-----------:|--------:|-----------:|:----:|
 | [1](results/aws/aws-medium-a/sessions/a0c27b89-6125-4308-821f-95d80c7e31f5.jsonl) | 3060 | 666 | 38 | 1001 | 788 | 567 | $6.93 | $77.40 | 5/5 |
@@ -28,7 +25,7 @@ leg; each run number links to that run's transcript.
 | [3](results/aws/aws-medium-a/sessions/3aa325ac-b8ed-4eaa-a127-fdb852c8c8d6.jsonl) | 2658 | 1120 | 27 | 368 | 546 | 597 | $3.88 | $81.05 | 5/5 |
 | [4](results/aws/aws-medium-a/sessions/0c988acb-dd17-472e-a6b0-cccebb6f1843.jsonl) | 3803 | 759 | 37 | 505 | 1632 | 870 | $6.88 | $81.05 | 5/5 |
 
-The full cell has ten runs and more columns. Every cloud and cell is in [`results/`](results/).
+Published results are in [`results/`](results/).
 
 ## Requirements
 
