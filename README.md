@@ -7,7 +7,7 @@ changing something that is already running, or tearing it down. Deploying an app
 of several. acspeed gives a headless agent a real app, a real cloud account and a task, and times
 what happens. Same app, same agent, same task on every cloud, so the clouds are comparable.
 
-Every run is live, against a real account, and costs real money. There is no offline mode.
+Every run is live, against a real account, and costs real money.
 
 ```bash
 git clone https://github.com/milosz94/agent-cloud-speed.git && cd agent-cloud-speed
@@ -15,6 +15,20 @@ bash setup.sh                            # asks which clouds to set up
 cd /path/to/your/app
 acspeed-run --adapter <cloud> --model claude-opus-5
 ```
+
+## Example results
+
+Four runs from [`results/aws/aws-medium-a/`](results/aws/aws-medium-a/), as published. Seconds per
+leg; each run number links to that run's transcript.
+
+| run | total | deploy (t1) | register | site-b | integrate | durability | agent $ | fixed $/mo | tier |
+|----:|------:|------------:|---------:|-------:|----------:|-----------:|--------:|-----------:|:----:|
+| [1](results/aws/aws-medium-a/sessions/a0c27b89-6125-4308-821f-95d80c7e31f5.jsonl) | 3060 | 666 | 38 | 1001 | 788 | 567 | $6.93 | $77.40 | 5/5 |
+| [2](results/aws/aws-medium-a/sessions/41a44d06-8086-4a00-8f01-8618c43eaaae.jsonl) | 2700 | 750 | 19 | 439 | 1025 | 467 | $11.16 | $72.04 | 5/5 |
+| [3](results/aws/aws-medium-a/sessions/3aa325ac-b8ed-4eaa-a127-fdb852c8c8d6.jsonl) | 2658 | 1120 | 27 | 368 | 546 | 597 | $3.88 | $81.05 | 5/5 |
+| [4](results/aws/aws-medium-a/sessions/0c988acb-dd17-472e-a6b0-cccebb6f1843.jsonl) | 3803 | 759 | 37 | 505 | 1632 | 870 | $6.88 | $81.05 | 5/5 |
+
+The full cell has ten runs and more columns. Every cloud and cell is in [`results/`](results/).
 
 ## Requirements
 
@@ -71,23 +85,6 @@ The app folder is created for you on first run. Compare your `tables.txt` agains
 `README.md`.
 
 ## Results
-
-One cell, to show what comes out. Medium A: deploy umami with a managed database, then register a
-user, deploy a second site, wire analytics between them, and survive a restart. Same app, same
-agent, same task on each cloud, n=10 per cloud.
-
-| cloud | wall-clock (s) | 95% CI | cloud was busy | agent was busy | neither |
-|---|--:|---|--:|--:|--:|
-| GCP | **1,793** | [1,335, 2,439] | 944 | 697 | 151 |
-| Azure | 2,578 | [2,180, 2,946] | 1,904 | 673 | 1 |
-| AWS | 4,124 | [3,324, 5,071] | 2,578 | 1,314 | 232 |
-
-The split is why this is worth measuring. AWS is slowest here, and not for one reason: its platform
-time is the largest *and* its agent spent 1,314 s against Azure's 673 s on the same task. Azure is
-74% platform, so a faster agent would barely move its total; GCP is 53%, where the agent is worth
-attacking. Those are different problems, and a single number does not tell you which one you have.
-
-Full tables, per-run rows and the transcript behind every row:
 
 | where | what |
 |---|---|
