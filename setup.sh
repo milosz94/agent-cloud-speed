@@ -36,9 +36,10 @@ echo "[1/9] platform"
 if [ "$OS" != "Linux" ]; then
   say "os" "$OS"
   echo
-  echo "  The live benchmark is Linux only: it runs every agent turn in a Firecracker microVM," >&2
-  echo "  which needs /dev/kvm. Run this inside a Linux VM or WSL2 that exposes /dev/kvm." >&2
-  echo "  The analysis half (the acspeed CLI, the tests, the published results) works here as is." >&2
+  echo "  acspeed runs every agent turn in a Firecracker microVM, which needs Linux and /dev/kvm." >&2
+  echo "  Firecracker does not support macOS or Windows hosts. Run this inside a Linux VM that" >&2
+  echo "  exposes /dev/kvm: WSL2 with nested virtualization on Windows, or a Linux VM on macOS." >&2
+  echo "  See docs/install.md." >&2
   exit 1
 fi
 say "os" "Linux"

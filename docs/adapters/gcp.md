@@ -15,20 +15,20 @@
    gcloud services enable cloudbilling.googleapis.com
    ```
    It is free and read-only. Without it the run still measures time, but reports no cost.
-4. **Put your project id in the MCP config**, because only you know it:
-   ```bash
-   $EDITOR $ACSPEED_DATA/_config/gcp.mcp.json     # or ~/.acspeed/_config/gcp.mcp.json
-   ```
-   Replace `REPLACE_WITH_YOUR_GCP_PROJECT_ID` with the project, and set `GOOGLE_CLOUD_REGION` if
-   you do not want `europe-west1`. **A run refuses to start while that placeholder is still there**,
-   so an unedited template cannot reach the cloud.
+That is all. There is no config file to edit: acspeed writes its own on first use and takes the
+project id from the `gcloud` config you just set. If you want a region other than `europe-west1`,
+set `GOOGLE_CLOUD_REGION` in the environment, or edit the generated file at
+`~/.acspeed/_config/gcp.mcp.json` once it exists.
 
 ## The repo does
 
-- ships `config/gcp.mcp.json` and copies it into place (`setup.sh`)
+- writes `~/.acspeed/_config/gcp.mcp.json` on first use, filling the project id from
+  `GOOGLE_CLOUD_PROJECT` or `gcloud config get-value project`
+  (`autorun.py::ensure_adapter_config`, `tests/test_config_auto.py`)
 - checks `gcloud auth print-access-token` and prints the fix when it fails
   (`setup.sh --check --adapter gcp`), the same check the run itself makes
-- refuses before provisioning if the config is missing or still a template
+- refuses before provisioning, naming the one command to run, only if no project id can be found
+  anywhere
 
 ## Known shape of this adapter
 

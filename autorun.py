@@ -187,6 +187,97 @@ ADAPTERS = {
                                  r"|^https?://[a-z0-9-]+\.azurecr\.io"},
 }
 
+# ---------------------------------------------------------------------------
+# Adapter config, materialized automatically.
+#
+# Config used to be the user's problem: copy the templates, then hand-edit the one for your cloud.
+# That is a setup step with nothing in it a machine cannot do, and every person who forgot it paid
+# for the discovery with a refused run. So acspeed now creates the config on first use and fills
+# what it can derive from the cloud CLI the user has already authenticated. It refuses ONLY when a
+# value genuinely cannot be discovered, and then it prints the one command that supplies it.
+# ---------------------------------------------------------------------------
+
+def _resolve_gcp_project() -> str:
+    """The GCP project id, from the environment or from gcloud's own active config."""
+    for var in ("GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "GCP_PROJECT", "CLOUDSDK_CORE_PROJECT"):
+        v = (os.environ.get(var) or "").strip()
+        if v:
+            return v
+    try:
+        r = subprocess.run(["gcloud", "config", "get-value", "project"],
+                           capture_output=True, text=True, timeout=30)
+        v = (r.stdout or "").strip()
+        # gcloud prints "(unset)" (and on some versions an empty line) when no project is selected.
+        if v and v != "(unset)":
+            return v
+    except Exception:
+        pass
+    return ""
+
+
+# placeholder -> (resolver, the command that fixes it when the resolver comes back empty)
+_PLACEHOLDERS = {
+    "REPLACE_WITH_YOUR_GCP_PROJECT_ID": (
+        _resolve_gcp_project,
+        "gcloud config set project <your-project-id>",
+    ),
+}
+
+
+def _fill_placeholders(raw: str) -> tuple[str, list[str]]:
+    """Substitute every placeholder we can resolve. Returns (text, unfixable) where each unfixable
+    entry is the command the user must run."""
+    todo = []
+    for token, (resolve, fix) in _PLACEHOLDERS.items():
+        if token not in raw:
+            continue
+        val = resolve()
+        if val:
+            raw = raw.replace(token, val)
+        else:
+            todo.append(fix)
+    return raw, todo
+
+
+def ensure_adapter_config(adapter: str) -> None:
+    """Make the adapter's MCP config exist and be free of placeholders, without asking the user.
+
+    Creates it from the shipped template on first use, and re-resolves placeholders in a config that
+    already exists (so a user who set their gcloud project AFTER the first run is not stuck with a
+    stale file). Writes generate-then-rename: a half-written config that still parses is worse than
+    no config, because it fails inside the run instead of here.
+    """
+    dest = (ADAPTERS.get(adapter) or {}).get("mcp_config")
+    if not dest:
+        return
+    tpl = os.path.join(HERE, "config", f"{adapter}.mcp.json")
+
+    if not os.path.exists(dest):
+        if not os.path.exists(tpl):
+            sys.exit(f"\nREFUSING TO RUN: no MCP config for '{adapter}' at {dest}, and this build "
+                     f"ships no template at {tpl}.\n")
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        raw = open(tpl).read()
+        created = True
+    else:
+        raw = open(dest).read()
+        created = False
+
+    filled, todo = _fill_placeholders(raw)
+    if todo:
+        sys.exit(f"\nREFUSING TO RUN: the {adapter} config needs one value acspeed cannot discover.\n\n"
+                 + "".join(f"    {c}\n" for c in todo)
+                 + f"\nThen run acspeed again. (Config lives at {dest}; you do not normally edit it.)\n")
+
+    if created or filled != raw:
+        tmp = dest + ".tmp"
+        with open(tmp, "w") as fh:
+            fh.write(filled)
+        os.replace(tmp, dest)
+        what = "created" if created else "updated"
+        print(f"[config] {what} {dest}")
+
+
 # App-agnostic by design: it deploys the CURRENT folder (or --app-dir) once. No named app, no per-app
 # check. The prompt names the TARGET CLOUD and nothing else about WHAT or HOW: "this directory" IS the
 # app under test, and {cloud} is the ONLY per-adapter substitution (identical template every cloud, so
@@ -2314,29 +2405,9 @@ def main() -> None:
     # Config preflight: a missing MCP config used to surface deep in the run, after the agent had
     # already been launched and money spent. Check it here, before anything is provisioned, and point
     # at the templates the repo ships.
-    _cfg = (ADAPTERS.get(a.adapter) or {}).get("mcp_config")
-    if _cfg and not os.path.exists(_cfg):
-        _tpl = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config")
-        sys.exit(
-            f"\nREFUSING TO RUN: no MCP config for adapter '{a.adapter}' at {_cfg}.\n\n"
-            f"acspeed reads its per-cloud config from $ACSPEED_DATA (currently {DATA}).\n"
-            "The repo ships templates. Copy them once, then edit the one for your cloud:\n\n"
-            f"    mkdir -p {DATA}/_config\n"
-            f"    cp -r {_tpl}/* {DATA}/_config/\n\n"
-            f"Then set your project/profile in {DATA}/_config/{a.adapter}.mcp.json\n"
-            "(see 'Per-cloud credentials' in README.md for what each cloud needs).\n")
-    if _cfg:
-        # Existence is not enough: the shipped templates carry placeholders. A run launched with an
-        # unedited template reaches the cloud and fails there, after the clock and the money started.
-        try:
-            _raw = open(_cfg).read()
-        except OSError:
-            _raw = ""
-        if "REPLACE_WITH" in _raw:
-            sys.exit(
-                f"\nREFUSING TO RUN: {_cfg} still contains a template placeholder.\n\n"
-                + "\n".join("    " + ln.strip() for ln in _raw.splitlines() if "REPLACE_WITH" in ln)
-                + "\n\nEdit that file before running (config/README.md says what each cloud needs).\n")
+    # Config is materialized, not demanded: see ensure_adapter_config. This runs before anything
+    # is provisioned, so a config problem costs nothing rather than surfacing mid-run.
+    ensure_adapter_config(a.adapter)
 
     ok, why = sandbox_available()
     if a.no_sandbox or not ok:
