@@ -87,7 +87,7 @@ def sandbox_available() -> tuple[bool, str]:
         return False, "sandbox/vmjob.py not importable"
     for p in (vmjob.BIN_FC, vmjob.KERNEL, vmjob.BASE_ROOTFS):
         if not os.path.exists(p):
-            return False, f"missing {os.path.basename(p)} (build the sandbox: see sandbox/STATE.md)"
+            return False, f"missing {os.path.basename(p)} (build it: bash sandbox/build-images.sh)"
     if not os.path.exists("/dev/kvm"):
         return False, "/dev/kvm absent (sudo modprobe kvm_amd)"
     if not vmjob.discover_slots():

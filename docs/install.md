@@ -121,7 +121,7 @@ After this you never touch `net-setup` again: KVM auto-loads and `acspeed-tap0..
 (The lower-level `sudo modprobe kvm_amd` + `sudo bash sandbox/net-setup.sh N` still work if you want a
 one-off, non-persistent setup.) The prebuilt kernel and rootfs live under `sandbox/` (`bin/`, `images/`);
 rebuilding the rootfs (only if you edit `sandbox/rootfs/vm-runner.sh` or the `Containerfile`) is documented
-in `sandbox/STATE.md`. If the substrate is not available the run **refuses to start** rather than
+by `sandbox/build-images.sh`. If the substrate is not available the run **refuses to start** rather than
 falling back to the host, and `--no-sandbox` produces the same refusal: a host run yields no
 platform/agent split, no session id and no cost, so it would spend real money for an unpublishable
 record.
@@ -284,4 +284,4 @@ docs/notes/     working notes kept for provenance, not documentation
 
 Everything in `tools/` reads `$ACSPEED_STAGING` for raw run records; those are **not** part of the
 published artifact, so a third party regenerates tables from their own runs, not from this repo's.
-`docs/notes/REPRO-TODO.md` records what that costs.
+

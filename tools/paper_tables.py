@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 from acspeed import gold, repro, weighting  # noqa: E402
 from build_tables import wilson  # noqa: E402
 
-# Raw per-run records. Not part of the published artifact (see docs/notes/REPRO-TODO.md): point
+# Raw per-run records. Not part of the published artifact: point
 # ACSPEED_STAGING at your own acspeed-results tree to regenerate tables from your own runs.
 STAGING = os.environ.get("ACSPEED_STAGING") or os.path.join(
     (os.environ.get("ACSPEED_DATA") or os.path.expanduser("~/.acspeed")), "_staging")

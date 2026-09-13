@@ -52,7 +52,7 @@ else
 fi
 
 # 3. Rootfs ---------------------------------------------------------------------------------------
-# The recipe STATE.md documents: build the image, export its filesystem, write it into an ext4 file.
+# The recipe: build the image, export its filesystem, write it into an ext4 file.
 # NOTE the -f: the file is Containerfile, so a plain `build rootfs/` looks for Dockerfile and fails.
 if [ -n "$FORCE" ] || [ ! -s "$HERE/images/rootfs.ext4" ]; then
   echo "building rootfs (this pulls ubuntu:24.04 and the agent toolchain; several minutes) ..."

@@ -45,7 +45,7 @@ land in `./acspeed-results/<adapter>/`, so several clouds for the same app sit s
 |---|---|
 | `--adapter` | which cloud: `aws`, `gcp`, `azure`, `redu` |
 | `--model` | a model string your account can use |
-| `--suite` | run a benchmark tier instead of a plain deploy |
+| `--suite` | run a benchmark tier instead of a plain deploy ([write your own](docs/writing-a-benchmark.md)) |
 | `--n` | repeat count |
 | `--out` | override the results path |
 
@@ -101,6 +101,7 @@ new code path.
 |---|---|
 | [docs/install.md](docs/install.md) | install, the microVM substrate, concurrency, credentials |
 | [docs/measurement.md](docs/measurement.md) | what is measured, how it is defined, limits |
+| [docs/writing-a-benchmark.md](docs/writing-a-benchmark.md) | add your own app and operations |
 | [docs/adapters/](docs/adapters/) | one page per cloud |
 | [results/](results/) | the published runs and their transcripts |
 

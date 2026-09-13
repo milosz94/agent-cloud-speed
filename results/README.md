@@ -35,7 +35,7 @@ project meets them. All three permit publication; the condition they share is th
 carry enough to replicate it, which is what this tree is.
 
 **AWS cost was re-priced on 2026-09-07** across all 32 published AWS rows, from the settled CloudTrail
-log rather than the snapshot taken at end-of-run. `REPRICE-2026-09-07.md` holds the before/after and the
+log rather than the snapshot taken at end-of-run. The
 control. GCP, Azure and redu are untouched.
 
 ### [gcp/](gcp/)

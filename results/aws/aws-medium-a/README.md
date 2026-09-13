@@ -18,7 +18,7 @@ attempts from these batches are not published: their standing EC2 was unpriced, 
 the cost axis.
 
 Every cost figure in this cell was re-priced on 2026-09-07 from the settled CloudTrail log, so all ten
-rows now come from one mechanism (see `../../REPRICE-2026-09-07.md`). Row 9's missing database, open
+rows now come from one mechanism. Row 9's missing database, open
 until then, is resolved: one WAS standing and the live snapshot had missed it.
 
 `agent $` is the agent's LLM cost for **the task being measured**: the deploy round, plus each
