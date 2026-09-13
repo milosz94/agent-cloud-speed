@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use acspeed or its published results, please cite it as below."
+title: "acspeed: a cloud-agnostic benchmark for agent-cloud operation efficiency"
+abstract: >-
+  acspeed benchmarks how fast a cloud is to operate when an AI coding agent is driving it. A headless
+  agent is given a real application, a real cloud account and a task; the run is timed end to end and
+  the elapsed wall-clock is split into the part the cloud spent, the part the agent spent, and a
+  remainder held by neither. The repository contains the harness, the task suite, and 94 published
+  runs across AWS, GCP and Azure with the redacted agent transcript behind every reported number.
+type: software
+authors:
+  - family-names: "Zivanovic"
+    given-names: "Milos"
+license: MIT
+repository-code: "https://github.com/milosz94/agent-cloud-speed"
+keywords:
+  - benchmark
+  - cloud computing
+  - LLM agents
+  - reproducibility
+  - performance measurement
