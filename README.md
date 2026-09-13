@@ -18,12 +18,14 @@ acspeed-run --adapter <cloud> --model claude-opus-5
 
 ## Example results
 
-| run | total | deploy (t1) | register | site-b | integrate | durability | agent $ | fixed $/mo | tier |
-|----:|------:|------------:|---------:|-------:|----------:|-----------:|--------:|-----------:|:----:|
-| [1](results/aws/aws-medium-a/sessions/a0c27b89-6125-4308-821f-95d80c7e31f5.jsonl) | 3060 | 666 | 38 | 1001 | 788 | 567 | $6.93 | $77.40 | 5/5 |
-| [2](results/aws/aws-medium-a/sessions/41a44d06-8086-4a00-8f01-8618c43eaaae.jsonl) | 2700 | 750 | 19 | 439 | 1025 | 467 | $11.16 | $72.04 | 5/5 |
-| [3](results/aws/aws-medium-a/sessions/3aa325ac-b8ed-4eaa-a127-fdb852c8c8d6.jsonl) | 2658 | 1120 | 27 | 368 | 546 | 597 | $3.88 | $81.05 | 5/5 |
-| [4](results/aws/aws-medium-a/sessions/0c988acb-dd17-472e-a6b0-cccebb6f1843.jsonl) | 3803 | 759 | 37 | 505 | 1632 | 870 | $6.88 | $81.05 | 5/5 |
+| cloud | run | total | deploy (t1) | register | site-b | integrate | durability | agent $ | tier |
+|:--|----:|------:|------------:|---------:|-------:|----------:|-----------:|--------:|:----:|
+| aws | [1](results/aws/aws-medium-a/sessions/a0c27b89-6125-4308-821f-95d80c7e31f5.jsonl) | 3060 | 666 | 38 | 1001 | 788 | 567 | $6.93 | 5/5 |
+| aws | [2](results/aws/aws-medium-a/sessions/41a44d06-8086-4a00-8f01-8618c43eaaae.jsonl) | 2700 | 750 | 19 | 439 | 1025 | 467 | $11.16 | 5/5 |
+| gcp | [1](results/gcp/gcp-medium-a/sessions/97ec285a-4f45-4f9d-b236-e9c54a6fc453.jsonl) | 2428 | 472 | 42 | 368 | 1103 | 443 | $4.79 | 5/5 |
+| gcp | [2](results/gcp/gcp-medium-a/sessions/23e283ed-49b6-45a3-a9ee-3410effdd1da.jsonl) | 1113 | 365 | 27 | 201 | 164 | 356 | $3.72 | 5/5 |
+| azure | [1](results/azure/azure-medium-a/sessions/b62c17d1-8d4e-48ad-8b8a-1c22c34d0107.jsonl) | 2179 | 1221 | 22 | 346 | 61 | 529 | $4.32 | 5/5 |
+| azure | [2](results/azure/azure-medium-a/sessions/9bb69ed8-b98a-4dfa-a529-131e716b3df6.jsonl) | 2827 | 2252 | 32 | 194 | 152 | 197 | $5.12 | 5/5 |
 
 Published results are in [`results/`](results/).
 
