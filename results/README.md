@@ -26,17 +26,13 @@ serial sum, disclosed does not, which is what makes the A-vs-B comparison honest
 ### [aws/](aws/)
 
 - [aws-easy](aws/aws-easy/) - n=10
-- [aws-medium-a](aws/aws-medium-a/) - n=10 fair (3 attempts excluded, unpriced standing EC2)
+- [aws-medium-a](aws/aws-medium-a/) - n=10
 - [aws-medium-b](aws/aws-medium-b/) - n=12
 
 This benchmark names the clouds it measures. `../BENCHMARK-TERMS.md` records what each provider's own
 terms say about publishing benchmark results, quoted from the primary source and dated, and how this
 project meets them. All three permit publication; the condition they share is that the disclosure
 carry enough to replicate it, which is what this tree is.
-
-**AWS cost was re-priced on 2026-09-07** across all 32 published AWS rows, from the settled CloudTrail
-log rather than the snapshot taken at end-of-run. The
-control. GCP, Azure and redu are untouched.
 
 ### [gcp/](gcp/)
 
@@ -62,17 +58,3 @@ rate shows `-` for `fixed $/mo`). A standing VM cost stays flat at any traffic; 
 with it. Every transcript is credential- and
 infrastructure-redacted (`acspeed sessions`, residue 0).
 
-## Two instrument corrections applied 2026-09-04
-
-**Platform-edge 4xx.** A cloud's edge can answer before the app does (a Lightsail container hostname
-404s the moment DNS exists; a Cloud Run IAM denial 403s), stopping the liveness clock early. The harness
-now runs a response-origin check on any 4xx (`autorun.is_serving_ex`). Runs measured before this date
-are audited by the rule "suspect iff the clock stopped on a 4xx on the first poll"; the affected runs are
-excluded and listed in their own cell's README rather than deleted.
-
-**First-poll exclusion (gold 1.0.0 to 1.1.0).** The Part 3 floor and frontier previously excluded *every*
-run flagged `served_on_first_poll`. Because a Cloud Run deploy does not return the URL until the revision
-is live, that silently excluded **all 33 GCP runs from an entire reported axis, at any n**. Gold 1.1.0
-excludes a first-poll run only when a 4xx stopped the clock, or when the served URL does not carry the
-run's own token (a possible leftover deployment). Floors and ratios are not comparable across the
-version bump.

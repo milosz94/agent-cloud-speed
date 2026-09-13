@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # One command that takes a clean Linux machine to a machine that can run the benchmark.
 #
+#     bash setup.sh                         # install everything, then ask which clouds to set up
 #     bash setup.sh --check                 # report what is missing, install NOTHING
-#     bash setup.sh                         # install everything, then build the microVM substrate
-#     bash setup.sh --adapter aws           # ...and the AWS CLI
+#     bash setup.sh --adapter aws,gcp       # skip the question (for scripts and CI)
 #     bash setup.sh --slots 4               # tap pool size (concurrent runs), default 8
 #
 # Installs, when missing: curl/git/e2fsprogs, a container runtime, Node 22, uv, the Claude Code CLI,
@@ -15,7 +15,7 @@ CHECK=""; ADAPTER=""; SLOTS=8
 while [ $# -gt 0 ]; do
   case "$1" in
     --check) CHECK=1 ;;
-    --adapter) ADAPTER="${2:?--adapter needs a cloud}"; shift ;;
+    --adapter) ADAPTER="${2:?--adapter needs a cloud}"; shift ;;   # comma-separated, optional
     --slots) SLOTS="${2:?--slots needs a number}"; shift ;;
     -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 1 ;;
@@ -134,9 +134,34 @@ fi
 echo "  Pick the agent per run with --agent claude|codex. The measurement is identical either way:"
 echo "  acspeed normalizes both transcript formats onto one row shape before any split is computed."
 
-if [ -n "$ADAPTER" ]; then
+# Which clouds to wire up. Nobody should have to know the flag exists to get a working setup, so if
+# it was not given we ask, and accept several. A non-interactive shell keeps the old behaviour of
+# doing nothing here rather than blocking a script on a prompt that will never be answered.
+if [ -z "$ADAPTER" ] && [ -z "$CHECK" ] && [ -t 0 ]; then
   echo
-  echo "[6b/9] cloud CLI for --adapter $ADAPTER"
+  echo "Which clouds do you want to set up? (the CLI and credential checks for each)"
+  echo "    1) aws      2) gcp      3) azure      4) redu      5) all"
+  printf "Enter numbers or names, separated by spaces or commas [skip]: "
+  read -r _pick || _pick=""
+  _sel=""
+  for _w in $(echo "$_pick" | tr ',' ' '); do
+    case "$(echo "$_w" | tr '[:upper:]' '[:lower:]')" in
+      1|aws)   _sel="$_sel aws" ;;
+      2|gcp)   _sel="$_sel gcp" ;;
+      3|azure) _sel="$_sel azure" ;;
+      4|redu)  _sel="$_sel redu" ;;
+      5|all)   _sel="aws gcp azure redu" ;;
+      "")      ;;
+      *) echo "  ignoring unknown choice: $_w" >&2 ;;
+    esac
+  done
+  ADAPTER="$(echo "$_sel" | tr ' ' ',' | sed 's/^,//;s/,$//')"
+fi
+
+for ADAPTER in $(echo "$ADAPTER" | tr ',' ' '); do
+  [ -n "$ADAPTER" ] || continue
+  echo
+  echo "[6b/9] cloud CLI for $ADAPTER"
   case "$ADAPTER" in
     aws)   note aws    || { [ -z "$CHECK" ] && pkg_install awscli || true; }
            if aws sts get-caller-identity --profile acspeed-batch >/dev/null 2>&1; then
@@ -168,7 +193,7 @@ if [ -n "$ADAPTER" ]; then
     redu)  say "redu" "no CLI needed (HTTP MCP)" ;;
     *) echo "  unknown adapter: $ADAPTER" >&2 ;;
   esac
-fi
+done
 
 echo
 echo "[7/9] acspeed itself"

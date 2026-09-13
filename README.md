@@ -11,7 +11,7 @@ Every run is live, against a real account, and costs real money. There is no off
 
 ```bash
 git clone https://github.com/milosz94/agent-cloud-speed.git && cd agent-cloud-speed
-bash setup.sh --adapter <cloud>          # aws | gcp | azure | redu
+bash setup.sh                            # asks which clouds to set up
 cd /path/to/your/app
 acspeed-run --adapter <cloud> --model claude-opus-5
 ```
@@ -20,20 +20,15 @@ acspeed-run --adapter <cloud> --model claude-opus-5
 
 | | |
 |---|---|
-| OS | **Linux** (verified). **macOS and Windows are experimental**: the backend is there and untested, see [docs/install.md](docs/install.md#macos-and-windows-experimental) |
+| OS | **Linux** (verified). macOS and Windows are **experimental** |
 | Python | 3.10+, no third-party dependencies |
 | Agent | Claude Code or Codex, installed and logged in (`--agent claude\|codex`) |
 | Node.js + uv | runs the per-cloud MCP servers (`npx`, `uvx`) |
 | Cloud access | an account on the cloud you target, logged in: `aws`, `gcloud` or `az` for those three; redu needs only an account token, no CLI |
 | sudo | once, for the microVM installer |
 
-`bash setup.sh --check --adapter <cloud>` reports what is missing and changes nothing.
-
-Every agent turn runs in a fresh microVM. On Linux that is Firecracker, which needs `/dev/kvm`.
-macOS and Windows use QEMU with the hypervisor the OS already provides (Hypervisor.framework, WHPX),
-which needs no nested virtualization. **Those two are experimental**: the QEMU backend is proven end
-to end on Linux only, so a run there prints a warning, records `experimental: true`, and is never
-pooled with verified runs. Full detail in [docs/install.md](docs/install.md).
+`bash setup.sh --check` reports what is missing and changes nothing.
+Full detail in [docs/install.md](docs/install.md).
 
 ## Usage
 
@@ -75,9 +70,6 @@ acspeed-run --adapter aws --suite umami-medium --model claude-opus-5 --n 10
 The app folder is created for you on first run. Compare your `tables.txt` against that cell's
 `README.md`.
 
-**It costs real money**, on your own cloud account, and a Medium cell is ten deploys plus their
-operations and teardown.
-
 ## Results
 
 | where | what |
@@ -117,6 +109,11 @@ acspeed is the reference implementation for *A Reproducible, Cloud-Agnostic Base
 Agent-Cloud Operation Efficiency*, which defines the measurement and reports the study behind
 [`results/`](results/). Not yet published; the link and citation land here when it is.
 
+## Contributing
+
+Adapters for new clouds, corrections to the existing ones from the people who run them, and new
+benchmarks are all welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
-See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
