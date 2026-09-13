@@ -22,7 +22,7 @@ acspeed-run --adapter <cloud> --model claude-opus-5
 |---|---|
 | OS | Linux with KVM: `ls /dev/kvm` must succeed |
 | Python | 3.10+, no third-party dependencies |
-| Agent | Claude Code, installed and logged in |
+| Agent | Claude Code or Codex, installed and logged in (`--agent claude\|codex`) |
 | Node.js + uv | runs the per-cloud MCP servers (`npx`, `uvx`) |
 | Cloud access | an account on the cloud you target, logged in: `aws`, `gcloud` or `az` for those three; redu needs only an account token, no CLI |
 | sudo | once, for the microVM installer |
@@ -44,8 +44,10 @@ land in `./acspeed-results/<adapter>/`, so several clouds for the same app sit s
 | flag | effect |
 |---|---|
 | `--adapter` | which cloud: `aws`, `gcp`, `azure`, `redu` |
+| `--agent` | which agent CLI drives the run: `claude` (default) or `codex` |
 | `--model` | a model string your account can use |
-| `--suite` | run a benchmark tier instead of a plain deploy ([write your own](docs/writing-a-benchmark.md)) |
+| `--suite` | run a built-in benchmark tier instead of a plain deploy |
+| `--custom` | run your own benchmark from a JSON file ([how](docs/writing-a-benchmark.md)) |
 | `--n` | repeat count |
 | `--out` | override the results path |
 
@@ -101,7 +103,7 @@ new code path.
 |---|---|
 | [docs/install.md](docs/install.md) | install, the microVM substrate, concurrency, credentials |
 | [docs/measurement.md](docs/measurement.md) | what is measured, how it is defined, limits |
-| [docs/writing-a-benchmark.md](docs/writing-a-benchmark.md) | add your own app and operations |
+| [docs/writing-a-benchmark.md](docs/writing-a-benchmark.md) | benchmark your own app: operations and checks in JSON |
 | [docs/adapters/](docs/adapters/) | one page per cloud |
 | [results/](results/) | the published runs and their transcripts |
 

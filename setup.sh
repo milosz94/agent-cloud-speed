@@ -99,11 +99,18 @@ if ! note uv; then
 fi
 
 echo
-echo "[6/9] the agent CLI"
+echo "[6/9] the agent CLIs"
+# Both supported agents are installed: which one drives a run is --agent, not a reinstall.
 if ! note claude; then
   if [ -z "$CHECK" ]; then
     if have npm; then sudo npm install -g @anthropic-ai/claude-code
     else echo "  install Node first, then: npm install -g @anthropic-ai/claude-code" >&2; fi
+  fi
+fi
+if ! note codex; then
+  if [ -z "$CHECK" ]; then
+    if have npm; then sudo npm install -g @openai/codex
+    else echo "  install Node first, then: npm install -g @openai/codex" >&2; fi
   fi
 fi
 if have claude; then
@@ -116,9 +123,16 @@ if have claude; then
     echo "      a run refuses on a dead login rather than stranding a half-deployed stack."
   fi
 fi
-echo "  NOTE: acspeed drives 'claude -p' specifically and parses Claude Code's transcript format."
-echo "        Codex and other agent CLIs need an adapter in autorun.py and acspeed/transcript.py;"
-echo "        see docs/adapters/README.md. That is a code change, not a setup step."
+if have codex; then
+  if codex login status >/dev/null 2>&1; then
+    say "codex login" "authenticated"
+  else
+    say "codex login" "NOT LOGGED IN (only needed for --agent codex)"
+    echo "      codex login                # interactive"
+  fi
+fi
+echo "  Pick the agent per run with --agent claude|codex. The measurement is identical either way:"
+echo "  acspeed normalizes both transcript formats onto one row shape before any split is computed."
 
 if [ -n "$ADAPTER" ]; then
   echo

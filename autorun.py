@@ -63,7 +63,8 @@ from acspeed import transcript as acs  # noqa: E402
 from acspeed import operation as acs_op  # noqa: E402
 from acspeed import agenttime as acs_at  # noqa: E402
 from acspeed import suite as acs_suite  # noqa: E402
-from acspeed import suites as acs_suites  # noqa: E402
+from acspeed import suites as acs_suites
+from acspeed.suites import custom as acs_custom  # noqa: E402
 from acspeed import procguard  # noqa: E402
 from acspeed.types import Span, PLATFORM, AGENT  # noqa: E402
 from acspeed.criticalpath import owner_split as _owner_split  # noqa: E402
@@ -1869,7 +1870,10 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
     # full plan in the deploy prompt below (the agent then schedules with lookahead), and (b) the SAME
     # instance and per-run sentinel drive the suite and the teardown later. Online (Medium A) or no suite:
     # nothing extra is added to the deploy prompt.
-    suite_inst = acs_suites.get_instance(prof["suite"]) if prof.get("suite") else None
+    if prof.get("custom_suite"):
+        suite_inst = acs_custom.load(prof["custom_suite"])
+    else:
+        suite_inst = acs_suites.get_instance(prof["suite"]) if prof.get("suite") else None
     # The primary app's URL name (Medium): the harness selects the primary BY NAME so the concurrently
     # provisioned second site (same token, different name) is never mistaken for it. Shared with drive_suite
     # (second-site naming) and the readiness poll via prof.
@@ -2391,6 +2395,10 @@ def main() -> None:
                     help="which agent CLI drives the run (default: claude, or $ACSPEED_AGENT). The "
                          "measurement is identical either way: acspeed normalizes both transcript "
                          "formats onto one row shape before any split is computed.")
+    ap.add_argument("--custom", default=None, metavar="FILE.json",
+                    help="run a benchmark defined in a JSON file instead of a built-in suite: your "
+                         "own operations and the URL reads that verify them, no Python required. "
+                         "See docs/writing-a-benchmark.md. Mutually exclusive with --suite.")
     ap.add_argument("--suite", default=None, choices=acs_suites.instance_names(),
                     help="run a benchmark TIER instance (e.g. umami-medium) instead of Easy deploy-only: "
                          "after the deploy serves, the agent performs the tier's operations "
@@ -2412,6 +2420,20 @@ def main() -> None:
     # at the templates the repo ships.
     # Config is materialized, not demanded: see ensure_adapter_config. This runs before anything
     # is provisioned, so a config problem costs nothing rather than surfacing mid-run.
+    # A custom benchmark is validated HERE, before anything is provisioned. A typo in the JSON must
+    # cost nothing; discovering it after the agent is running costs a paid run.
+    if a.custom and a.suite:
+        sys.exit("\nREFUSING TO RUN: pass either --suite or --custom, not both.\n")
+    if a.custom:
+        try:
+            _ci = acs_custom.load(a.custom)
+        except acs_custom.CustomSuiteError as e:
+            sys.exit(f"\nREFUSING TO RUN: {e}\n\n"
+                     "See docs/writing-a-benchmark.md for the format.\n")
+        _log(f"CUSTOM: '{_ci.name}' ({len(_ci.operations)} operations: "
+             f"{', '.join(o.op_id for o in _ci.operations)}"
+             f"{'; durability' if _ci.durability else ''})")
+
     ensure_adapter_config(a.adapter)
 
     ok, why = sandbox_available()
@@ -2515,7 +2537,7 @@ def main() -> None:
             "task_prompt": CONFIG["task_prompt_template"].format(cloud=cloud_label),
             "app_dir": app_dir, "run_cwd": work_cwd, "out_dir": out_dir, "copy_ignore": copy_ignore,
             "keep": a.keep, "screenshot": a.screenshot, "capability": a.capability, "cost": a.cost,
-            "suite": a.suite, "sandbox": sandbox}
+            "suite": a.suite, "custom_suite": a.custom, "sandbox": sandbox}
     # The off-clock COST read must sign with the SAME static profile as the deploy/deprovision (the aws
     # MCP's --profile), never the host default credential chain: an expired `aws login` SSO session there
     # made cost N/A with "refresh token has expired" (2026-08-28 run). None for non-aws clouds.

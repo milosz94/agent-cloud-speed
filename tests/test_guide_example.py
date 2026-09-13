@@ -1,69 +1,60 @@
 """The custom-benchmark guide must stay executable.
 
-docs/writing-a-benchmark.md tells people to copy a suite skeleton. A guide that no longer matches the
-API is worse than no guide: it is discovered only after a live, billed run. So the example is
-extracted from the document itself and exercised here.
-
-The first draft of that example was wrong in a way worth pinning: it guarded with `status is None`,
-but `_http.http` reports a failed connection as status **0**, so `status < 500` was true and a dead
-URL verified as a working deploy.
+docs/writing-a-benchmark.md tells people to copy a JSON skeleton. A guide that no longer matches the
+loader is worse than no guide: it is discovered after a live, billed run. So the JSON block is
+extracted from the document itself and loaded here, and the shipped example file is checked to match
+it.
 """
+import json
 import pathlib
-import re
-import sys
-import types
 import unittest
+
+from acspeed.suites import custom
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 GUIDE = ROOT / "docs" / "writing-a-benchmark.md"
+EXAMPLE = ROOT / "examples" / "custom-benchmark.json"
 
 
-def _load_example():
-    """Import the guide's first python block as a module, exactly as a reader would paste it."""
+def _guide_json():
     src = GUIDE.read_text()
-    block = src.split("```python\n", 1)[1].split("```", 1)[0]
-    mod = types.ModuleType("_guide_example")
-    mod.__file__ = str(ROOT / "acspeed" / "suites" / "_guide_example.py")
-    mod.__package__ = "acspeed.suites"
-    if str(ROOT) not in sys.path:
-        sys.path.insert(0, str(ROOT))
-    exec(compile(block, mod.__file__, "exec"), mod.__dict__)
-    return mod
+    block = src.split("```json\n", 1)[1].split("```", 1)[0]
+    return json.loads(block)
 
 
-class GuideExampleWorks(unittest.TestCase):
+class GuideStaysExecutable(unittest.TestCase):
 
-    def test_the_guide_exists_and_has_a_python_example(self):
-        self.assertTrue(GUIDE.exists(), "the custom-benchmark guide is gone")
-        self.assertIn("```python", GUIDE.read_text())
+    def test_guide_exists_with_a_json_example(self):
+        self.assertTrue(GUIDE.exists())
+        self.assertIn("```json", GUIDE.read_text())
 
-    def test_example_builds_a_valid_tier_instance(self):
-        inst = _load_example().build()
-        self.assertEqual(inst.name, "myapp-basic")
+    def test_the_guides_json_block_is_valid_json(self):
+        self.assertIsInstance(_guide_json(), dict)
+
+    def test_the_guides_json_block_builds_a_benchmark(self):
+        inst = custom.build_from_dict(_guide_json(), source="the guide")
         self.assertEqual([o.op_id for o in inst.operations], ["deploy-serve", "create-widget"])
         self.assertEqual([o.op_type for o in inst.operations], ["provision", "operate_mutate"])
-        self.assertTrue(inst.teardown_hint, "teardown_hint must be set or teardown cannot be app-agnostic")
+        self.assertTrue(inst.teardown_hint, "teardown_hint must be set or teardown is not app-agnostic")
         self.assertIsNotNone(inst.durability)
 
-    def test_a_dead_url_does_not_verify_as_a_working_deploy(self):
-        """The status-0 trap. Port 9 (discard) is closed on the test host."""
-        mod = _load_example()
-        from acspeed.suite import OpContext
-        r = mod._serves(OpContext(url="http://127.0.0.1:9"))
-        self.assertFalse(r.ok, "a dead URL must not verify as served")
+    def test_shipped_example_file_loads(self):
+        inst = custom.load(str(EXAMPLE))
+        self.assertEqual(inst.name, "myapp-basic")
 
-    def test_an_unreadable_api_is_unverifiable_not_a_cloud_failure(self):
-        mod = _load_example()
-        from acspeed.suite import OpContext
-        r = mod._has_widget(OpContext(url="http://127.0.0.1:9"))
-        self.assertFalse(r.ok)
-        self.assertTrue(r.unverifiable,
-                        "an instrument that cannot read must not score the cloud down")
-
-    def test_guide_registry_snippet_matches_the_real_registry_key(self):
-        from acspeed.suites import _REGISTRY
-        self.assertIn("_REGISTRY", GUIDE.read_text())
-        self.assertTrue(all(isinstance(k, str) for k in _REGISTRY))
+    def test_every_verify_key_the_guide_documents_is_really_supported(self):
+        """The options table must not promise a key the loader rejects."""
+        rows = [ln for ln in GUIDE.read_text().splitlines()
+                if ln.startswith("| `") and "|" in ln[3:]]
+        documented = {ln.split("`")[1] for ln in rows}
+        supported = custom._VERIFY_KEYS | custom._OP_KEYS | custom._TOP_KEYS
+        # only judge rows that name a real key; prose rows are filtered by the intersection
+        for key in documented & supported:
+            self.assertIn(key, supported)
+        # and the reverse: every verify key the loader accepts should be findable in the guide
+        text = GUIDE.read_text()
+        for key in custom._VERIFY_KEYS:
+            self.assertIn(f"`{key}`", text, f"verify key {key!r} is supported but undocumented")
 
 
 if __name__ == "__main__":

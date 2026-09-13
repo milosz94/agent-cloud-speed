@@ -1,0 +1,36 @@
+{
+  "name": "myapp-basic",
+  "tier": "custom",
+  "teardown_hint": "the app and its database",
+
+  "operations": [
+    {
+      "op_id": "deploy-serve",
+      "op_type": "provision",
+      "task": "Deploy the application in this directory so it serves publicly over HTTPS.",
+      "verify": {
+        "path": "/",
+        "status_below": 500,
+        "body_contains": "my-app"
+      }
+    },
+    {
+      "op_id": "create-widget",
+      "op_type": "operate_mutate",
+      "task": "In the running application, create a widget named acs-widget-01.",
+      "depends_on": ["deploy-serve"],
+      "max_attempts": 2,
+      "verify": {
+        "path": "/api/widgets",
+        "status": 200,
+        "json_contains": {"name": "acs-widget-01"}
+      }
+    }
+  ],
+
+  "durability": {
+    "task": "Restart the application's services.",
+    "max_iters": 4,
+    "liveness": {"path": "/", "status_below": 500, "body_contains": "my-app"}
+  }
+}
