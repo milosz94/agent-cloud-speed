@@ -2,7 +2,7 @@
 
 Measured 2026-09-07 on aws-medium-a: priced Fargate vCPU parts equalled task definitions registered,
 exactly (7, 4, 4, 2), against 1, 0, 0 and 0 standalone tasks. run08 was charged $192.08/mo of vCPU for
-one running task. See results/DATA-DEFECTS.md item 12.
+one running task.
 """
 import unittest
 

@@ -95,7 +95,7 @@ a `$` sign.
 cycles, and NOT deprovision. Same rule as the easy tier's: the task being measured, teardown out. Before
 this the column held five different compositions across the eight medium cells (medium-a omitted the
 deploy round, medium-b omitted every operation), so the A-vs-B regime comparison on that axis was not
-measuring one quantity; see `DATA-DEFECTS.md` item 14. The parts are disjoint windows of one session, so
+measuring one quantity. The parts are disjoint windows of one session, so
 they sum without double counting; re-verify that before adding a new part.
 
 **One composition, same on every cloud (decided 2026-09-04):** `platform`/`agent` are the current tool's

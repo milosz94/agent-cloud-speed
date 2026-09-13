@@ -23,7 +23,7 @@ from build_tables import run_cost
 CELLS = [(c, sfx, key) for c in ("aws", "gcp", "azure", "redu")
          for key, sfx in (("easy", ""), ("medium-a", "-medium-a"), ("medium-b", "-medium-b"))]
 
-# `total` rounding differs by cloud and each cell is internally consistent (DATA-DEFECTS 15): the
+# `total` rounding differs by cloud and each cell is internally consistent: the
 # public clouds sum the ROUNDED columns, redu rounds the SUM. Both are accepted, neither is assumed.
 TOTAL_CONVENTIONS = ("sum-of-rounded", "round-of-sum")
 
@@ -59,7 +59,7 @@ def expected_medium(rec: dict) -> dict:
     te = crr.get("traffic_estimate") or {}
     sc = tr.get("score") or {}
     # agent $ = the task being measured: deploy round + operations + durability. Teardown is harness
-    # bookkeeping and stays out (PLAYBOOK, DATA-DEFECTS 14). Parts are disjoint windows of one session.
+    # bookkeeping and stays out (see PLAYBOOK). Parts are disjoint windows of one session.
     agent = (sum((r.get("cost") or 0.0) for r in rec.get("rounds") or [])
              + sum((o.get("agent_cost_usd") or 0.0) for o in ops if o["op_id"] != "deploy-serve")
              + sum((c.get("agent_cost_usd") or 0.0) for c in cyc))

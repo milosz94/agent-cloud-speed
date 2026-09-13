@@ -21,6 +21,7 @@ mount /dev/vdb "$JOB" 2>/dev/null || mount -o ro /dev/vdb "$JOB" 2>/dev/null || 
 if [ ! -f "$JOB/prompt.txt" ]; then
   log "SMOKE: no job drive; toolchain check"
   log "claude=$(claude --version 2>&1 | head -1)"
+  log "codex=$(codex --version 2>&1 | head -1)"
   log "node=$(node --version 2>&1)"
   log "uvx=$(uvx --version 2>&1)"
   log "SMOKE OK; powering off"
@@ -35,8 +36,10 @@ if [ -f "$JOB/resolv.conf" ]; then cp "$JOB/resolv.conf" /etc/resolv.conf; fi
 # SCOPED agent config into the agent user's HOME: ONLY the target cloud's creds + the agent's own
 # subscription auth. This credential scoping is the substrate isolation (C9).
 AG=/home/agent
-mkdir -p "$AG/.claude" "$AG/.aws" "$AG/.config/gcloud" "$AG/.azure" "$AG/app"
+mkdir -p "$AG/.claude" "$AG/.codex" "$AG/.aws" "$AG/.config/gcloud" "$AG/.azure" "$AG/app"
 if [ -d "$JOB/dot-claude" ]; then cp -a "$JOB/dot-claude/." "$AG/.claude/"; fi
+# codex: auth.json + a config.toml holding ONLY this run's MCP servers (the host stages both)
+if [ -d "$JOB/dot-codex" ];  then cp -a "$JOB/dot-codex/."  "$AG/.codex/";  fi
 if [ -d "$JOB/dot-aws" ];    then cp -a "$JOB/dot-aws/."    "$AG/.aws/";    fi
 # generalized per-cloud creds (only the target cloud's dir is staged, so scoping/C9 holds):
 # gcp -> ~/.config/gcloud (Application Default Credentials); azure -> ~/.azure (DefaultAzureCredential).
@@ -50,16 +53,37 @@ PROMPT="$(cat "$JOB/prompt.txt" 2>/dev/null)"
 MODEL="$(cat "$JOB/model.txt" 2>/dev/null)"
 MCP="$JOB/mcp.json"
 MAXTURNS="$(cat "$JOB/max_turns.txt" 2>/dev/null || echo 200)"
+AGENT="$(cat "$JOB/agent.txt" 2>/dev/null || echo claude)"
+RESUME="$(cat "$JOB/resume.txt" 2>/dev/null)"
 
 OUT="$JOB/out.json"
-log "running agent as user 'agent' (model=$MODEL, cwd=$AG/app)"
-ARGS=( -p "$PROMPT" --output-format json --max-turns "$MAXTURNS"
-       --permission-mode bypassPermissions )
-[ -s "$MCP" ] && ARGS+=( --mcp-config "$MCP" --strict-mcp-config )
-[ -n "$MODEL" ] && ARGS+=( --model "$MODEL" )
-[ -f "$JOB/system.txt" ] && ARGS+=( --append-system-prompt "$(cat "$JOB/system.txt")" )
-RESUME="$(cat "$JOB/resume.txt" 2>/dev/null)"
-[ -n "$RESUME" ] && ARGS+=( --resume "$RESUME" )
+log "running agent '$AGENT' as user 'agent' (model=$MODEL, cwd=$AG/app)"
+
+# Each CLI takes a different invocation and writes its transcript somewhere different. Everything
+# below this point branches on $AGENT and nothing else; the measurement is identical either way,
+# because acspeed normalizes both transcript formats before any split is computed.
+if [ "$AGENT" = "codex" ]; then
+  BIN=codex
+  # codex has no --mcp-config: its servers come from ~/.codex/config.toml, staged by the host.
+  ARGS=( exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox )
+  [ -n "$MODEL" ] && ARGS+=( -m "$MODEL" )
+  [ -n "$RESUME" ] && ARGS+=( resume "$RESUME" )
+  # codex has no append-system flag, so the system text is prepended to the prompt instead
+  if [ -f "$JOB/system.txt" ]; then PROMPT="$(cat "$JOB/system.txt")
+
+$PROMPT"; fi
+  ARGS+=( "$PROMPT" )
+  TRANSCRIPT_GLOB="$AG/.codex/sessions"
+else
+  BIN=claude
+  ARGS=( -p "$PROMPT" --output-format json --max-turns "$MAXTURNS"
+         --permission-mode bypassPermissions )
+  [ -s "$MCP" ] && ARGS+=( --mcp-config "$MCP" --strict-mcp-config )
+  [ -n "$MODEL" ] && ARGS+=( --model "$MODEL" )
+  [ -f "$JOB/system.txt" ] && ARGS+=( --append-system-prompt "$(cat "$JOB/system.txt")" )
+  [ -n "$RESUME" ] && ARGS+=( --resume "$RESUME" )
+  TRANSCRIPT_GLOB="$AG/.claude/projects"
+fi
 
 mount -o remount,rw "$JOB" 2>/dev/null || true
 
@@ -68,7 +92,7 @@ mount -o remount,rw "$JOB" 2>/dev/null || true
 # transcript here and echo any URL it produces to the serial console; the host reads the console live
 # and polls the URL itself. URL discovered in-VM, URL polled from the host.
 ( while :; do
-    for f in "$AG"/.claude/projects/*/*.jsonl; do
+    for f in $(find "$TRANSCRIPT_GLOB" -name '*.jsonl' 2>/dev/null); do
       [ -f "$f" ] && grep -hoE 'https?://[a-zA-Z0-9._~:/?#@%+-]+' "$f" 2>/dev/null
     done | sort -u | sed 's/^/ACSPEED_URL /'
     sleep 3
@@ -76,14 +100,19 @@ mount -o remount,rw "$JOB" 2>/dev/null || true
 RELAY_PID=$!
 
 # run the agent as 'agent' with a scoped HOME/config; runuser avoids PAM password prompts
-runuser -u agent -- env HOME="$AG" CLAUDE_CONFIG_DIR="$AG/.claude" PATH="/usr/local/bin:/usr/bin:/bin" \
-  bash -c 'cd "$0/app" && claude "$@"' "$AG" "${ARGS[@]}" > "$OUT" 2>"$JOB/err.txt"
+runuser -u agent -- env HOME="$AG" CLAUDE_CONFIG_DIR="$AG/.claude" CODEX_HOME="$AG/.codex" \
+  PATH="/usr/local/bin:/usr/bin:/bin" \
+  bash -c 'cd "$1/app" && exec "$2" "${@:3}"' _ "$AG" "$BIN" "${ARGS[@]}" > "$OUT" 2>"$JOB/err.txt"
 echo "$?" > "$JOB/exit_code"
 kill "$RELAY_PID" 2>/dev/null || true
 
 # hand the transcript back: copy the whole projects tree the agent just wrote
 if [ -d "$AG/.claude/projects" ]; then
   tar -cf "$JOB/transcripts.tar" -C "$AG/.claude" projects 2>/dev/null || true
+fi
+# codex writes rollout-*.jsonl under ~/.codex/sessions/YYYY/MM/DD/; hand back the same way
+if [ -d "$AG/.codex/sessions" ]; then
+  tar -cf "$JOB/codex_sessions.tar" -C "$AG/.codex" sessions 2>/dev/null || true
 fi
 # recover the deploy's SSH key(s): the deploy may mint a per-app keypair (redu-<app>-deploy) whose PRIVATE
 # key lives only in this microVM, so the HOST needs it to reach the deploy VM off-clock for capability C.

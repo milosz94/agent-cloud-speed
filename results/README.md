@@ -7,7 +7,7 @@ externally. App: umami. Model: `claude-opus-5`. How runs land here: `PLAYBOOK.md
 
 One folder per cloud, one subfolder per **cell**. A cell is one cloud x tier x regime cut, and it is the
 unit that carries its own README, its own `sessions/` bundle, and its own n. Processing a run into a cell:
-`PLAYBOOK.md`. Known defects in the published numbers: `DATA-DEFECTS.md`.
+`PLAYBOOK.md`.
 
 **Easy tier** is the deploy alone: the app and its database provision and serve a public URL.
 
@@ -26,7 +26,7 @@ serial sum, disclosed does not, which is what makes the A-vs-B comparison honest
 ### [aws/](aws/)
 
 - [aws-easy](aws/aws-easy/) - n=10
-- [aws-medium-a](aws/aws-medium-a/) - n=10 fair (3 attempts excluded, unpriced standing EC2; see DATA-DEFECTS)
+- [aws-medium-a](aws/aws-medium-a/) - n=10 fair (3 attempts excluded, unpriced standing EC2)
 - [aws-medium-b](aws/aws-medium-b/) - n=12
 
 This benchmark names the clouds it measures. `../BENCHMARK-TERMS.md` records what each provider's own
@@ -59,7 +59,7 @@ control. GCP, Azure and redu are untouched.
 Each easy table is `run | t1 (s) | platform (s) | agent (s) | steps | tokens | agent $ | fixed $/mo |
 $/mo @ 10k / 500k / 10M req` (same columns on every cloud; a usage-metered front with no standing
 rate shows `-` for `fixed $/mo`). A standing VM cost stays flat at any traffic; a usage-metered serverless front rises
-with it. The cost line-item audit is in `COST-COVERAGE-AUDIT.md`; every transcript is credential- and
+with it. Every transcript is credential- and
 infrastructure-redacted (`acspeed sessions`, residue 0).
 
 ## Two instrument corrections applied 2026-09-04

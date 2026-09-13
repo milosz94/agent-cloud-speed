@@ -171,16 +171,71 @@ def sync_claude_login_from_vm(rootfs_img: str) -> bool:
             pass
 
 
+def _toml_str(s: str) -> str:
+    """A TOML basic string. Codex config is TOML, not JSON, so every value we carry across has to be
+    escaped for TOML rather than reused from the JSON verbatim."""
+    out = s.replace("\\", "\\\\").replace('"', '\\"')
+    out = out.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+    return '"' + out + '"'
+
+
+def mcp_json_to_codex_toml(mcp_config: str) -> str:
+    """Translate a Claude-style mcp.json into the [mcp_servers.*] TOML codex reads.
+
+    Claude takes --mcp-config on the command line; codex has no such flag and loads MCP servers from
+    ~/.codex/config.toml. Without this the codex path would run with no cloud tools at all, which is
+    the silent version of not supporting codex. Handles both transports the adapters use: a spawned
+    command (aws/gcp/azure) and a hosted HTTP endpoint (redu).
+    """
+    with open(mcp_config) as fh:
+        servers = (json.load(fh) or {}).get("mcpServers") or {}
+    lines = []
+    for name, spec in servers.items():
+        lines.append(f"[mcp_servers.{name}]")
+        if spec.get("url"):                       # http transport (redu)
+            lines.append(f"url = {_toml_str(spec['url'])}")
+        if spec.get("command"):
+            lines.append(f"command = {_toml_str(spec['command'])}")
+        if spec.get("args"):
+            inner = ", ".join(_toml_str(a) for a in spec["args"])
+            lines.append(f"args = [{inner}]")
+        env = spec.get("env") or {}
+        if env:
+            inner = ", ".join(f"{k} = {_toml_str(str(v))}" for k, v in env.items())
+            lines.append(f"env = {{ {inner} }}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def scoped_codex_dir(dst: str, mcp_config: str | None) -> None:
+    """Stage ~/.codex for the guest: the agent's own auth plus ONLY this run's MCP servers.
+
+    The host's ~/.codex also holds history, memories, goal and log databases, caches and every MCP
+    server the user has ever configured. None of that may enter the microVM: it is the user's data,
+    and a second cloud's MCP server in there would break the per-cloud scoping the substrate exists
+    to provide. So this copies auth.json and writes a fresh config.toml, and nothing else.
+    """
+    os.makedirs(dst, exist_ok=True)
+    src_auth = os.path.expanduser("~/.codex/auth.json")
+    if os.path.exists(src_auth):
+        shutil.copy(src_auth, os.path.join(dst, "auth.json"))
+    toml = mcp_json_to_codex_toml(mcp_config) if (mcp_config and os.path.exists(mcp_config)) else ""
+    with open(os.path.join(dst, "config.toml"), "w") as fh:
+        fh.write(toml)
+
+
 def build_job_drive(job_ext4: str, *, prompt: str, model: str | None, mcp_config: str | None,
                     app_dir: str, claude_dir: str, aws_dir: str | None, max_turns: int,
                     system: str | None = None, resume_sid: str | None = None,
-                    creds_mounts: dict | None = None) -> None:
+                    creds_mounts: dict | None = None, agent: str = "claude",
+                    codex_dir: str | None = None) -> None:
     """Assemble the per-run job drive: task + scoped creds + MCP config + the app, as an ext4."""
     with tempfile.TemporaryDirectory() as staging:
         def _w(name, val):
             with open(os.path.join(staging, name), "w") as fh:
                 fh.write(val)
         _w("prompt.txt", prompt)
+        _w("agent.txt", agent)          # vm-runner reads this to pick the CLI it launches
         _w("model.txt", model or "")
         _w("max_turns.txt", str(max_turns))
         _w("resolv.conf", f"nameserver {DNS}\n")
@@ -191,6 +246,8 @@ def build_job_drive(job_ext4: str, *, prompt: str, model: str | None, mcp_config
         if mcp_config and os.path.exists(mcp_config):
             shutil.copy(mcp_config, os.path.join(staging, "mcp.json"))
         shutil.copytree(claude_dir, os.path.join(staging, "dot-claude"))
+        if codex_dir and os.path.isdir(codex_dir):
+            shutil.copytree(codex_dir, os.path.join(staging, "dot-codex"))
         if aws_dir and os.path.isdir(aws_dir):
             shutil.copytree(aws_dir, os.path.join(staging, "dot-aws"))
         # generalized creds mounts (gcp: dot-config-gcloud -> ~/.config/gcloud; azure: dot-azure -> ~/.azure).
@@ -207,6 +264,7 @@ def build_job_drive(job_ext4: str, *, prompt: str, model: str | None, mcp_config
 
 def run_vm_job(*, prompt: str, model: str | None, mcp_config: str | None, app_dir: str,
                keep_claude_tokens: list[str], aws_dir: str | None, creds_mounts: dict | None = None,
+               agent: str = "claude",
                max_turns: int, timeout: int,
                vcpus: int = 2, mem_mib: int = 4096, work_dir: str | None = None,
                boot_log: str | None = None, system: str | None = None,
@@ -225,9 +283,14 @@ def run_vm_job(*, prompt: str, model: str | None, mcp_config: str | None, app_di
     cfg = os.path.join(work, "vm.json")
     boot_log = boot_log or os.path.join(work, "boot.log")
     claude_dir = os.path.join(work, "dot-claude")
+    codex_dir = os.path.join(work, "dot-codex") if agent == "codex" else None
 
     shutil.copy(BASE_ROOTFS, rootfs)                       # fresh, writable rootfs per run
     scoped_claude_dir(claude_dir, keep_claude_tokens)      # only target cloud's token + subscription
+    if codex_dir:
+        # codex authenticates from ~/.codex/auth.json and reads its MCP servers from config.toml,
+        # so its scoped home is built the same way claude's is, from different files.
+        scoped_codex_dir(codex_dir, mcp_config)
     if resume_transcript and resume_sid and os.path.exists(resume_transcript):
         # inject the prior session so --resume finds it inside the VM (slug = the in-VM app cwd)
         pdir = os.path.join(claude_dir, "projects", "-home-agent-app")
@@ -235,7 +298,8 @@ def run_vm_job(*, prompt: str, model: str | None, mcp_config: str | None, app_di
         shutil.copy(resume_transcript, os.path.join(pdir, f"{resume_sid}.jsonl"))
     build_job_drive(job, prompt=prompt, model=model, mcp_config=mcp_config, app_dir=app_dir,
                     claude_dir=claude_dir, aws_dir=aws_dir, max_turns=max_turns,
-                    system=system, resume_sid=resume_sid, creds_mounts=creds_mounts)
+                    system=system, resume_sid=resume_sid, creds_mounts=creds_mounts,
+                    agent=agent, codex_dir=codex_dir)
 
     net, slot_fd = _claim_slot()    # a free tap slot for this VM's lifetime (concurrent-run safe)
     try:

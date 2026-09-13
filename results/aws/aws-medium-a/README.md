@@ -15,7 +15,7 @@
 
 Run numbers are the table's own 1 to 10; each row's session file is its durable identifier. Three
 attempts from these batches are not published: their standing EC2 was unpriced, so they could not enter
-the cost axis (`DATA-DEFECTS.md`).
+the cost axis.
 
 Every cost figure in this cell was re-priced on 2026-09-07 from the settled CloudTrail log, so all ten
 rows now come from one mechanism (see `../../REPRICE-2026-09-07.md`). Row 9's missing database, open

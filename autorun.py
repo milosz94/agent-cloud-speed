@@ -380,7 +380,7 @@ def _claude(prompt: str, *, cwd: str, mcp: str, model: str | None, resume: str |
         return _claude_vm(prompt, app_dir=cwd, mcp=mcp, model=model, resume=resume, max_turns=max_turns,
                           timeout=timeout, system=system, sandbox=sandbox, boot_log=boot_log,
                           resume_transcript=resume_transcript)
-    cmd = build_agent_cmd(AGENT, prompt, mcp=mcp, model=model, resume=resume,
+    cmd = build_agent_cmd(AGENT_CLI, prompt, mcp=mcp, model=model, resume=resume,
                           max_turns=max_turns, system=system)
     # spawn in its OWN session (process-group leader) with stdin detached, so Ctrl-C reaches the host
     # and the signal handler can group-kill claude AND its MCP-server grandchildren (procguard).
@@ -398,7 +398,7 @@ def _claude(prompt: str, *, cwd: str, mcp: str, model: str | None, resume: str |
     finally:
         procguard.untrack(proc.pid)
     out = (out_s or "").strip()
-    return parse_agent_result(AGENT, out, err_s)
+    return parse_agent_result(AGENT_CLI, out, err_s)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -407,7 +407,11 @@ def _claude(prompt: str, *, cwd: str, mcp: str, model: str | None, resume: str |
 # headlessly and HOW to read its result. Both live here, one entry per agent, so adding a third agent
 # is a dict entry plus a transcript mapping, not a fork of the runner.
 # --------------------------------------------------------------------------------------------------
-AGENT = os.environ.get("ACSPEED_AGENT", "claude")
+# NOTE: this is the agent CLI NAME ("claude"/"codex"). It must never be called AGENT: that name is
+# already imported from acspeed.types as the OWNER LABEL ("agent") used to index the owner split.
+# Shadowing it made owners.get(AGENT) look up "claude", so critical_agent_s came back 0.0 on every
+# run while every check stayed green.
+AGENT_CLI = os.environ.get("ACSPEED_AGENT", "claude")
 AGENT_CHOICES = ("claude", "codex")
 
 
@@ -505,6 +509,7 @@ def _claude_vm(prompt: str, *, app_dir: str, mcp: str | None, model: str | None,
     last: dict = {"is_error": True, "session_id": None, "result": "microVM never produced a result"}
     for attempt in range(1, VM_BOOT_RETRIES + 2):
         res = vmjob.run_vm_job(
+            agent=AGENT_CLI,
             prompt=prompt, model=model, mcp_config=(mcp or None), app_dir=app_dir,
             keep_claude_tokens=sandbox["keep_claude_tokens"], aws_dir=sandbox.get("aws_dir"),
             creds_mounts=sandbox.get("creds_mounts"),
@@ -2382,7 +2387,7 @@ def main() -> None:
                     help="off-clock (DEFAULT ON; --no-cost to skip): price the deployment's standing hourly "
                          "RUN-RATE (C19) from dated PUBLIC LIST prices, the Part-4 cost input (redu + aws "
                          "Lightsail; disclosed N/A for an unsupported service; never affects timing)")
-    ap.add_argument("--agent", default=AGENT, choices=AGENT_CHOICES,
+    ap.add_argument("--agent", default=AGENT_CLI, choices=AGENT_CHOICES,
                     help="which agent CLI drives the run (default: claude, or $ACSPEED_AGENT). The "
                          "measurement is identical either way: acspeed normalizes both transcript "
                          "formats onto one row shape before any split is computed.")
@@ -2551,7 +2556,7 @@ def main() -> None:
     # Claude-login preflight: the microVM (and the host-side teardown) run `claude` under the host's
     # subscription login. A dead/expired token makes EVERY turn fail 'OAuth session expired' -> no URL and
     # a possible un-torn-down orphan. Fail fast here (the 2026-08-31 4-cloud wipeout), before any spend.
-    globals()["AGENT"] = a.agent
+    globals()["AGENT_CLI"] = a.agent
     claude_ok, claude_why = preflight_agent_auth(a.agent)
     if not claude_ok:
         _log(f"PREFLIGHT FAILED: {claude_why}")

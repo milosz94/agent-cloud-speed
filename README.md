@@ -80,7 +80,6 @@ operations and teardown.
 | [`results/`](results/) | the published runs, one folder per cloud and cell |
 | [`results/README.md`](results/README.md) | what a cell is, how to read the tables |
 | [`results/PLAYBOOK.md`](results/PLAYBOOK.md) | how a run becomes a published row |
-| [`results/DATA-DEFECTS.md`](results/DATA-DEFECTS.md) | known defects and exclusions |
 
 Every published number traces back to a redacted transcript in the same folder.
 

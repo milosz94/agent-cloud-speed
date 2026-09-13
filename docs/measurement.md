@@ -93,9 +93,8 @@ idle being on-path time inside the operation's window that neither owner holds.
   version (AWS and Azure request `@latest`, the GCP entry names none), and no run record stores the
   model build, the harness version, or the versions that resolved at run time. Each run used whatever
   was current on its own date.
-- **Known defects in the published cost numbers** are enumerated in
-  [`results/DATA-DEFECTS.md`](../results/DATA-DEFECTS.md), and the per-run records the tables are
-  derived from are not part of this release; the tables and the transcripts behind them are.
+- **The per-run records** the tables are derived from are not part of this release; the tables and
+  the transcripts behind them are.
 - **Live runs require Linux with KVM**, since each agent turn executes in a fresh microVM. The
   analysis and reporting code is pure standard-library Python and has no platform requirement.
 

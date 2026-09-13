@@ -10,10 +10,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       systemd systemd-sysv \
     && rm -rf /var/lib/apt/lists/*
 
-# Node.js 22 (Claude Code runtime) + Claude Code CLI
+# Node.js 22 (agent CLI runtime) + BOTH supported agent CLIs. Both are installed unconditionally:
+# which one runs is a per-job choice (job drive's agent.txt), not an image variant, so one image
+# serves every run and the agent axis stays switchable without a rebuild.
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && npm install -g @anthropic-ai/claude-code \
+    && npm install -g @anthropic-ai/claude-code @openai/codex \
     && rm -rf /var/lib/apt/lists/*
 
 # uv / uvx (runs the AWS MCP proxy `uvx mcp-proxy-for-aws`, and any other MCP a cloud needs)
@@ -29,4 +31,6 @@ COPY vm-runner.sh /usr/local/bin/vm-runner
 RUN chmod +x /usr/local/bin/vm-runner
 
 # smoke marker so a boot test can confirm the toolchain without a job drive
-RUN claude --version > /etc/claude-version 2>&1 || true; node --version > /etc/node-version 2>&1 || true
+RUN claude --version > /etc/claude-version 2>&1 || true; \
+    codex --version  > /etc/codex-version  2>&1 || true; \
+    node --version   > /etc/node-version   2>&1 || true
