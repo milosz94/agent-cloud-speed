@@ -9,8 +9,8 @@ abstract: >-
   runs across AWS, GCP and Azure with the redacted agent transcript behind every reported number.
 type: software
 authors:
-  - family-names: "Zivanovic"
-    given-names: "Milos"
+  - family-names: "Živanović"
+    given-names: "Miloš"
 license: MIT
 repository-code: "https://github.com/milosz94/agent-cloud-speed"
 keywords:
