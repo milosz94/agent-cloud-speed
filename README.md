@@ -72,6 +72,23 @@ The app folder is created for you on first run. Compare your `tables.txt` agains
 
 ## Results
 
+One cell, to show what comes out. Medium A: deploy umami with a managed database, then register a
+user, deploy a second site, wire analytics between them, and survive a restart. Same app, same
+agent, same task on each cloud, n=10 per cloud.
+
+| cloud | wall-clock (s) | 95% CI | cloud was busy | agent was busy | neither |
+|---|--:|---|--:|--:|--:|
+| GCP | **1,793** | [1,335, 2,439] | 944 | 697 | 151 |
+| Azure | 2,578 | [2,180, 2,946] | 1,904 | 673 | 1 |
+| AWS | 4,124 | [3,324, 5,071] | 2,578 | 1,314 | 232 |
+
+The split is why this is worth measuring. AWS is slowest here, and not for one reason: its platform
+time is the largest *and* its agent spent 1,314 s against Azure's 673 s on the same task. Azure is
+74% platform, so a faster agent would barely move its total; GCP is 53%, where the agent is worth
+attacking. Those are different problems, and a single number does not tell you which one you have.
+
+Full tables, per-run rows and the transcript behind every row:
+
 | where | what |
 |---|---|
 | `./acspeed-results/<adapter>/` | your own runs |
