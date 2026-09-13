@@ -25,6 +25,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -33,7 +34,53 @@ BIN_FC = os.path.join(HERE, "bin", "firecracker")
 KERNEL = os.path.join(HERE, "images", "vmlinux")
 BASE_ROOTFS = os.path.join(HERE, "images", "rootfs.ext4")
 
-import sys
+# ---------------------------------------------------------------------------------------------
+# The second VMM: QEMU, so a live run is not Linux-only.
+#
+# Firecracker is Linux+KVM only and its maintainers decline macOS and Windows hosts, so it can
+# never be the whole story. QEMU runs on all three and takes the host's OWN hypervisor as an
+# accelerator: KVM on Linux, Hypervisor.framework on macOS, WHPX on Windows. Because the guest is
+# then a FIRST-level VM, none of this needs nested virtualization, which is what made the obvious
+# "run Firecracker inside a Linux VM" answer bad: that does need nesting, and Apple only offers it
+# on M3 and later.
+#
+# The guest is UNCHANGED: same rootfs, same vm-runner, same job drive, same artifacts. Only the
+# kernel differs, and it has to. The Firecracker CI kernel is built for Firecracker's device model:
+# it carries virtio-MMIO and has ZERO virtio-PCI symbols, and booting it under QEMU panics in
+# console_init before reaching init. So the QEMU path brings its own distro kernel + initrd, which
+# build-images.sh extracts from the same rootfs image.
+QEMU_KERNEL = os.path.join(HERE, "images", "vmlinuz")
+QEMU_INITRD = os.path.join(HERE, "images", "initrd.img")
+
+_QEMU_BIN = {"x86_64": "qemu-system-x86_64", "amd64": "qemu-system-x86_64",
+             "aarch64": "qemu-system-aarch64", "arm64": "qemu-system-aarch64"}
+# The host hypervisor each OS exposes. This is the whole portability story in one dict.
+_QEMU_ACCEL = {"linux": "kvm", "darwin": "hvf", "win32": "whpx"}
+
+
+def qemu_binary() -> str:
+    import platform as _pl
+    return _QEMU_BIN.get(_pl.machine().lower(), "qemu-system-x86_64")
+
+
+def qemu_accel() -> str:
+    return os.environ.get("ACSPEED_QEMU_ACCEL") or _QEMU_ACCEL.get(sys.platform, "tcg")
+
+
+def default_vmm() -> str:
+    """Which VMM this host should use unless told otherwise.
+
+    Firecracker stays the default wherever it is usable: it produced every published run, and it is
+    the lighter of the two. QEMU is the answer everywhere else.
+    """
+    forced = os.environ.get("ACSPEED_VMM")
+    if forced:
+        return forced
+    if sys.platform.startswith("linux") and os.path.exists(BIN_FC) and os.path.exists(KERNEL):
+        return "firecracker"
+    return "qemu"
+
+
 if os.path.dirname(HERE) not in sys.path:   # repo root (acspeed package), for standalone runs
     sys.path.insert(0, os.path.dirname(HERE))
 from acspeed import procguard   # process-group guard: clean Ctrl-C (kill the VM, do not eat the signal)
@@ -262,6 +309,121 @@ def build_job_drive(job_ext4: str, *, prompt: str, model: str | None, mcp_config
         _mkext4(staging, job_ext4, blocks)
 
 
+def describe_substrate() -> dict:
+    """What actually executed this turn, recorded on every run.
+
+    Two backends means two network paths, two kernels and two boot costs, and none of that is
+    visible in a timing number. Without this field a QEMU run on a laptop and a Firecracker run on
+    a workstation pool into one cell and the difference is invisible. Cheap to record, impossible
+    to reconstruct later.
+    """
+    import platform as _pl
+    vmm = default_vmm()
+    d = {
+        "vmm": vmm,
+        "os": sys.platform,
+        "arch": _pl.machine(),
+        "accel": qemu_accel() if vmm == "qemu" else "kvm",
+        "network": "user-slirp" if vmm == "qemu" else "tap",
+    }
+    try:
+        if vmm == "qemu":
+            r = subprocess.run([qemu_binary(), "--version"], capture_output=True, text=True, timeout=15)
+            d["vmm_version"] = (r.stdout or "").splitlines()[0].strip() if r.stdout else None
+        elif os.path.exists(BIN_FC):
+            r = subprocess.run([BIN_FC, "--version"], capture_output=True, text=True, timeout=15)
+            d["vmm_version"] = (r.stdout or "").splitlines()[0].strip() if r.stdout else None
+    except Exception:  # noqa: BLE001 - a disclosure field must never break a run
+        d["vmm_version"] = None
+    return d
+
+
+def _wait(proc, timeout: int) -> bool:
+    """Wait for the VMM to exit; kill its group on timeout. Returns timed_out."""
+    try:
+        proc.wait(timeout=timeout)
+        return False
+    except subprocess.TimeoutExpired:
+        procguard.kill_group(proc.pid)
+        try:
+            proc.wait(timeout=10)
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+    finally:
+        procguard.untrack(proc.pid)
+
+
+def _launch_firecracker(*, cfg: str, rootfs: str, job: str, net: dict, vcpus: int, mem_mib: int,
+                        boot_log: str, timeout: int) -> bool:
+    config = {
+        "boot-source": {"kernel_image_path": KERNEL,
+                        "boot_args": ("console=ttyS0 reboot=k panic=1 pci=off "
+                                      "i8042.noaux i8042.nomux i8042.nopnp i8042.dumbkbd "
+                                      f"{net['boot_ip']} init=/usr/local/bin/vm-runner")},
+        "drives": [
+            {"drive_id": "rootfs", "path_on_host": rootfs, "is_root_device": True, "is_read_only": False},
+            {"drive_id": "job", "path_on_host": job, "is_root_device": False, "is_read_only": False},
+        ],
+        "network-interfaces": [
+            {"iface_id": "eth0", "host_dev_name": net["tap"], "guest_mac": net["guest_mac"]},
+        ],
+        "machine-config": {"vcpu_count": vcpus, "mem_size_mib": mem_mib},
+    }
+    with open(cfg, "w") as fh:
+        json.dump(config, fh)
+    with open(boot_log, "w") as lf:
+        # stdin detached (procguard default) so Firecracker's ttyS0 console cannot swallow the
+        # user's Ctrl-C; spawned as a process-group leader so the host signal handler can kill the
+        # VM. The guest still powers off on its own at the end (vm-runner `reboot -f`).
+        proc = procguard.spawn([BIN_FC, "--no-api", "--config-file", cfg],
+                               stdout=lf, stderr=subprocess.STDOUT)
+        return _wait(proc, timeout)
+
+
+def _launch_qemu(*, rootfs: str, job: str, vcpus: int, mem_mib: int, boot_log: str,
+                 timeout: int) -> bool:
+    """Boot the same guest under QEMU, using whichever hypervisor this OS exposes.
+
+    Differences from the Firecracker path, each deliberate:
+
+    * The kernel is a distro kernel + initrd rather than the Firecracker CI kernel, because that one
+      has no virtio-PCI and panics here before reaching init.
+    * Networking is QEMU's user-mode (SLIRP) stack instead of a host tap. That removes the whole
+      tap-pool requirement, which needs root and exists only on Linux, so a macOS or Windows user
+      needs no network setup at all. It is also a DIFFERENT network path than the tap, which is why
+      the VMM is recorded on every run: a SLIRP run and a tap run are not silently comparable.
+    * ``-no-reboot`` turns the guest's existing ``reboot -f`` into a clean process exit, which is how
+      the host learns the turn is over. Same signal, different mechanism.
+    * ``-serial file:`` makes guest console bytes land in the same growing host file the readiness
+      poller already tails for the URL relay, so that machinery is untouched.
+    """
+    accel = qemu_accel()
+    cmd = [
+        qemu_binary(),
+        "-machine", f"q35,accel={accel}",
+        "-m", str(mem_mib), "-smp", str(vcpus),
+        "-kernel", QEMU_KERNEL,
+        "-append", ("console=ttyS0 root=/dev/vda rw init=/usr/local/bin/vm-runner "
+                    "panic=1 reboot=t"),
+        "-drive", f"id=root,file={rootfs},format=raw,if=none",
+        "-device", "virtio-blk-pci,drive=root",
+        "-drive", f"id=job,file={job},format=raw,if=none",
+        "-device", "virtio-blk-pci,drive=job",
+        "-netdev", "user,id=n0",
+        "-device", "virtio-net-pci,netdev=n0",
+        "-no-reboot", "-nographic", "-display", "none",
+    ]
+    if os.path.exists(QEMU_INITRD):
+        cmd[cmd.index("-kernel") + 2:cmd.index("-kernel") + 2] = ["-initrd", QEMU_INITRD]
+    # -cpu host is valid under kvm and hvf; WHPX rejects it, so ask for the widest model it accepts.
+    cmd += ["-cpu", "max" if accel == "whpx" else "host"]
+    with open(boot_log, "w") as lf:
+        proc = procguard.spawn(cmd + ["-serial", "file:" + boot_log], stdout=lf,
+                               stderr=subprocess.STDOUT)
+        return _wait(proc, timeout)
+
+
 def run_vm_job(*, prompt: str, model: str | None, mcp_config: str | None, app_dir: str,
                keep_claude_tokens: list[str], aws_dir: str | None, creds_mounts: dict | None = None,
                agent: str = "claude",
@@ -301,45 +463,19 @@ def run_vm_job(*, prompt: str, model: str | None, mcp_config: str | None, app_di
                     system=system, resume_sid=resume_sid, creds_mounts=creds_mounts,
                     agent=agent, codex_dir=codex_dir)
 
-    net, slot_fd = _claim_slot()    # a free tap slot for this VM's lifetime (concurrent-run safe)
-    try:
-        config = {
-            "boot-source": {"kernel_image_path": KERNEL,
-                            "boot_args": ("console=ttyS0 reboot=k panic=1 pci=off "
-                                          "i8042.noaux i8042.nomux i8042.nopnp i8042.dumbkbd "
-                                          f"{net['boot_ip']} init=/usr/local/bin/vm-runner")},
-            "drives": [
-                {"drive_id": "rootfs", "path_on_host": rootfs, "is_root_device": True, "is_read_only": False},
-                {"drive_id": "job", "path_on_host": job, "is_root_device": False, "is_read_only": False},
-            ],
-            "network-interfaces": [
-                {"iface_id": "eth0", "host_dev_name": net["tap"], "guest_mac": net["guest_mac"]},
-            ],
-            "machine-config": {"vcpu_count": vcpus, "mem_size_mib": mem_mib},
-        }
-        with open(cfg, "w") as fh:
-            json.dump(config, fh)
-
-        with open(boot_log, "w") as lf:
-            # stdin detached (procguard default) so Firecracker's ttyS0 console cannot swallow the
-            # user's Ctrl-C; spawned as a process-group leader so the host signal handler can kill the
-            # VM. The guest still powers off on its own at the end (vm-runner `reboot -f`).
-            proc = procguard.spawn([BIN_FC, "--no-api", "--config-file", cfg],
-                                   stdout=lf, stderr=subprocess.STDOUT)
-            try:
-                proc.wait(timeout=timeout)
-                timed_out = False
-            except subprocess.TimeoutExpired:
-                procguard.kill_group(proc.pid)
-                try:
-                    proc.wait(timeout=10)
-                except Exception:  # noqa: BLE001
-                    pass
-                timed_out = True
-            finally:
-                procguard.untrack(proc.pid)
-    finally:
-        os.close(slot_fd)   # release the slot the instant the VM exits (the readback below needs no tap)
+    vmm = default_vmm()
+    if vmm == "qemu":
+        # No tap slot: QEMU's user-mode network needs no host setup, which is what lets macOS and
+        # Windows run with nothing configured beyond QEMU itself.
+        timed_out = _launch_qemu(rootfs=rootfs, job=job, vcpus=vcpus, mem_mib=mem_mib,
+                                 boot_log=boot_log, timeout=timeout)
+    else:
+        net, slot_fd = _claim_slot()   # a free tap slot for this VM's lifetime (concurrent-run safe)
+        try:
+            timed_out = _launch_firecracker(cfg=cfg, rootfs=rootfs, job=job, net=net, vcpus=vcpus,
+                                            mem_mib=mem_mib, boot_log=boot_log, timeout=timeout)
+        finally:
+            os.close(slot_fd)  # release the slot the instant the VM exits; the readback needs no tap
 
     # read results back from the job drive (rootless)
     out = {"result": None, "exit_code": None, "transcripts_dir": None,

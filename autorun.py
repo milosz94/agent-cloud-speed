@@ -2207,6 +2207,11 @@ def run_once(i: int, prof: dict, model: str | None, max_rounds: int) -> dict:
     rec = {
         "run": i, "cloud": prof["cloud"], "task": prof["task"], "model": model,
         "measured_at": datetime.now(timezone.utc).isoformat(),
+        # WHAT EXECUTED THIS RUN. Two VMMs are supported so a live run is not Linux-only, and they
+        # differ in kernel, network path and boot cost, none of which a timing number shows. Without
+        # this field a QEMU run and a Firecracker run pool into one cell invisibly.
+        "substrate": vmjob.describe_substrate() if vmjob else None,
+        "agent_cli": AGENT_CLI,
         "outcome": outcome,                                    # first-attempt verdict (the headline)
         "first_attempt_success": first_attempt_success,        # URL served within readiness budget, no repair
         "time_to_serving_s": round(time_to_serving_s, 1) if time_to_serving_s else None,   # t1 - t0, external
