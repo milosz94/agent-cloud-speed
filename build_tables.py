@@ -61,10 +61,18 @@ def load_runs(d: str) -> list[dict]:
         except Exception as e:  # noqa: BLE001
             skipped.append((os.path.basename(p), f"unreadable: {e}"))
             continue
-        if isinstance(rec, dict) and "first_attempt_success" in rec and isinstance(rec.get("split"), dict):
-            out.append(rec)
-        else:
+        if not (isinstance(rec, dict) and "first_attempt_success" in rec
+                and isinstance(rec.get("split"), dict)):
             skipped.append((os.path.basename(p), "old/foreign schema (no acspeed split)"))
+            continue
+        # A run from an unverified platform is provisional and must not be averaged in with runs
+        # from the verified one. The table would look normal and the mixture would be invisible.
+        if (rec.get("substrate") or {}).get("experimental"):
+            skipped.append((os.path.basename(p),
+                            "EXPERIMENTAL platform ({}); not pooled".format(
+                                (rec.get("substrate") or {}).get("os", "?"))))
+            continue
+        out.append(rec)
     if skipped:
         print("[skipped] " + ", ".join(f"{n} ({why})" for n, why in skipped))
     return out

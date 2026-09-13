@@ -20,7 +20,7 @@ acspeed-run --adapter <cloud> --model claude-opus-5
 
 | | |
 |---|---|
-| OS | Linux with KVM: `ls /dev/kvm` must succeed |
+| OS | **Linux** (verified). **macOS and Windows are experimental**: the backend is there and untested, see [docs/install.md](docs/install.md#macos-and-windows-experimental) |
 | Python | 3.10+, no third-party dependencies |
 | Agent | Claude Code or Codex, installed and logged in (`--agent claude\|codex`) |
 | Node.js + uv | runs the per-cloud MCP servers (`npx`, `uvx`) |
@@ -28,8 +28,12 @@ acspeed-run --adapter <cloud> --model claude-opus-5
 | sudo | once, for the microVM installer |
 
 `bash setup.sh --check --adapter <cloud>` reports what is missing and changes nothing.
-Every agent turn runs in a fresh Firecracker microVM, which is why KVM is required.
-Full detail in [docs/install.md](docs/install.md).
+
+Every agent turn runs in a fresh microVM. On Linux that is Firecracker, which needs `/dev/kvm`.
+macOS and Windows use QEMU with the hypervisor the OS already provides (Hypervisor.framework, WHPX),
+which needs no nested virtualization. **Those two are experimental**: the QEMU backend is proven end
+to end on Linux only, so a run there prints a warning, records `experimental: true`, and is never
+pooled with verified runs. Full detail in [docs/install.md](docs/install.md).
 
 ## Usage
 

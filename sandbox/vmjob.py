@@ -344,6 +344,32 @@ def runner_is_stale() -> tuple[bool, str]:
                   "rebuild it with: bash sandbox/build-images.sh --force")
 
 
+# macOS and Windows are EXPERIMENTAL, and the word is load-bearing rather than modest. The QEMU
+# backend is exercised end to end on Linux: a real agent turn boots, reaches the cloud, answers, and
+# hands its transcript back. On macOS and Windows only the constructed command line is verified,
+# because this repo has no Mac or Windows machine to run on. That gap is not theoretical: bringing
+# the Linux QEMU path up took three end-to-end failures (no address on the guest, then the kernel's
+# ipconfig running before the NIC was probed, then a stale rootfs image), and every one of them was
+# invisible to a boot test and visible only in a real run. Expect the same class of surprise there
+# until someone completes a run and says so.
+EXPERIMENTAL_PLATFORMS = ("darwin", "win32")
+
+
+def platform_is_experimental() -> bool:
+    return sys.platform in EXPERIMENTAL_PLATFORMS
+
+
+def experimental_notice() -> str:
+    """One line for the operator, or empty on a supported platform."""
+    if not platform_is_experimental():
+        return ""
+    name = {"darwin": "macOS", "win32": "Windows"}.get(sys.platform, sys.platform)
+    return (f"EXPERIMENTAL PLATFORM: live runs on {name} are unverified. The QEMU backend is proven "
+            f"end to end on Linux only; on {name} nothing beyond the launch command has been "
+            f"exercised. Treat any number from this host as provisional, and do not pool it with "
+            f"Linux runs: the run record's substrate field carries experimental=true.")
+
+
 def describe_substrate() -> dict:
     """What actually executed this turn, recorded on every run.
 
@@ -360,6 +386,9 @@ def describe_substrate() -> dict:
         "arch": _pl.machine(),
         "accel": qemu_accel() if vmm == "qemu" else "kvm",
         "network": "user-slirp" if vmm == "qemu" else "tap",
+        # Carried in the RECORD, not just printed, so a provisional number cannot be quietly pooled
+        # with verified ones months later by someone who never saw the warning.
+        "experimental": platform_is_experimental(),
     }
     try:
         if vmm == "qemu":

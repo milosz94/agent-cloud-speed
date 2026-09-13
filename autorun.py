@@ -54,6 +54,7 @@ import hashlib
 import subprocess
 import sys
 import tempfile
+import textwrap
 import threading
 import time
 from datetime import datetime, timezone
@@ -2493,6 +2494,15 @@ def main() -> None:
         _log(f"CUSTOM: '{_ci.name}' ({len(_ci.operations)} operations: "
              f"{', '.join(o.op_id for o in _ci.operations)}"
              f"{'; durability' if _ci.durability else ''})")
+
+    # Say it before the money starts, not in a footnote afterwards.
+    if vmjob is not None:
+        _notice = vmjob.experimental_notice()
+        if _notice:
+            _log("")
+            for _ln in textwrap.wrap(_notice, 100):
+                _log("  " + _ln)
+            _log("")
 
     ensure_adapter_config(a.adapter)
 

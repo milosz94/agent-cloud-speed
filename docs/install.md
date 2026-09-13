@@ -30,7 +30,7 @@ is standard library only.
 
 ## Install
 
-### Linux (full: analysis + live benchmark)
+### Linux (verified)
 
 One command takes a clean machine to a machine that can run the benchmark:
 
@@ -57,35 +57,44 @@ python3 -c "import sys;sys.path.insert(0,'.');from autorun import sandbox_availa
 The individual steps are documented under "Setup for live runs" below if you would rather run them
 by hand.
 
-### macOS (analysis only)
+### macOS and Windows (experimental)
+
+**Status: the backend exists and has never completed a run on either OS.** Treat anything it
+produces as provisional. The same backend is proven end to end on Linux, so this is a portability
+gap rather than a design gap.
+
+Firecracker is Linux-only: it requires KVM and its maintainers decline macOS and Windows hosts
+([#767](https://github.com/firecracker-microvm/firecracker/issues/767),
+[#2845](https://github.com/firecracker-microvm/firecracker/issues/2845)). So on those two acspeed
+uses **QEMU** with whatever hypervisor the OS already ships:
+
+| host | accelerator | nested virtualization |
+|---|---|---|
+| Linux | KVM | not needed |
+| macOS | Hypervisor.framework (`hvf`) | **not needed** |
+| Windows 11 | WHPX (`whpx`) | **not needed** |
+
+Nesting is the thing that is easy to get wrong here, and it is why this works on more machines than
+expected. Nested virtualization is only required if you run Firecracker *inside* a VM. Driving the
+host's own hypervisor makes the guest a first-level VM, so it does not apply, and macOS is not
+limited to the M3 and later machines that support nesting.
 
 ```bash
-git clone https://github.com/milosz94/agent-cloud-speed.git
-cd agent-cloud-speed
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
-python -m unittest discover -s tests -t . -v
+brew install qemu            # macOS
+winget install qemu          # Windows
+ACSPEED_VMM=qemu acspeed-run --adapter <cloud> --model claude-opus-5
 ```
 
-`acspeed-run` will refuse here. For live runs, use a Linux VM with nested virtualization (UTM,
-Lima, or a cloud VM) and follow the Linux instructions inside it.
+**What a run does here.** It prints an experimental warning before spending anything, writes
+`substrate.experimental: true` into the run record, and `build_tables.py` refuses to pool it with
+verified runs rather than averaging the two together invisibly.
 
-### Windows (analysis natively; live benchmark via WSL2)
-
-Analysis, in PowerShell:
-
-```powershell
-git clone https://github.com/milosz94/agent-cloud-speed.git
-cd agent-cloud-speed
-py -3 -m venv .venv; .\.venv\Scripts\Activate.ps1
-pip install -e .
-py -m unittest discover -s tests -t . -v
-```
-
-For the live benchmark, install WSL2 with a Linux distribution, confirm `/dev/kvm` exists inside it
-(WSL2 exposes KVM on recent Windows builds with nested virtualization enabled), then follow the
-Linux instructions **inside WSL2**. Clone into the WSL filesystem, not `/mnt/c`, or the microVM and
-file copies will be slow.
+**Why the caution is specific rather than boilerplate.** Bringing the Linux QEMU path up took three
+end-to-end failures and a boot test caught none of them: the guest had no address at all; then the
+kernel's `ipconfig` ran before the virtio-PCI NIC was probed and gave up; then both fixes turned out
+not to be in the rootfs image, because `vm-runner.sh` is copied in at build time. Each was visible
+only in a real run. Expect the same class of problem on a Mac or a Windows box until someone
+completes a run there. If you do, the useful report is the boot log plus what the agent returned.
 
 ## The substrate, the clouds, and concurrency
 

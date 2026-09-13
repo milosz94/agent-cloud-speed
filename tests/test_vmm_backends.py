@@ -182,5 +182,45 @@ class QemuReallyBoots(unittest.TestCase):
         self.assertIn("SMOKE OK", log, "the runner started but did not complete its check")
 
 
+class ExperimentalPlatforms(unittest.TestCase):
+    """macOS and Windows are unverified, and that must be impossible to miss or to lose."""
+
+    def test_linux_is_not_experimental(self):
+        with mock.patch.object(vmjob.sys, "platform", "linux"):
+            self.assertFalse(vmjob.platform_is_experimental())
+            self.assertEqual(vmjob.experimental_notice(), "")
+
+    def test_mac_and_windows_are_experimental(self):
+        for plat, name in (("darwin", "macOS"), ("win32", "Windows")):
+            with mock.patch.object(vmjob.sys, "platform", plat):
+                self.assertTrue(vmjob.platform_is_experimental(), plat)
+                self.assertIn(name, vmjob.experimental_notice())
+
+    def test_the_record_carries_the_flag(self):
+        """Printed warnings are lost; the record is what someone reads months later."""
+        for plat, want in (("linux", False), ("darwin", True), ("win32", True)):
+            with mock.patch.object(vmjob.sys, "platform", plat):
+                self.assertEqual(vmjob.describe_substrate()["experimental"], want, plat)
+
+
+class ExperimentalRunsAreNotPooled(unittest.TestCase):
+
+    def test_build_tables_skips_an_experimental_record(self):
+        import json as _json
+        sys.path.insert(0, ROOT)
+        import build_tables
+        with tempfile.TemporaryDirectory() as d:
+            good = {"first_attempt_success": True, "split": {"a": 1},
+                    "substrate": {"os": "linux", "experimental": False}}
+            bad = {"first_attempt_success": True, "split": {"a": 1},
+                   "substrate": {"os": "darwin", "experimental": True}}
+            for name, rec in (("run01.json", good), ("run02.json", bad)):
+                with open(os.path.join(d, name), "w") as fh:
+                    _json.dump(rec, fh)
+            rows = build_tables.load_runs(d)
+        self.assertEqual(len(rows), 1, "an experimental run must not be averaged in with verified ones")
+        self.assertFalse(rows[0]["substrate"]["experimental"])
+
+
 if __name__ == "__main__":
     unittest.main()
