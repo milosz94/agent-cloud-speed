@@ -1,15 +1,7 @@
 # How acspeed measures
 
-The method, in detail. The [README](../README.md) is enough to run the benchmark; this page is for
-reading a result, or for deciding whether the number means what you want it to mean.
-
-- [What a run does](#what-a-run-does)
-- [What is measured](#what-is-measured)
-- [A worked example](#a-worked-example)
-- [Limits](#limits)
-- [Where the interface fits](#where-the-interface-fits)
-- [Adapters are MCP servers](#adapters-are-mcp-servers)
-- [Module to paper section](#module-to-paper-section)
+The method in detail. The [README](../README.md) is enough to run the benchmark; read this to
+interpret a result, or see the paper for the full treatment.
 
 ## What a run does
 
@@ -188,3 +180,23 @@ about the *implementation*, so nothing here reads as more finished than it is:
   STREAM, `fio` and `iperf3` on the target VM. Nothing in the published wave ran
   them, so that path has no measurement behind it. See
   [In the harness, not in the paper](#module-to-paper-section).
+
+## Sessions
+
+`sessions/` holds the raw agent deploy/measurement transcripts behind the numbers, redacted so the
+paper's self-reported claims (e.g. "none of these observations appeared in the development sessions")
+are checkable rather than taken on trust. They show what the agent did, the app it deployed and the
+timing, not any secret or how the cloud is built underneath. Regenerate the bundle with:
+
+```
+acspeed sessions --in <transcripts-dir> --out sessions      # add --keep-substrate for internal use
+```
+
+Removed: generated app secrets (passwords, API tokens, encryption keys), OAuth bearer/JWT,
+private-key and SSH-key material, connection-string passwords; and, by default, the infrastructure
+setup -- provider technology names, control-plane hostnames and internal IPs. Kept: the agent's tool
+calls, the deployed app URLs, the platform brand. Redaction touches only secret- or substrate-bearing
+string values, so timestamps, token counts and message structure are unchanged and each session still
+reconstructs the exact trace and token totals the core computes (`acspeed/transcript.py`); the bundler
+re-scans every output and fails loud on any residue. `sessions/REDACTION-MANIFEST.json` records what
+was removed per file. See `acspeed/redact.py`.

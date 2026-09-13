@@ -12,7 +12,8 @@
 
 ## The repo does
 
-- ships `config/azure.mcp.json` and copies it into place (`setup.sh`); nothing in it needs editing
+- writes `~/.acspeed/_config/azure.mcp.json` on first use (`autorun.py::ensure_adapter_config`);
+  nothing in it needs editing
 - checks `az account show` and prints the fix when it fails
   (`setup.sh --check --adapter azure`), the same check the run itself makes
 

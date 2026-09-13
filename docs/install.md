@@ -1,14 +1,14 @@
 # Install and setup
 
-acspeed runs a live benchmark against a real cloud account. There is no offline mode, so the
-machine you run it on has to be able to boot a Firecracker microVM.
-
-The short path is `bash setup.sh --adapter <cloud>`, which does everything on this page. Read this
-when something it reports is missing, or when you want to know what it changed.
+`bash setup.sh --adapter <cloud>` does everything on this page. Read it when setup reports
+something missing, or to see what it changed.
 
 ## Requirements in detail
 
-Python 3.10+ with no third-party dependencies, plus:
+**Analysis half** - Python >= 3.10 and nothing else. There are no runtime dependencies; the package
+is standard library only.
+
+**Live benchmark**, in addition:
 
 - **Linux with KVM.** `ls /dev/kvm` must succeed. On a physical machine, enable virtualization in
   the BIOS; in a cloud VM, enable nested virtualization.
@@ -57,18 +57,35 @@ python3 -c "import sys;sys.path.insert(0,'.');from autorun import sandbox_availa
 The individual steps are documented under "Setup for live runs" below if you would rather run them
 by hand.
 
-### macOS and Windows
+### macOS (analysis only)
 
-Firecracker requires Linux and KVM. Its maintainers do not support macOS or Windows hosts and have
-said so repeatedly ([#767](https://github.com/firecracker-microvm/firecracker/issues/767),
-[#2845](https://github.com/firecracker-microvm/firecracker/issues/2845)), so acspeed cannot run
-natively on either.
+```bash
+git clone https://github.com/milosz94/agent-cloud-speed.git
+cd agent-cloud-speed
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+python -m unittest discover -s tests -t . -v
+```
 
-Run it inside a Linux VM that exposes `/dev/kvm`:
+`acspeed-run` will refuse here. For live runs, use a Linux VM with nested virtualization (UTM,
+Lima, or a cloud VM) and follow the Linux instructions inside it.
 
-- **Windows:** WSL2 with nested virtualization enabled, then follow the Linux steps inside it. Clone
-  into the WSL filesystem, not `/mnt/c`, or the microVM and file copies will be slow.
-- **macOS:** a Linux VM with nested virtualization, or a Linux cloud VM you run acspeed on.
+### Windows (analysis natively; live benchmark via WSL2)
+
+Analysis, in PowerShell:
+
+```powershell
+git clone https://github.com/milosz94/agent-cloud-speed.git
+cd agent-cloud-speed
+py -3 -m venv .venv; .\.venv\Scripts\Activate.ps1
+pip install -e .
+py -m unittest discover -s tests -t . -v
+```
+
+For the live benchmark, install WSL2 with a Linux distribution, confirm `/dev/kvm` exists inside it
+(WSL2 exposes KVM on recent Windows builds with nested virtualization enabled), then follow the
+Linux instructions **inside WSL2**. Clone into the WSL filesystem, not `/mnt/c`, or the microVM and
+file copies will be slow.
 
 ## The substrate, the clouds, and concurrency
 
@@ -76,8 +93,8 @@ Run it inside a Linux VM that exposes `/dev/kvm`:
 substrate): the VM holds only the target cloud's credentials, readiness is polled from the host (a
 neutral vantage), and the transcript is byte-identical to a plain `claude -p` run. Setup is one-time.
 
-**Platform support.** Linux + KVM only (see above). The one-time installer refuses on any other OS
-and says so.
+**Platform support.** Linux + KVM only, as "What runs where" above explains. The one-time installer
+refuses on any other OS and says so.
 
 **0. Build the microVM images (once per machine).** The Firecracker binary, the kernel and the agent
 rootfs are too large for git, so the repo ships the recipe rather than the artifacts:

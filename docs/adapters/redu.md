@@ -6,8 +6,8 @@
 
 ## The repo does
 
-- ships `config/redu.mcp.json` and copies it into place (`setup.sh`); it points at the hosted MCP
-  over HTTP, so there is no CLI to install and nothing in the file to edit
+- writes `~/.acspeed/_config/redu.mcp.json` on first use (`autorun.py::ensure_adapter_config`); it
+  points at the hosted MCP over HTTP, so there is no CLI to install and nothing in the file to edit
 
 ## Known shape of this adapter
 
