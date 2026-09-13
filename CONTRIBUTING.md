@@ -41,6 +41,20 @@ Python suites are also welcome when a check needs real logic.
 A benchmark is more useful with a run behind it. Say which cloud, which agent and which model, and
 include the transcript.
 
+## Changing the benchmark itself: open an issue first
+
+**If you want to add a feature to the benchmark, open an issue before opening a PR.** Not for
+process, but because the benchmark is a measuring instrument and changing one usually changes what
+its numbers mean. A new operation, a new axis, a change to how a leg is timed or attributed: any of
+those can make new runs incomparable with the 94 already published, and that is a decision to take
+before the work rather than after it.
+
+Adding your own benchmark or your own adapter is not this. Those sit alongside what exists and do not
+move anything already measured, so a PR is fine.
+
+Say in the issue what you want to measure and why the current instrument cannot. That is usually
+enough to tell quickly whether it is a new benchmark, a new axis, or a change to the core.
+
 ## Practical notes
 
 - `python3 -m unittest discover -s tests` before opening a PR. It needs no cloud account and no
