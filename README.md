@@ -1,31 +1,50 @@
 # acspeed
 
-A reference implementation of **Parts 1, 2, 3, and 4** of a cloud-agnostic framework for
-measuring **agent-cloud operation efficiency** as a *speed* test.
+**When an AI agent deploys an app to a cloud, how long does it take, and who caused the wait:
+the cloud, or the agent?**
 
-It implements the computational core of the paper's Part 1 baseline: the
-critical-path split of wall-clock into agent versus platform time, and the
-reproducibility statistics. The harness also carries machinery the paper does
-not use and does not describe: the delivered-capability probe and its
-normalization, the control-plane versus data-plane discriminator, and the
-four-component agent-time decomposition. Those produced no measurement in the
-published wave, which is why the paper drops them; they remain here as working
-code for anyone who wants to exercise them.
-**Part 2** adds the operation model: the seven-slot schema, the three-type
-typology, the atom registers, the reused SSH-ready milestone split, and the
-session-as-trace efficiency metric. **Part 3** adds the reference-optimal: the
-operation-state graph and its floor cost-to-go, the exact decomposition of the
-excess *over the floor* (telescoping per-decision advantages and the floor-twin
-selection/execution split), and the two-ratio bracket on the true optimum.
-**Part 4** adds the weighting: aggregation by summation of critical-path seconds
-(no chosen weight), the total-time headline with its geometric-mean companion and
-drop-any-task sensitivity, and the two-input `(wall-clock, resource-cost)`
-Pareto-Koopmans cost-performance frontier that keeps capability selection honest so
-speed cannot be bought. Everything here is pure Python (standard library only), so
-you can clone and run it without installing anything.
+acspeed measures that. You point it at an app folder and a cloud account. It hands a coding
+agent the job of actually deploying that app, for real, on your account, and it times the whole
+thing with a stopwatch. Then it splits the total time into the part where the cloud was working
+and the part where the agent was working:
 
-The measurement *method* is the contribution; specific clouds are validation
-instances (Part 5), not the subject.
+```
+total wall-clock  =  time the cloud was busy  +  time the agent was busy
+```
+
+**That split is the whole point.** "This cloud deploys in four minutes" is not a number you can
+act on, because some of those minutes are the platform provisioning a machine and some are the
+agent reading docs, polling to see if the thing is up yet, or repairing its own mistake. Those
+two problems have nothing to do with each other and completely different fixes. A single total
+hides which one you are paying for. acspeed separates them, so you can point at the actual cause.
+
+**What one run gives you:** total wall-clock, the cloud's share, the agent's share, how much
+agent work was hidden underneath a cloud wait (work that was effectively free), the dollar cost
+of the resources it created, and the agent's full transcript so any of it can be audited.
+
+## Who this is for
+
+- **You build a cloud, an API, or an MCP server.** Find out whether your interface makes an agent
+  fast or slow, and show it as a measured number instead of an opinion. A blocking "wait until
+  ready" call and a status-polling loop take about the same wall-clock, but one of them spends
+  the agent and the other does not. acspeed prices that difference.
+- **You are choosing where to run agent-driven deploys.** Put the same app on AWS, GCP and Azure
+  and compare like for like, on your own accounts, with your own app.
+- **You do research on agents or on clouds.** 94 completed runs, with every agent transcript, are
+  published in [`results/`](results/), and every number in them traces back to a transcript in
+  the same folder.
+
+## The paper
+
+acspeed is the reference implementation for a paper, *A Reproducible, Cloud-Agnostic Baseline for
+Measuring Agent-Cloud Operation Efficiency*, which defines the measurement precisely and reports
+the 94-run study in `results/`. **You do not need the paper to use this tool.** Read it if you
+want to know why the split is defined the way it is, or if you want to cite the numbers.
+[What maps to what](#what-maps-to-what-paper-parts-1-4) says which module implements which part
+of it. (A link goes here when the paper is posted.)
+
+The measurement *method* is what the paper contributes; the specific clouds are validation
+instances, not the subject.
 
 ## Start here
 
@@ -75,11 +94,16 @@ is standard library only.
 
 - **Linux with KVM.** `ls /dev/kvm` must succeed. On a physical machine, enable virtualization in
   the BIOS; in a cloud VM, enable nested virtualization.
-- **The agent CLI.** `acspeed-run` shells out to `claude -p ...`, so Claude Code must be installed
-  and authenticated (`setup.sh` installs it; authentication is yours to do). Any model string you
-  pass with `--model` must be one your account can use. **Only Claude Code is supported**: the
-  runner hardcodes the `claude` invocation and parses its JSON result and session id, so Codex and
-  other agent CLIs need a code change in `autorun.py`, not a config switch.
+- **The agent CLI.** `acspeed-run` drives a real agent CLI, so one must be installed and
+  authenticated (`setup.sh` installs Claude Code; authenticating is yours to do). Any model string
+  you pass with `--model` must be one your account can use.
+  **For live runs this means Claude Code.** `--agent codex` exists and the measurement code is
+  agent-agnostic (acspeed normalizes Claude Code and Codex transcripts onto one row shape before
+  any split is computed, `tests/test_codex_transcript.py`), but the microVM the agent runs inside
+  installs only `@anthropic-ai/claude-code` (`sandbox/rootfs/Containerfile`) and only forwards
+  `~/.claude` credentials (`sandbox/vmjob.py`), so a live `--agent codex` run will reach the VM and
+  find no Codex there. Reading and analyzing an existing Codex transcript works today; driving a
+  live run with Codex needs those two files extended first.
 - **Node.js** (for `npx`) and **uv** (for `uvx`), which is how the per-cloud MCP servers are
   launched: `mcp-proxy-for-aws` via `uvx`, `@google-cloud/cloud-run-mcp` and `@azure/mcp` via `npx`.
 - **The vendor CLI for each cloud you target**: `aws`, `gcloud`, or `az`, authenticated. The agent
@@ -427,19 +451,32 @@ operations and teardown.
 
 ## What maps to what (paper Parts 1-4)
 
+Each module implements a named piece of the paper. Section numbers are the paper's own.
+
 | Module | Paper section | Implements |
 |---|---|---|
-| `acspeed/criticalpath.py` | Section 2 (the spine) | Build the dependency DAG, longest path = wall-clock, slack, and the **owner split**: `wall-clock = critical-platform + critical-agent`, `overlap = raw - critical`. Method reused from the critical-path method (Kelley and Walker 1959; Blumofe and Leiserson 1999) and trace-based critical-path analysis (The Mystery Machine, OSDI 2014; CRISP, USENIX ATC 2022). |
-| `acspeed/capability.py` | Section 3 (platform) | Reference-ratio normalization `r = measured/reference` and the delivered-capability index `DCI` (weighted geometric mean; Fleming and Wallace 1986); dominant axis by measurement (USE method; Roofline). |
-| `acspeed/discriminator.py` | Section 3 (platform) | The fixed-plus-variable fit `T(rate) = t_fixed + W/rate`: intercept = control-plane floor, slope = data-plane work (Hockney; LogP; Amdahl; Mao and Humphrey 2012). Plus the Karp-Flatt serial-fraction falsifier (CACM 1990). |
-| `acspeed/agenttime.py` | Section 4 (agent) | Raw vs critical agent-time and the component split (inference / orchestration / wait / rework). Inference seconds `= TTFT + TPOT * (output_tokens - 1)` (MLPerf; TTFT already prices the first token). |
-| `acspeed/repro.py` | Section 6 | Geometric mean, bootstrap and normal CIs, the CONFIRM repeat-until-tight rule (Maricq et al. 2018), and the non-overlapping-CI comparison rule. |
-| `acspeed/probes.py` | Section 3 (platform) | Parsers for the delivered-capability probes: `sysbench` (compute), STREAM (memory), `fio` (disk), and the network axis: **VM-to-VM** `iperf3` throughput + `ping` RTT between two of the operation's own instances over the tenant private network (C17), a scored axis only for multi-VM operations (single-VM: N/A + nominal NIC disclosed, C18). Runner wrappers that shell out live in `runners.py`. |
+| `acspeed/criticalpath.py` | Part 1, Section 2 (the spine) | Build the dependency DAG, longest path = wall-clock, slack, and the **owner split**: `wall-clock = critical-platform + critical-agent`, `overlap = raw - critical`. Method reused from the critical-path method (Kelley and Walker 1959; Blumofe and Leiserson 1999) and trace-based critical-path analysis (The Mystery Machine, OSDI 2014; CRISP, USENIX ATC 2022). |
+| `acspeed/agenttime.py` | Part 1, Section 3 (the agent segments) | Raw versus critical agent-time: the agent's total effort against only the part of it that sat on the critical path. The difference is the overlap, the agent work that a platform wait hid for free. |
+| `acspeed/adapters/` | Part 1, Section 4 (coupling) | MCP-based cloud adapters. To measure a cloud you point an `MCPAdapter` at that cloud's **MCP server**; the same code serves redu, AWS, GCP and Azure via per-cloud `CloudProfile` tool maps. |
+| `acspeed/repro.py` | Part 1, Section 5 (reproducibility) | Geometric mean, bootstrap and normal CIs, the CONFIRM repeat-until-tight rule (Maricq et al. 2018), and the non-overlapping-CI comparison rule. |
 | `acspeed/operation.py` | Part 2, Sections 2-4, 6 | The operation as a **composite over atoms**: the seven-slot schema, the three-type typology (provision / operate-mutate / deprovision) via a measured `profile()`, the three atom registers with the platform/agent invariant, and the **milestone split** that reuses SSH-ready to separate the cited lower half from the novel upper-half agent/platform decomposition. Executable falsifiability checks (`is_schema_conformant`). |
 | `acspeed/session.py` | Part 2, Section 7 | Session as a **trace of operations**, and `efficiency(actual, optimal)` = excess critical-path wall-clock vs an optimal reference trace, with the exact identity `excess = selection_excess + execution_excess`. Constructing the reference is Part 3 (`reference.py`). |
 | `acspeed/reference.py` | Part 3, Sections 1-4 | The **operation-state graph** and its floor cost-to-go `V_F`; the reference-optimal floor makespan `F_C = V_F(start)` as a shortest cost-to-go; the exact decomposition of **excess over the floor** into per-decision advantages (telescoping to `M_actual - F_C`) and the floor-twin **selection vs execution** split; the two-ratio bracket `F_C <= optimum <= best-achieved` (structural floor + DEA frontier) and the refutable gold. The decomposition is against the **floor**, not a given optimum, per the Part 3 rework. |
-| `acspeed/weighting.py` | Part 4 (weighting) | Aggregation with **no chosen weight**: `suite_total` (the total-time headline `E_X`), `geomean_ratio` (the reference-invariant companion `G_X`; Fleming and Wallace 1986), `suite_verdict` (report the ranking only when both agree), `leave_one_out` (the drop-any-task sensitivity), and the matched-block per-task `more_efficient` (non-overlapping CIs). The `(wall-clock, resource-cost)` **cost-performance frontier** under the Pareto-Koopmans criterion (`dominates`, `pareto_frontier`, `classify_run`, `is_tradeoff`): a run that spends more cost for no less time carries a positive cost slack and is dominated, so speed cannot be bought (Pareto 1896; DEA, Charnes-Cooper-Rhodes 1978; Banker-Charnes-Cooper 1984). |
-| `acspeed/adapters/` | Section 5 / coupling | MCP-based cloud adapters. To measure a cloud you point an `MCPAdapter` at that cloud's **MCP server**; the same code serves redu, AWS, GCP and Azure via per-cloud `CloudProfile` tool maps. |
+| `acspeed/weighting.py` | Part 4, Sections 1-4 | Aggregation with **no chosen weight**: `suite_total` (the total-time headline `E_X`), `geomean_ratio` (the reference-invariant companion `G_X`; Fleming and Wallace 1986), `suite_verdict` (report the ranking only when both agree), `leave_one_out` (the drop-any-task sensitivity), and the matched-block per-task `more_efficient` (non-overlapping CIs). The `(wall-clock, resource-cost)` **cost-performance frontier** under the Pareto-Koopmans criterion (`dominates`, `pareto_frontier`, `classify_run`, `is_tradeoff`): a run that spends more cost for no less time carries a positive cost slack and is dominated, so speed cannot be bought (Pareto 1896; DEA, Charnes-Cooper-Rhodes 1978; Banker-Charnes-Cooper 1984). |
+
+### In the harness, not in the paper
+
+These four exist as working, tested code, but they produced **no measurement in the published
+94-run wave**, so the paper does not describe them and no published number depends on them. They
+are kept here for anyone who wants to exercise them, and flagged so nobody mistakes them for part
+of the published method.
+
+| Module | What it does |
+|---|---|
+| `acspeed/capability.py` | Reference-ratio normalization `r = measured/reference` and the delivered-capability index `DCI` (weighted geometric mean; Fleming and Wallace 1986); dominant axis by measurement (USE method; Roofline). Measures what machine the cloud actually delivered, to normalize a fast cloud against a fast machine. |
+| `acspeed/probes.py` | Parsers for the delivered-capability probes: `sysbench` (compute), STREAM (memory), `fio` (disk), and the network axis: **VM-to-VM** `iperf3` throughput + `ping` RTT between two of the operation's own instances over the tenant private network (C17), a scored axis only for multi-VM operations (single-VM: N/A + nominal NIC disclosed, C18). Runner wrappers that shell out live in `runners.py`. |
+| `acspeed/discriminator.py` | The fixed-plus-variable fit `T(rate) = t_fixed + W/rate`: intercept = control-plane floor, slope = data-plane work (Hockney; LogP; Amdahl; Mao and Humphrey 2012). Plus the Karp-Flatt serial-fraction falsifier (CACM 1990). |
+| `acspeed/agenttime.py` (component split) | Breaking agent-time into inference / orchestration / wait / rework. Only `inference` was ever reachable from a transcript, so the four-way split is unexercised. Inference seconds `= TTFT + TPOT * (output_tokens - 1)` (MLPerf; TTFT already prices the first token). |
 
 ## The idea in one example
 
@@ -471,10 +508,13 @@ at a cloud's MCP server**, not an SDK wrapper. To measure a cloud, give an
 `MCPAdapter` a transport (its MCP server) and that cloud's `CloudProfile`, which
 maps the canonical operations (`provision`, `wait_ready`, `status`, `teardown`)
 to the server's tool names. The analysis is identical across clouds; only the
-profile differs. redu's profile uses the real redu MCP tool names
-(`create_instance`, `wait_for_deployment`, ...); `aws` / `gcp` / `azure` are
-stubs to fill in against their MCP servers during Part 5. Publishing reports the
-three hyperscalers; redu uses the same tool separately.
+profile differs. All four profiles carry real tool names against real MCP servers
+(`acspeed/adapters/profiles.py`): AWS via `uvx mcp-proxy-for-aws`, GCP via
+`npx @google-cloud/cloud-run-mcp`, Azure via `npx @azure/mcp`, and redu via its own
+server. Where a cloud's MCP server cannot create or delete something, the profile
+says so and the agent falls back to that cloud's CLI over Bash; GCP's teardown
+(`gcloud run services delete`) and Azure's create/teardown path are both marked
+that way in the file. The published study reports the three hyperscalers.
 
 Because the adapter times the MCP tool calls, it **measures the interface effect**
 directly. Same cloud, same 9s boot, only the readiness interface changes:
@@ -490,11 +530,19 @@ turned into a measured number (`tests/test_adapters.py`).
 
 ## Scope and status
 
-This is the offline computational core (fully tested). Running the probes against
-real cloud instances (the `runners.py` wrappers) needs the tools installed on the
-target VM and is exercised in Part 5's validation, not here. Reference-constant
-values and exact probe configurations are disclosed choices to be fixed before
-publishing numbers.
+**The measurement path is complete and has been run for real.** The analysis core
+is fully tested, the live harness drives real agents against real cloud accounts,
+and the 94 runs in [`results/`](results/) were produced by the code in this repo.
+
+Two honest limits, so nothing here reads as more finished than it is:
+
+- **Live runs need Claude Code.** The Codex path is implemented and tested for
+  reading transcripts, but the microVM does not yet carry Codex. See
+  [Requirements](#requirements).
+- **The capability probes are unexercised.** `runners.py` shells out to `sysbench`,
+  STREAM, `fio` and `iperf3` on the target VM. Nothing in the published wave ran
+  them, so that path has no measurement behind it. See
+  [In the harness, not in the paper](#in-the-harness-not-in-the-paper).
 
 ## Sessions (auditable evidence)
 
