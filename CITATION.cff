@@ -13,6 +13,9 @@ authors:
     given-names: "Miloš"
 license: MIT
 repository-code: "https://github.com/milosz94/agent-cloud-speed"
+doi: 10.5281/zenodo.22753740
+version: 1.0.0
+date-released: 2026-09-14
 keywords:
   - benchmark
   - cloud computing

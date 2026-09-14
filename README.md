@@ -1,5 +1,7 @@
 # acspeed
 
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22753740-blue)](https://doi.org/10.5281/zenodo.22753740)
+
 Benchmarks how fast a cloud is to operate when an AI coding agent is driving it.
 
 An operation is any infrastructure change an agent performs on your behalf: provisioning something,
