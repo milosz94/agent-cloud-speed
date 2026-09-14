@@ -1,0 +1,705 @@
+{
+ "agent_wall_s": 803.5,
+ "capability": {
+  "error": "capability N/A: the AWS deploy is not a shell-reachable VM (Lightsail container / App Runner / behind an ALB or CloudFront); C disclosed N/A",
+  "na": true,
+  "ok": false
+ },
+ "cloud": "aws",
+ "cost_run_rate": {
+  "all_in_hourly_usd": 0.120439,
+  "capture_date": "2026-09-07",
+  "components": [
+   {
+    "hourly_usd": 0.0225,
+    "name": "loadbalancer",
+    "native_unit": "Hrs",
+    "quantity": 1.0,
+    "raw_unit_price": 0.0225
+   },
+   {
+    "hourly_usd": 0.02,
+    "name": "elastic_ip",
+    "native_unit": "Hrs",
+    "quantity": 4.0,
+    "raw_unit_price": 0.005
+   },
+   {
+    "hourly_usd": 1.3698630136986302e-06,
+    "name": "targetgroup",
+    "native_unit": "Position",
+    "quantity": 1.0,
+    "raw_unit_price": 0.001
+   },
+   {
+    "hourly_usd": 0.016,
+    "name": "dbinstance",
+    "native_unit": "Hrs",
+    "quantity": 1.0,
+    "raw_unit_price": 0.016
+   },
+   {
+    "hourly_usd": 0.0031506849315068495,
+    "name": "storage",
+    "native_unit": "GB-Mo",
+    "quantity": 20.0,
+    "raw_unit_price": 0.115
+   },
+   {
+    "hourly_usd": 2.7397260273972604e-06,
+    "name": "networkinterface",
+    "native_unit": "NetworkInterface-Assessment",
+    "quantity": 1.0,
+    "raw_unit_price": 0.002
+   },
+   {
+    "hourly_usd": 0.00889,
+    "name": "gb",
+    "native_unit": "hours",
+    "quantity": 2.0,
+    "raw_unit_price": 0.004445
+   },
+   {
+    "hourly_usd": 0.04048,
+    "name": "vcpu",
+    "native_unit": "hours",
+    "quantity": 1.0,
+    "raw_unit_price": 0.04048
+   },
+   {
+    "hourly_usd": 0.009408602,
+    "name": "containerservice",
+    "native_unit": "Hrs",
+    "quantity": 1.0,
+    "raw_unit_price": 0.009408602
+   },
+   {
+    "hourly_usd": 5.753424657534246e-06,
+    "name": "distribution",
+    "native_unit": "usagehours",
+    "quantity": 1.0,
+    "raw_unit_price": 0.0042
+   }
+  ],
+  "discovery": "cloudtrail",
+  "egress": null,
+  "exclusions": [
+   "account-specific discounts",
+   "spot",
+   "reserved / committed-use",
+   "free-tier / credits",
+   "usage-metered egress (reported separately, not in the baseline)"
+  ],
+  "flavor": "cluster+containerservice+dbinstance+dbparametergroup+dbsubnetgroup+distribution+listener+loadbalancer+loggroup+logstream+networkinterface+securitygroup+service+targetgroup+taskdefinition",
+  "fx": null,
+  "kind": "standing",
+  "monthly_usd": 87.9205,
+  "n_resources": 28,
+  "no_sku_match": [
+   "cloudfront:CreateDistribution@us-east-1",
+   "ec2:CreateNetworkInterface@us-east-1",
+   "ec2:CreateSecurityGroup@us-east-1",
+   "ecs:CreateCluster@us-east-1",
+   "ecs:CreateService@us-east-1",
+   "ecs:RegisterTaskDefinition@us-east-1",
+   "elasticloadbalancing:CreateListener@us-east-1",
+   "logs:CreateLogGroup@us-east-1",
+   "logs:CreateLogStream@us-east-1",
+   "rds:CreateDBParameterGroup@us-east-1",
+   "rds:CreateDBSubnetGroup@us-east-1"
+  ],
+  "ok": true,
+  "price_source": "AWS published price list (bulk offer index), on-demand per C19; resources discovered from CloudTrail management events; re-priced retroactively, no live describe",
+  "price_urls": [],
+  "priced_resources": [
+   {
+    "kind": "loadbalancer",
+    "part": "self",
+    "quantity": 1.0,
+    "region": "us-east-1",
+    "sku": "37CUWUT8GSNQEPUV",
+    "usagetype": "LoadBalancerUsage"
+   },
+   {
+    "kind": "elastic_ip",
+    "part": "public-ipv4",
+    "quantity": 4.0,
+    "region": "us-east-1",
+    "sku": "4GQUNXTFWVSGPUZK",
+    "usagetype": "USE1-PublicIPv4:InUseAddress"
+   },
+   {
+    "kind": "targetgroup",
+    "part": "self",
+    "quantity": 1.0,
+    "region": "us-east-1",
+    "sku": "8RX8KTTE6KN795F2",
+    "usagetype": "USE1-Solved-IP-Positions"
+   },
+   {
+    "kind": "dbinstance",
+    "part": "self",
+    "quantity": 1.0,
+    "region": "us-east-1",
+    "sku": "9HPEGXQTDDGH53C9",
+    "usagetype": "InstanceUsage:db.t4g.micro"
+   },
+   {
+    "kind": "storage",
+    "part": "storage",
+    "quantity": 20.0,
+    "region": "us-east-1",
+    "sku": "9N8GA2WTNXBZXF6T",
+    "usagetype": "RDS:GP3-Storage"
+   },
+   {
+    "kind": "networkinterface",
+    "part": "self",
+    "quantity": 1.0,
+    "region": "us-east-1",
+    "sku": "3MUZ8GNDVB5XPGSB",
+    "usagetype": "USE1-NetworkInterface-Assessment"
+   },
+   {
+    "kind": "gb",
+    "part": "gb:Memory",
+    "quantity": 2.0,
+    "region": "us-east-1",
+    "sku": "PBZNQUSEXZUC34C9",
+    "usagetype": "USE1-Fargate-GB-Hours"
+   },
+   {
+    "kind": "vcpu",
+    "part": "vcpu:Cpu",
+    "quantity": 1.0,
+    "region": "us-east-1",
+    "sku": "8CESGAFWKAJ98PME",
+    "usagetype": "USE1-Fargate-vCPU-Hours:perCPU"
+   },
+   {
+    "kind": "containerservice",
+    "part": "self",
+    "quantity": 1.0,
+    "region": "us-east-1",
+    "sku": "TVRJUC9D5VVSWH8Q",
+    "usagetype": "USE1-ContainerSvcUsage:Nano-0.25CPU-0.5GB"
+   },
+   {
+    "kind": "distribution",
+    "part": "self",
+    "quantity": 1.0,
+    "region": "us-east-1",
+    "sku": "4X73UKZD9KT9X5B3",
+    "usagetype": "USE1-CloudFront-Distribution-GroupB"
+   }
+  ],
+  "provider": "aws",
+  "region": "us-east-1",
+  "task_definition_collapse": [
+   "umami-acs81a80730: 2 revision(s) -> 1 bundle x 1 runner(s)"
+  ],
+  "traffic_estimate": {
+   "high": 87.92,
+   "low": 87.92,
+   "medium": 87.92
+  },
+  "unpriced_resources": [],
+  "window": [
+   "2026-09-06T17:25:20Z",
+   "2026-09-07T01:40:20Z"
+  ]
+ },
+ "deploy": {
+  "agent_model": "claude-opus-5",
+  "flavor": null,
+  "idle_cap_sensitivity": {
+   "120.0": 31.9,
+   "150.0": 31.9,
+   "200.0": 31.9,
+   "300.0": 31.9,
+   "60.0": 31.9,
+   "600.0": 31.9
+  },
+  "lane_summary": {
+   "agent_is_floor": true,
+   "agent_split": {
+    "first-token": 169.6,
+    "streaming": 87.0
+   },
+   "attributed_s": 803.5,
+   "events": 81,
+   "idle_s": 0.0,
+   "lane_pct_of_wall": {
+    "agent": 31.9,
+    "human": 0.0,
+    "platform": 68.1
+   },
+   "lanes": {
+    "agent": 256.6,
+    "human": 0.0,
+    "platform": 546.9
+   },
+   "path": "d855e6ff-b45c-4443-9dd7-3af008effe48.jsonl",
+   "platform_is_ceiling": true,
+   "wall_s": 803.5
+  },
+  "ops": {
+   "curl_probes": 5,
+   "redeploys": 0,
+   "ssh_escapes": 0,
+   "tool_calls": 28,
+   "tool_errors": 2,
+   "top_tools": {
+    "Bash": 11,
+    "ToolSearch": 2,
+    "mcp__aws-mcp__aws___get_tasks": 3,
+    "mcp__aws-mcp__aws___run_script": 12
+   }
+  },
+  "session": "d855e6ff-b45c-4443-9dd7-3af008effe48",
+  "tokens": {
+   "cache_creation_input_tokens": 44665,
+   "cache_read_input_tokens": 1350889,
+   "input_tokens": 58,
+   "output_tokens": 19265,
+   "turns": 29
+  },
+  "transcript": "sessions/d855e6ff-b45c-4443-9dd7-3af008effe48.jsonl",
+  "warmth": {
+   "clone_or_pull": null,
+   "phase_timings": null,
+   "source": null
+  }
+ },
+ "deprovision": {
+  "cost": 2.4441879999999996,
+  "lane_summary": {
+   "agent_is_floor": true,
+   "agent_split": {
+    "first-token": 933.3,
+    "streaming": 165.7
+   },
+   "attributed_s": 3468.5,
+   "events": 226,
+   "idle_s": 0.0,
+   "lane_pct_of_wall": {
+    "agent": 31.7,
+    "human": 9.1,
+    "platform": 59.2
+   },
+   "lanes": {
+    "agent": 1099.0,
+    "human": 317.1,
+    "platform": 2052.4
+   },
+   "path": "d855e6ff-b45c-4443-9dd7-3af008effe48.jsonl",
+   "platform_is_ceiling": true,
+   "wall_s": 3468.5
+  },
+  "orphaned": false,
+  "session": "d855e6ff-b45c-4443-9dd7-3af008effe48",
+  "skipped": false,
+  "tokens": {
+   "cache_creation_input_tokens": 125161,
+   "cache_read_input_tokens": 7322803,
+   "input_tokens": 170,
+   "output_tokens": 74156,
+   "turns": 85
+  },
+  "transcript": "sessions/d855e6ff-b45c-4443-9dd7-3af008effe48.jsonl"
+ },
+ "first_attempt_success": true,
+ "health_code": "200",
+ "measured_at": "2026-09-07T01:25:20.298816+00:00",
+ "model": "claude-opus-5",
+ "orphan_warning": false,
+ "outcome": "SUCCESS",
+ "prompts_used": 1,
+ "read_verify": {
+  "dead": true,
+  "http_code": "000",
+  "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+ },
+ "reaped": {
+  "checked": true,
+  "failed": [],
+  "reaped": []
+ },
+ "recovery": {
+  "reached_healthy": true,
+  "repair_prompts": 0,
+  "rounds_to_healthy": 1
+ },
+ "rounds": [
+  {
+   "cost": 1.6051475000000004,
+   "round": 1,
+   "session": "d855e6ff-b45c-4443-9dd7-3af008effe48",
+   "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+  }
+ ],
+ "run": 13,
+ "run_token": "acs81a80730",
+ "screenshot": null,
+ "serving": {
+  "agent_after_serving_s": 83.5,
+  "agent_finished_at_s": 814.6,
+  "candidates_polled": [
+   "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+  ],
+  "caught_by": "concurrent-poller",
+  "first_serve_at_s": 731.2,
+  "first_serve_code": "200",
+  "http_code": "200",
+  "last_codes": {
+   "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com": "200"
+  },
+  "origin": [],
+  "poll_log": [
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 731.17,
+    "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 736.662,
+    "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 742.176,
+    "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 747.709,
+    "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 753.267,
+    "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 758.755,
+    "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 764.244,
+    "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 769.732,
+    "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 775.239,
+    "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 780.746,
+    "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 786.236,
+    "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 791.741,
+    "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 797.23,
+    "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 802.732,
+    "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 808.225,
+    "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 813.73,
+    "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+   }
+  ],
+  "poll_log_len": 16,
+  "polls": 55,
+  "predicate": "first response from the URL with HTTP status < 500 (000 and 5xx = not serving)",
+  "rejected_edge_4xx": 0,
+  "served_at_s": 731.2,
+  "served_on_first_poll": false,
+  "t1_method": "durable-serve/1.0",
+  "url_first_seen_s": 485.0
+ },
+ "split": {
+  "agent_components_s": {
+   "inference": 186.6
+  },
+  "critical_agent_s": 186.6,
+  "critical_platform_s": 534.8,
+  "makespan_s": 721.4,
+  "overlap_s": 0.0,
+  "post_handoff_boot_s": 0.6,
+  "raw_agent_time_s": 186.6,
+  "schema_conformant": true,
+  "via": "acspeed.operation.split + agenttime.decompose"
+ },
+ "steps": 29,
+ "success_oracle": {
+  "bytes": 9673,
+  "content_verified": true,
+  "disclosure": "off-clock success oracle, SEPARATE from the liveness clock (t1); conservative, flags only infra-error/default pages + empty bodies, never a legitimate app 4xx",
+  "http_code": "200",
+  "note": "app content",
+  "signature": null
+ },
+ "task": "umami",
+ "tier_run": {
+  "durability": {
+   "achieved": true,
+   "achieved_on_iter": 1,
+   "cycles": [
+    {
+     "agent_cost_usd": 1.371617,
+     "agent_error": false,
+     "agent_session": "d855e6ff-b45c-4443-9dd7-3af008effe48",
+     "durable": false,
+     "op_id": "restart-durability",
+     "op_type": "operate_mutate",
+     "split": {
+      "critical_agent_s": 112.8,
+      "critical_platform_s": 695.6,
+      "makespan_s": 808.3,
+      "overlap_s": 0.0,
+      "via": "acspeed.transcript window + owner_split",
+      "wall_s": 821.8
+     },
+     "started_at": 1788743093.2120032,
+     "verified_at": 1788743915.0431576,
+     "verify_detail": "http 200, umami-signature=yes",
+     "verify_measured": {
+      "http_code": 200,
+      "umami_signature": true
+     },
+     "verify_ok": true,
+     "verify_unverifiable": false,
+     "wall_s": 821.8
+    }
+   ],
+   "iters": 1
+  },
+  "failures": [],
+  "instance": "umami-medium",
+  "operations": [
+   {
+    "agent_cost_usd": null,
+    "agent_error": false,
+    "agent_session": "d855e6ff-b45c-4443-9dd7-3af008effe48",
+    "durable": true,
+    "op_id": "deploy-serve",
+    "op_type": "provision",
+    "split": null,
+    "started_at": 1788741310.6538322,
+    "verified_at": 1788741311.162134,
+    "verify_detail": "http 200, umami-signature=yes",
+    "verify_measured": {
+     "http_code": 200,
+     "umami_signature": true
+    },
+    "verify_ok": true,
+    "verify_unverifiable": false,
+    "wall_s": 0.5
+   },
+   {
+    "agent_cost_usd": 0.154771,
+    "agent_error": false,
+    "agent_session": "d855e6ff-b45c-4443-9dd7-3af008effe48",
+    "durable": true,
+    "op_id": "mutate:register",
+    "op_type": "operate_mutate",
+    "split": {
+     "critical_agent_s": 16.1,
+     "critical_platform_s": 1.8,
+     "makespan_s": 17.8,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 29.9
+    },
+    "started_at": 1788741311.1621752,
+    "verified_at": 1788741341.018489,
+    "verify_detail": "probe user acspeed_probe_59bff776 authenticates",
+    "verify_measured": null,
+    "verify_ok": true,
+    "verify_unverifiable": false,
+    "wall_s": 29.9
+   },
+   {
+    "agent_cost_usd": 1.000452,
+    "agent_error": false,
+    "agent_session": "d855e6ff-b45c-4443-9dd7-3af008effe48",
+    "durable": true,
+    "op_id": "deploy-site-b",
+    "op_type": "provision",
+    "split": {
+     "critical_agent_s": 105.1,
+     "critical_platform_s": 420.3,
+     "makespan_s": 525.4,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 537.2
+    },
+    "started_at": 1788741341.0185378,
+    "verified_at": 1788741878.2526977,
+    "verify_detail": "site B http 200, canonical-page=yes",
+    "verify_measured": {
+     "http_code": 200,
+     "site_b_url": "https://alcove-acs81a80730.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+    },
+    "verify_ok": true,
+    "verify_unverifiable": false,
+    "wall_s": 537.2
+   },
+   {
+    "agent_cost_usd": 1.3174805000000003,
+    "agent_error": false,
+    "agent_session": "d855e6ff-b45c-4443-9dd7-3af008effe48",
+    "durable": true,
+    "op_id": "integrate",
+    "op_type": "operate_mutate",
+    "split": {
+     "critical_agent_s": 212.7,
+     "critical_platform_s": 783.6,
+     "makespan_s": 1191.1,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 1215.0
+    },
+    "started_at": 1788741878.252738,
+    "verified_at": 1788743093.211953,
+    "verify_detail": "[wiring] site B HTML carries umami wiring (website id 336361a1-6851-429e-823a-9fa2d27c0af0) | [visit] sentinel-path pageviews 0 -> 1 after a real headless visit (playwright)",
+    "verify_measured": {
+     "visit": {
+      "after": 1,
+      "before": 0,
+      "engine": "playwright",
+      "path": "/acspeed-sentinel-59bff776",
+      "website_id": "336361a1-6851-429e-823a-9fa2d27c0af0"
+     },
+     "wiring": {
+      "website_id": "336361a1-6851-429e-823a-9fa2d27c0af0"
+     }
+    },
+    "verify_ok": true,
+    "verify_unverifiable": false,
+    "wall_s": 1215.0
+   }
+  ],
+  "passed": true,
+  "score": {
+   "break_point": [],
+   "checkpoints": [
+    {
+     "name": "deploy-serve",
+     "ok": true
+    },
+    {
+     "name": "mutate:register",
+     "ok": true
+    },
+    {
+     "name": "deploy-site-b",
+     "ok": true
+    },
+    {
+     "name": "integrate",
+     "ok": true
+    },
+    {
+     "name": "restart-durability",
+     "ok": true
+    }
+   ],
+   "completed": true,
+   "full_completion_bonus": 0.5,
+   "partial_credit": 1.0,
+   "passed": 5,
+   "score": 1.5,
+   "total": 5
+  },
+  "site_b_url": "https://alcove-acs81a80730.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com",
+  "terminal_reverify": {
+   "deploy-serve": {
+    "detail": "http 200, umami-signature=yes",
+    "ok": true
+   },
+   "deploy-site-b": {
+    "detail": "site B http 200, canonical-page=yes",
+    "ok": true
+   },
+   "integrate": {
+    "detail": "[wiring] site B HTML carries umami wiring (website id 336361a1-6851-429e-823a-9fa2d27c0af0) | [persist] sentinel-path pageview count 1 vs floor 1 (survived the restart)",
+    "ok": true
+   },
+   "mutate:register": {
+    "detail": "probe user acspeed_probe_59bff776 authenticates",
+    "ok": true
+   }
+  },
+  "tier": "medium"
+ },
+ "time_to_serving_min": 12.19,
+ "time_to_serving_s": 731.2,
+ "url": "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com",
+ "url_ambiguous": false,
+ "url_candidates": [
+  "http://umami-acs81a80730-887226461.us-east-1.elb.amazonaws.com"
+ ],
+ "url_source": "external-poll"
+}

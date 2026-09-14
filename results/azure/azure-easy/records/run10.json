@@ -1,0 +1,255 @@
+{
+ "agent_wall_s": 2306.8,
+ "capability": {
+  "error": "capability N/A: the Azure deploy is not a shell-reachable VM (Container Apps / App Service / Container Instances); C disclosed N/A",
+  "na": true,
+  "ok": false
+ },
+ "cloud": "azure",
+ "cost_run_rate": {
+  "assumptions": [
+   "egress GB estimated as requests x 50 KB average response size",
+   "request grid (per month): 10k, 50k, 100k, 500k, 1M, 10M",
+   "active compute (driver='other') folded into the per-request cost assuming 1 vCPU + 0.5 GiB held 0.1s per request; always-on / provisioned components folded as a flat monthly floor",
+   "Container Apps always-on idle floor: minReplicas=1 x (1 vCPU x $3e-06/vCPU-s + 2 GiB x $3e-06/GiB-s) x 3600 = $0.0324/hr (idle meters, billed on top of active per-request usage)",
+   "managed Postgres Flexible Server 'Standard_B1ms' (32 GB) folded into the standing floor: $0.0220/hr = $16.09/mo",
+   "Microsoft.App/managedEnvironments 'cae-acse1421e26': no standing charge for this resource type (disclosed)"
+  ],
+  "capture_date": "2026-08-30",
+  "components": [
+   {
+    "driver": "requests",
+    "name": "requests",
+    "native_unit": "per 1M requests",
+    "per_unit_usd": 4.0000000000000003e-07,
+    "raw_unit_price": 0.4,
+    "tier": "",
+    "unit": "per request"
+   },
+   {
+    "driver": "other",
+    "name": "compute-active-cpu",
+    "native_unit": "per vCPU-second",
+    "per_unit_usd": 2.4e-05,
+    "raw_unit_price": 2.4e-05,
+    "tier": "",
+    "unit": "vCPU-second"
+   },
+   {
+    "driver": "other",
+    "name": "compute-active-mem",
+    "native_unit": "per GiB-second",
+    "per_unit_usd": 3e-06,
+    "raw_unit_price": 3e-06,
+    "tier": "",
+    "unit": "GiB-second"
+   }
+  ],
+  "exclusions": [
+   "account-specific discounts",
+   "spot",
+   "reserved / committed-use",
+   "free-tier / credits",
+   "usage-metered egress (reported separately, not in the baseline)"
+  ],
+  "fx": null,
+  "kind": "usage",
+  "ok": true,
+  "price_source": "Azure Retail Prices API (Consumption plan, public list, USD)",
+  "price_urls": [
+   "https://prices.azure.com/api/retail/prices"
+  ],
+  "provider": "azure",
+  "region": "eastus2",
+  "schedule": [
+   {
+    "egress_gb": 0.4768,
+    "label": "10k",
+    "requests_per_month": 10000.0,
+    "usd_per_month": 39.7715
+   },
+   {
+    "egress_gb": 2.3842,
+    "label": "50k",
+    "requests_per_month": 50000.0,
+    "usd_per_month": 39.8895
+   },
+   {
+    "egress_gb": 4.7684,
+    "label": "100k",
+    "requests_per_month": 100000.0,
+    "usd_per_month": 40.037
+   },
+   {
+    "egress_gb": 23.8419,
+    "label": "500k",
+    "requests_per_month": 500000.0,
+    "usd_per_month": 41.217
+   },
+   {
+    "egress_gb": 47.6837,
+    "label": "1M",
+    "requests_per_month": 1000000.0,
+    "usd_per_month": 42.692
+   },
+   {
+    "egress_gb": 476.8372,
+    "label": "10M",
+    "requests_per_month": 10000000.0,
+    "usd_per_month": 69.242
+   }
+  ],
+  "service": "Azure Container Apps",
+  "traffic_estimate": {
+   "high": 69.24,
+   "low": 39.77,
+   "medium": 41.22
+  }
+ },
+ "deploy": {
+  "agent_model": "claude-opus-5",
+  "flavor": null,
+  "idle_cap_sensitivity": {
+   "120.0": 12.4,
+   "150.0": 12.4,
+   "200.0": 12.4,
+   "300.0": 12.4,
+   "60.0": 12.4,
+   "600.0": 12.4
+  },
+  "lane_summary": {
+   "agent_is_floor": true,
+   "agent_split": {
+    "first-token": 212.1,
+    "streaming": 73.0
+   },
+   "attributed_s": 2306.9,
+   "events": 132,
+   "idle_s": 0.0,
+   "lane_pct_of_wall": {
+    "agent": 12.4,
+    "human": 0.0,
+    "platform": 87.6
+   },
+   "lanes": {
+    "agent": 285.1,
+    "human": 0.0,
+    "platform": 2021.8
+   },
+   "path": "e2dad3f6-6358-4ae4-a70d-bc56b5e0ff20.jsonl",
+   "platform_is_ceiling": true,
+   "wall_s": 2306.8
+  },
+  "ops": {
+   "curl_probes": 9,
+   "redeploys": 0,
+   "ssh_escapes": 0,
+   "tool_calls": 50,
+   "tool_errors": 6,
+   "top_tools": {
+    "Bash": 46,
+    "ToolSearch": 2,
+    "mcp__azure__arm": 1,
+    "mcp__azure__containerapps": 1
+   }
+  },
+  "session": "e2dad3f6-6358-4ae4-a70d-bc56b5e0ff20",
+  "tokens": {
+   "cache_creation_input_tokens": 45863,
+   "cache_read_input_tokens": 2278682,
+   "input_tokens": 102,
+   "output_tokens": 20067,
+   "turns": 51
+  },
+  "transcript": "sessions/e2dad3f6-6358-4ae4-a70d-bc56b5e0ff20.jsonl",
+  "warmth": {
+   "clone_or_pull": null,
+   "phase_timings": null,
+   "source": null
+  }
+ },
+ "deprovision": {
+  "cost": null,
+  "orphaned": false,
+  "session": null,
+  "skipped": false,
+  "transcript": null
+ },
+ "first_attempt_success": true,
+ "health_code": "200",
+ "measured_at": "2026-08-30T02:26:04.722788+00:00",
+ "model": "claude-opus-5",
+ "orphan_warning": false,
+ "outcome": "SUCCESS",
+ "prompts_used": 1,
+ "read_verify": {
+  "dead": true,
+  "http_code": "404",
+  "url": "https://acse1421e26.whitewave-fa6ad2ff.eastus2.azurecontainerapps.io"
+ },
+ "recovery": {
+  "reached_healthy": true,
+  "repair_prompts": 0,
+  "rounds_to_healthy": 1
+ },
+ "rounds": [
+  {
+   "cost": 2.1012730000000004,
+   "round": 1,
+   "session": "e2dad3f6-6358-4ae4-a70d-bc56b5e0ff20",
+   "url": "https://acse1421e26.whitewave-fa6ad2ff.eastus2.azurecontainerapps.io"
+  }
+ ],
+ "run": 10,
+ "run_token": "acse1421e26",
+ "screenshot": null,
+ "serving": {
+  "agent_after_serving_s": 172.3,
+  "agent_finished_at_s": 2322.1,
+  "candidates_polled": [
+   "https://acse1421e26.whitewave-fa6ad2ff.eastus2.azurecontainerapps.io"
+  ],
+  "caught_by": "concurrent-poller",
+  "http_code": "200",
+  "last_codes": {
+   "https://acse1421e26.whitewave-fa6ad2ff.eastus2.azurecontainerapps.io": "200"
+  },
+  "polls": 34,
+  "predicate": "first response from the URL with HTTP status < 500 (000 and 5xx = not serving)",
+  "served_at_s": 2149.8,
+  "served_on_first_poll": false,
+  "url_first_seen_s": 1315.1
+ },
+ "split": {
+  "agent_components_s": {
+   "inference": 264.4
+  },
+  "critical_agent_s": 264.4,
+  "critical_platform_s": 1885.4,
+  "makespan_s": 2149.8,
+  "overlap_s": 0.0,
+  "post_handoff_boot_s": 2.5,
+  "raw_agent_time_s": 264.4,
+  "schema_conformant": true,
+  "via": "acspeed.operation.split + agenttime.decompose"
+ },
+ "steps": 51,
+ "success_oracle": {
+  "bytes": 9673,
+  "content_verified": true,
+  "disclosure": "off-clock success oracle, SEPARATE from the liveness clock (t1); conservative, flags only infra-error/default pages + empty bodies, never a legitimate app 4xx",
+  "http_code": "200",
+  "note": "app content",
+  "signature": null
+ },
+ "task": "umami",
+ "tier_run": null,
+ "time_to_serving_min": 35.83,
+ "time_to_serving_s": 2149.8,
+ "url": "https://acse1421e26.whitewave-fa6ad2ff.eastus2.azurecontainerapps.io",
+ "url_ambiguous": false,
+ "url_candidates": [
+  "https://acse1421e26.whitewave-fa6ad2ff.eastus2.azurecontainerapps.io"
+ ],
+ "url_source": "external-poll"
+}

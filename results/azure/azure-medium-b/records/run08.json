@@ -1,0 +1,425 @@
+{
+ "agent_wall_s": 2285.7,
+ "capability": {
+  "error": "capability N/A: the Azure deploy is not a shell-reachable VM (Container Apps / App Service / Container Instances); C disclosed N/A",
+  "na": true,
+  "ok": false
+ },
+ "cloud": "azure",
+ "cost_run_rate": {
+  "assumptions": [
+   "egress GB estimated as requests x 50 KB average response size",
+   "request grid (per month): 10k, 50k, 100k, 500k, 1M, 10M",
+   "active compute (driver='other') folded into the per-request cost assuming 1 vCPU + 0.5 GiB held 0.1s per request; always-on / provisioned components folded as a flat monthly floor",
+   "Container Apps always-on idle floor: minReplicas=1 x (1 vCPU x $3e-06/vCPU-s + 2 GiB x $3e-06/GiB-s) x 3600 = $0.0324/hr (idle meters, billed on top of active per-request usage)",
+   "managed Postgres Flexible Server 'Standard_B1ms' (32 GB) folded into the standing floor: $0.0220/hr = $16.09/mo",
+   "resource-group sweep priced container_registry: $0.0069/hr (folded into the standing floor)",
+   "Microsoft.App/managedEnvironments 'env-acs922e2f4a': no standing charge for this resource type (disclosed)",
+   "Microsoft.OperationalInsights/workspaces 'law-acs922e2f4a': usage-priced (billed per usage; $0 standing, disclosed)"
+  ],
+  "capture_date": "2026-09-03",
+  "components": [
+   {
+    "driver": "requests",
+    "name": "requests",
+    "native_unit": "per 1M requests",
+    "per_unit_usd": 4.0000000000000003e-07,
+    "raw_unit_price": 0.4,
+    "tier": "",
+    "unit": "per request"
+   },
+   {
+    "driver": "other",
+    "name": "compute-active-cpu",
+    "native_unit": "per vCPU-second",
+    "per_unit_usd": 2.4e-05,
+    "raw_unit_price": 2.4e-05,
+    "tier": "",
+    "unit": "vCPU-second"
+   },
+   {
+    "driver": "other",
+    "name": "compute-active-mem",
+    "native_unit": "per GiB-second",
+    "per_unit_usd": 3e-06,
+    "raw_unit_price": 3e-06,
+    "tier": "",
+    "unit": "GiB-second"
+   }
+  ],
+  "exclusions": [
+   "account-specific discounts",
+   "spot",
+   "reserved / committed-use",
+   "free-tier / credits",
+   "usage-metered egress (reported separately, not in the baseline)"
+  ],
+  "fx": null,
+  "kind": "usage",
+  "ok": true,
+  "price_source": "Azure Retail Prices API (Consumption plan, public list, USD)",
+  "price_urls": [
+   "https://prices.azure.com/api/retail/prices"
+  ],
+  "provider": "azure",
+  "region": "eastus2",
+  "schedule": [
+   {
+    "egress_gb": 0.4768,
+    "label": "10k",
+    "requests_per_month": 10000.0,
+    "usd_per_month": 44.8389
+   },
+   {
+    "egress_gb": 2.3842,
+    "label": "50k",
+    "requests_per_month": 50000.0,
+    "usd_per_month": 44.9569
+   },
+   {
+    "egress_gb": 4.7684,
+    "label": "100k",
+    "requests_per_month": 100000.0,
+    "usd_per_month": 45.1044
+   },
+   {
+    "egress_gb": 23.8419,
+    "label": "500k",
+    "requests_per_month": 500000.0,
+    "usd_per_month": 46.2844
+   },
+   {
+    "egress_gb": 47.6837,
+    "label": "1M",
+    "requests_per_month": 1000000.0,
+    "usd_per_month": 47.7594
+   },
+   {
+    "egress_gb": 476.8372,
+    "label": "10M",
+    "requests_per_month": 10000000.0,
+    "usd_per_month": 74.3094
+   }
+  ],
+  "service": "Azure Container Apps",
+  "traffic_estimate": {
+   "high": 74.31,
+   "low": 44.84,
+   "medium": 46.28
+  }
+ },
+ "deploy": {
+  "agent_model": "claude-opus-5",
+  "flavor": null,
+  "idle_cap_sensitivity": {
+   "120.0": 27.5,
+   "150.0": 27.5,
+   "200.0": 27.5,
+   "300.0": 27.5,
+   "60.0": 27.5,
+   "600.0": 27.5
+  },
+  "lane_summary": {
+   "agent_is_floor": true,
+   "agent_split": {
+    "first-token": 418.0,
+    "streaming": 209.5
+   },
+   "attributed_s": 2285.7,
+   "events": 194,
+   "idle_s": 0.0,
+   "lane_pct_of_wall": {
+    "agent": 27.5,
+    "human": 0.0,
+    "platform": 72.5
+   },
+   "lanes": {
+    "agent": 627.5,
+    "human": 0.0,
+    "platform": 1658.2
+   },
+   "path": "dc28d2fb-fdf0-4fe4-8ab0-53fb52a46800.jsonl",
+   "platform_is_ceiling": true,
+   "wall_s": 2285.7
+  },
+  "ops": {
+   "curl_probes": 21,
+   "redeploys": 0,
+   "ssh_escapes": 0,
+   "tool_calls": 72,
+   "tool_errors": 5,
+   "top_tools": {
+    "Bash": 68,
+    "ToolSearch": 1,
+    "Write": 2,
+    "mcp__azure__subscription_list": 1
+   }
+  },
+  "session": "dc28d2fb-fdf0-4fe4-8ab0-53fb52a46800",
+  "tokens": {
+   "cache_creation_input_tokens": 96038,
+   "cache_read_input_tokens": 4830059,
+   "input_tokens": 128,
+   "output_tokens": 47453,
+   "turns": 64
+  },
+  "transcript": "sessions/dc28d2fb-fdf0-4fe4-8ab0-53fb52a46800.jsonl",
+  "warmth": {
+   "clone_or_pull": null,
+   "phase_timings": null,
+   "source": null
+  }
+ },
+ "deprovision": {
+  "cost": 0.0,
+  "orphaned": false,
+  "session": null,
+  "skipped": false,
+  "transcript": null
+ },
+ "first_attempt_success": true,
+ "health_code": "200",
+ "measured_at": "2026-09-03T21:45:43.818987+00:00",
+ "model": "claude-opus-5",
+ "orphan_warning": false,
+ "outcome": "SUCCESS",
+ "prompts_used": 1,
+ "read_verify": {
+  "dead": true,
+  "http_code": "000",
+  "url": "https://umami-acs922e2f4a.icyground-7ebab3c3.eastus2.azurecontainerapps.io"
+ },
+ "reaped": {
+  "checked": true,
+  "failed": [],
+  "reaped": []
+ },
+ "recovery": {
+  "reached_healthy": true,
+  "repair_prompts": 0,
+  "rounds_to_healthy": 1
+ },
+ "rounds": [
+  {
+   "cost": 4.566222500000001,
+   "round": 1,
+   "session": "dc28d2fb-fdf0-4fe4-8ab0-53fb52a46800",
+   "url": "https://umami-acs922e2f4a.icyground-7ebab3c3.eastus2.azurecontainerapps.io"
+  }
+ ],
+ "run": 8,
+ "run_token": "acs922e2f4a",
+ "screenshot": null,
+ "serving": {
+  "agent_after_serving_s": 493.8,
+  "agent_finished_at_s": 2300.4,
+  "candidates_polled": [
+   "https://umami-acs922e2f4a.icyground-7ebab3c3.eastus2.azurecontainerapps.io"
+  ],
+  "caught_by": "concurrent-poller",
+  "http_code": "200",
+  "last_codes": {
+   "https://umami-acs922e2f4a.icyground-7ebab3c3.eastus2.azurecontainerapps.io": "200"
+  },
+  "polls": 50,
+  "predicate": "first response from the URL with HTTP status < 500 (000 and 5xx = not serving)",
+  "served_at_s": 1806.7,
+  "served_on_first_poll": false,
+  "url_first_seen_s": 580.1
+ },
+ "split": {
+  "agent_components_s": {
+   "inference": 478.8
+  },
+  "critical_agent_s": 478.8,
+  "critical_platform_s": 1315.2,
+  "makespan_s": 1794.1,
+  "overlap_s": 0.0,
+  "post_handoff_boot_s": 61.9,
+  "raw_agent_time_s": 478.8,
+  "schema_conformant": true,
+  "via": "acspeed.operation.split + agenttime.decompose"
+ },
+ "steps": 64,
+ "success_oracle": {
+  "bytes": 9673,
+  "content_verified": true,
+  "disclosure": "off-clock success oracle, SEPARATE from the liveness clock (t1); conservative, flags only infra-error/default pages + empty bodies, never a legitimate app 4xx",
+  "http_code": "200",
+  "note": "app content",
+  "signature": null
+ },
+ "task": "umami",
+ "tier_run": {
+  "durability": {
+   "achieved": true,
+   "achieved_on_iter": 1,
+   "cycles": [
+    {
+     "agent_cost_usd": 0.6366785,
+     "agent_error": false,
+     "agent_session": "dc28d2fb-fdf0-4fe4-8ab0-53fb52a46800",
+     "durable": false,
+     "op_id": "restart-durability",
+     "op_type": "operate_mutate",
+     "split": {
+      "critical_agent_s": 70.1,
+      "critical_platform_s": 122.8,
+      "makespan_s": 193.0,
+      "overlap_s": 0.0,
+      "via": "acspeed.transcript window + owner_split",
+      "wall_s": 208.8
+     },
+     "started_at": 1788470454.8384817,
+     "verified_at": 1788470663.5970163,
+     "verify_detail": "http 200, umami-signature=yes",
+     "verify_ok": true,
+     "wall_s": 208.8
+    }
+   ],
+   "iters": 1
+  },
+  "failures": [],
+  "instance": "umami-medium-b",
+  "operations": [
+   {
+    "agent_cost_usd": null,
+    "agent_error": false,
+    "agent_session": "dc28d2fb-fdf0-4fe4-8ab0-53fb52a46800",
+    "durable": true,
+    "op_id": "deploy-serve",
+    "op_type": "provision",
+    "split": null,
+    "started_at": 1788470349.794455,
+    "verified_at": 1788470350.536911,
+    "verify_detail": "http 200, umami-signature=yes",
+    "verify_ok": true,
+    "wall_s": 0.7
+   },
+   {
+    "agent_cost_usd": 0.1461545,
+    "agent_error": false,
+    "agent_session": "dc28d2fb-fdf0-4fe4-8ab0-53fb52a46800",
+    "durable": true,
+    "op_id": "mutate:register",
+    "op_type": "operate_mutate",
+    "split": {
+     "critical_agent_s": 9.6,
+     "critical_platform_s": 1.6,
+     "makespan_s": 11.2,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 29.6
+    },
+    "started_at": 1788470350.5369644,
+    "verified_at": 1788470380.1713326,
+    "verify_detail": "probe user acspeed_probe_37a1c404 authenticates",
+    "verify_ok": true,
+    "wall_s": 29.6
+   },
+   {
+    "agent_cost_usd": 0.1671375,
+    "agent_error": false,
+    "agent_session": "dc28d2fb-fdf0-4fe4-8ab0-53fb52a46800",
+    "durable": true,
+    "op_id": "deploy-site-b",
+    "op_type": "provision",
+    "split": {
+     "critical_agent_s": 10.2,
+     "critical_platform_s": 2.0,
+     "makespan_s": 12.2,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 29.2
+    },
+    "started_at": 1788470380.1713753,
+    "verified_at": 1788470409.3244247,
+    "verify_detail": "site B http 200, canonical-page=yes",
+    "verify_ok": true,
+    "wall_s": 29.2
+   },
+   {
+    "agent_cost_usd": 0.16566950000000003,
+    "agent_error": false,
+    "agent_session": "dc28d2fb-fdf0-4fe4-8ab0-53fb52a46800",
+    "durable": true,
+    "op_id": "integrate",
+    "op_type": "operate_mutate",
+    "split": {
+     "critical_agent_s": 18.1,
+     "critical_platform_s": 1.5,
+     "makespan_s": 19.6,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 45.5
+    },
+    "started_at": 1788470409.3244638,
+    "verified_at": 1788470454.8384109,
+    "verify_detail": "[wiring] site B HTML carries umami wiring (website id 0d24cf8c-a15e-45d5-99d2-dfa945ff2c67) | [visit] sentinel-path pageviews 0 -> 1 after a real headless visit (chromium-cli)",
+    "verify_ok": true,
+    "wall_s": 45.5
+   }
+  ],
+  "passed": true,
+  "score": {
+   "break_point": [],
+   "checkpoints": [
+    {
+     "name": "deploy-serve",
+     "ok": true
+    },
+    {
+     "name": "mutate:register",
+     "ok": true
+    },
+    {
+     "name": "deploy-site-b",
+     "ok": true
+    },
+    {
+     "name": "integrate",
+     "ok": true
+    },
+    {
+     "name": "restart-durability",
+     "ok": true
+    }
+   ],
+   "completed": true,
+   "full_completion_bonus": 0.5,
+   "partial_credit": 1.0,
+   "passed": 5,
+   "score": 1.5,
+   "total": 5
+  },
+  "site_b_url": "https://alcove-acs922e2f4a.icyground-7ebab3c3.eastus2.azurecontainerapps.io",
+  "terminal_reverify": {
+   "deploy-serve": {
+    "detail": "http 200, umami-signature=yes",
+    "ok": true
+   },
+   "deploy-site-b": {
+    "detail": "site B http 200, canonical-page=yes",
+    "ok": true
+   },
+   "integrate": {
+    "detail": "[wiring] site B HTML carries umami wiring (website id 0d24cf8c-a15e-45d5-99d2-dfa945ff2c67) | [persist] sentinel-path pageview count 1 vs floor 1 (survived the restart)",
+    "ok": true
+   },
+   "mutate:register": {
+    "detail": "probe user acspeed_probe_37a1c404 authenticates",
+    "ok": true
+   }
+  },
+  "tier": "medium"
+ },
+ "time_to_serving_min": 30.11,
+ "time_to_serving_s": 1806.7,
+ "url": "https://umami-acs922e2f4a.icyground-7ebab3c3.eastus2.azurecontainerapps.io",
+ "url_ambiguous": false,
+ "url_candidates": [
+  "https://umami-acs922e2f4a.icyground-7ebab3c3.eastus2.azurecontainerapps.io",
+  "https://alcove-acs922e2f4a.icyground-7ebab3c3.eastus2.azurecontainerapps.io"
+ ],
+ "url_source": "external-poll"
+}

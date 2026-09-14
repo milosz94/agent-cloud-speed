@@ -1,0 +1,329 @@
+{
+ "agent_wall_s": 1288.6,
+ "capability": {
+  "error": "capability N/A: the AWS deploy is not a shell-reachable VM (Lightsail container / App Runner / behind an ALB or CloudFront); C disclosed N/A",
+  "na": true,
+  "ok": false
+ },
+ "cloud": "aws",
+ "cost_run_rate": {
+  "all_in_hourly_usd": 0.08134,
+  "capture_date": "2026-08-29",
+  "components": [
+   {
+    "hourly_usd": 1.3698630136986302e-06,
+    "name": "targetgroup",
+    "native_unit": "Position",
+    "quantity": 1.0,
+    "raw_unit_price": 0.001
+   },
+   {
+    "hourly_usd": 0.016,
+    "name": "dbinstance",
+    "native_unit": "Hrs",
+    "quantity": 1.0,
+    "raw_unit_price": 0.016
+   },
+   {
+    "hourly_usd": 0.0031506849315068495,
+    "name": "storage",
+    "native_unit": "GB-Mo",
+    "quantity": 20.0,
+    "raw_unit_price": 0.115
+   },
+   {
+    "hourly_usd": 0.0225,
+    "name": "loadbalancer",
+    "native_unit": "Hrs",
+    "quantity": 1.0,
+    "raw_unit_price": 0.0225
+   },
+   {
+    "hourly_usd": 0.015,
+    "name": "elastic_ip",
+    "native_unit": "Hrs",
+    "quantity": 3.0,
+    "raw_unit_price": 0.005
+   },
+   {
+    "hourly_usd": 2.7397260273972604e-06,
+    "name": "networkinterface",
+    "native_unit": "NetworkInterface-Assessment",
+    "quantity": 1.0,
+    "raw_unit_price": 0.002
+   },
+   {
+    "hourly_usd": 0.004445,
+    "name": "gb",
+    "native_unit": "hours",
+    "quantity": 1.0,
+    "raw_unit_price": 0.004445
+   },
+   {
+    "hourly_usd": 0.02024,
+    "name": "vcpu",
+    "native_unit": "hours",
+    "quantity": 0.5,
+    "raw_unit_price": 0.04048
+   }
+  ],
+  "discovery": "cloudtrail",
+  "egress": null,
+  "exclusions": [
+   "account-specific discounts",
+   "spot",
+   "reserved / committed-use",
+   "free-tier / credits",
+   "usage-metered egress (reported separately, not in the baseline)"
+  ],
+  "flavor": "cluster+dbinstance+dbsubnetgroup+listener+loadbalancer+loggroup+logstream+networkinterface+securitygroup+service+targetgroup+targetgroupattributes+targets+taskdefinition",
+  "fx": null,
+  "kind": "standing",
+  "monthly_usd": 59.3782,
+  "n_resources": 36,
+  "no_sku_match": [
+   "ec2:CreateNetworkInterface@us-east-1",
+   "ec2:CreateSecurityGroup@us-east-1",
+   "ecs:CreateCluster@us-east-1",
+   "ecs:CreateService@us-east-1",
+   "ecs:RegisterTaskDefinition@us-east-1",
+   "elasticloadbalancing:CreateListener@us-east-1",
+   "elasticloadbalancing:ModifyTargetGroupAttributes@us-east-1",
+   "elasticloadbalancing:RegisterTargets@us-east-1",
+   "logs:CreateLogGroup@us-east-1",
+   "logs:CreateLogStream@us-east-1",
+   "rds:CreateDBSubnetGroup@us-east-1"
+  ],
+  "ok": true,
+  "price_source": "AWS published price list (bulk offer index), on-demand per C19; resources discovered from CloudTrail management events; re-priced retroactively, no live describe",
+  "price_urls": [],
+  "priced_resources": [
+   {
+    "kind": "targetgroup",
+    "part": "self",
+    "quantity": 1.0,
+    "region": "us-east-1",
+    "sku": "8RX8KTTE6KN795F2",
+    "usagetype": "USE1-Solved-IP-Positions"
+   },
+   {
+    "kind": "dbinstance",
+    "part": "self",
+    "quantity": 1.0,
+    "region": "us-east-1",
+    "sku": "9HPEGXQTDDGH53C9",
+    "usagetype": "InstanceUsage:db.t4g.micro"
+   },
+   {
+    "kind": "storage",
+    "part": "storage",
+    "quantity": 20.0,
+    "region": "us-east-1",
+    "sku": "MGHSXGCF99CDV4KN",
+    "usagetype": "RDS:GP2-Storage"
+   },
+   {
+    "kind": "loadbalancer",
+    "part": "self",
+    "quantity": 1.0,
+    "region": "us-east-1",
+    "sku": "37CUWUT8GSNQEPUV",
+    "usagetype": "LoadBalancerUsage"
+   },
+   {
+    "kind": "elastic_ip",
+    "part": "public-ipv4",
+    "quantity": 3.0,
+    "region": "us-east-1",
+    "sku": "4GQUNXTFWVSGPUZK",
+    "usagetype": "USE1-PublicIPv4:InUseAddress"
+   },
+   {
+    "kind": "networkinterface",
+    "part": "self",
+    "quantity": 1.0,
+    "region": "us-east-1",
+    "sku": "3MUZ8GNDVB5XPGSB",
+    "usagetype": "USE1-NetworkInterface-Assessment"
+   },
+   {
+    "kind": "gb",
+    "part": "gb:Memory",
+    "quantity": 1.0,
+    "region": "us-east-1",
+    "sku": "PBZNQUSEXZUC34C9",
+    "usagetype": "USE1-Fargate-GB-Hours"
+   },
+   {
+    "kind": "vcpu",
+    "part": "vcpu:Cpu",
+    "quantity": 0.5,
+    "region": "us-east-1",
+    "sku": "8CESGAFWKAJ98PME",
+    "usagetype": "USE1-Fargate-vCPU-Hours:perCPU"
+   }
+  ],
+  "provider": "aws",
+  "region": "us-east-1",
+  "task_definition_collapse": [
+   "umami-acs05c20cf0: 6 revision(s) -> 1 bundle x 1 runner(s)"
+  ],
+  "traffic_estimate": {
+   "high": 59.38,
+   "low": 59.38,
+   "medium": 59.38
+  },
+  "unpriced_resources": [],
+  "window": [
+   "2026-08-29T12:38:36Z",
+   "2026-08-29T20:53:36Z"
+  ]
+ },
+ "deploy": {
+  "agent_model": "claude-opus-5",
+  "flavor": null,
+  "idle_cap_sensitivity": {
+   "120.0": 35.5,
+   "150.0": 35.5,
+   "200.0": 35.5,
+   "300.0": 35.5,
+   "60.0": 35.5,
+   "600.0": 35.5
+  },
+  "lane_summary": {
+   "agent_is_floor": true,
+   "agent_split": {
+    "first-token": 256.9,
+    "streaming": 200.6
+   },
+   "attributed_s": 1288.7,
+   "events": 125,
+   "idle_s": 0.0,
+   "lane_pct_of_wall": {
+    "agent": 35.5,
+    "human": 0.0,
+    "platform": 64.5
+   },
+   "lanes": {
+    "agent": 457.5,
+    "human": 0.0,
+    "platform": 831.2
+   },
+   "path": "5d5de948-a56f-41e5-8118-cf5f7381353f.jsonl",
+   "platform_is_ceiling": true,
+   "wall_s": 1288.6
+  },
+  "ops": {
+   "curl_probes": 8,
+   "redeploys": 0,
+   "ssh_escapes": 0,
+   "tool_calls": 40,
+   "tool_errors": 7,
+   "top_tools": {
+    "Bash": 15,
+    "ToolSearch": 1,
+    "Write": 1,
+    "mcp__aws-mcp__aws___get_tasks": 3,
+    "mcp__aws-mcp__aws___run_script": 20
+   }
+  },
+  "session": "5d5de948-a56f-41e5-8118-cf5f7381353f",
+  "tokens": {
+   "cache_creation_input_tokens": 59957,
+   "cache_read_input_tokens": 2161624,
+   "input_tokens": 78,
+   "output_tokens": 34535,
+   "turns": 39
+  },
+  "transcript": "sessions/5d5de948-a56f-41e5-8118-cf5f7381353f.jsonl",
+  "warmth": {
+   "clone_or_pull": null,
+   "phase_timings": null,
+   "source": null
+  }
+ },
+ "deprovision": {
+  "cost": null,
+  "orphaned": false,
+  "session": null,
+  "skipped": false,
+  "transcript": null
+ },
+ "first_attempt_success": true,
+ "health_code": "200",
+ "measured_at": "2026-08-29T20:38:36.811466+00:00",
+ "model": "claude-opus-5",
+ "orphan_warning": false,
+ "outcome": "SUCCESS",
+ "prompts_used": 1,
+ "read_verify": {
+  "dead": true,
+  "http_code": "000",
+  "url": "http://umami-acs05c20cf0-1742609376.us-east-1.elb.amazonaws.com"
+ },
+ "recovery": {
+  "reached_healthy": true,
+  "repair_prompts": 0,
+  "rounds_to_healthy": 1
+ },
+ "rounds": [
+  {
+   "cost": 2.545297,
+   "round": 1,
+   "session": "5d5de948-a56f-41e5-8118-cf5f7381353f",
+   "url": "http://umami-acs05c20cf0-1742609376.us-east-1.elb.amazonaws.com"
+  }
+ ],
+ "run": 6,
+ "run_token": "acs05c20cf0",
+ "screenshot": null,
+ "serving": {
+  "agent_after_serving_s": 129.8,
+  "agent_finished_at_s": 1299.8,
+  "candidates_polled": [
+   "http://umami-acs05c20cf0-1742609376.us-east-1.elb.amazonaws.com"
+  ],
+  "caught_by": "concurrent-poller",
+  "http_code": "200",
+  "last_codes": {
+   "http://umami-acs05c20cf0-1742609376.us-east-1.elb.amazonaws.com": "200"
+  },
+  "polls": 76,
+  "predicate": "first response from the URL with HTTP status < 500 (000 and 5xx = not serving)",
+  "served_at_s": 1169.9,
+  "served_on_first_poll": false,
+  "url_first_seen_s": 630.1
+ },
+ "split": {
+  "agent_components_s": {
+   "inference": 369.2
+  },
+  "critical_agent_s": 369.2,
+  "critical_platform_s": 800.7,
+  "makespan_s": 1169.9,
+  "overlap_s": 0.0,
+  "post_handoff_boot_s": 65.1,
+  "raw_agent_time_s": 369.2,
+  "schema_conformant": true,
+  "via": "acspeed.operation.split + agenttime.decompose"
+ },
+ "steps": 39,
+ "success_oracle": {
+  "bytes": 9673,
+  "content_verified": true,
+  "disclosure": "off-clock success oracle, SEPARATE from the liveness clock (t1); conservative, flags only infra-error/default pages + empty bodies, never a legitimate app 4xx",
+  "http_code": "200",
+  "note": "app content",
+  "signature": null
+ },
+ "task": "umami",
+ "tier_run": null,
+ "time_to_serving_min": 19.5,
+ "time_to_serving_s": 1169.9,
+ "url": "http://umami-acs05c20cf0-1742609376.us-east-1.elb.amazonaws.com",
+ "url_ambiguous": false,
+ "url_candidates": [
+  "http://umami-acs05c20cf0-1742609376.us-east-1.elb.amazonaws.com"
+ ],
+ "url_source": "external-poll"
+}

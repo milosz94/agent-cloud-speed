@@ -1,0 +1,284 @@
+{
+ "agent_wall_s": 1352.8,
+ "capability": {
+  "error": "capability N/A: the GCP deploy is not a shell-reachable VM (Cloud Run / App Engine / serverless); C disclosed N/A",
+  "na": true,
+  "ok": false
+ },
+ "cloud": "gcp",
+ "cost_run_rate": {
+  "assumptions": [
+   "egress GB estimated as requests x 50 KB average response size",
+   "request grid (per month): 10k, 50k, 100k, 500k, 1M, 10M",
+   "active compute (driver='other') folded into the per-request cost assuming 1 vCPU + 0.5 GiB held 0.1s per request; always-on / provisioned components folded as a flat monthly floor",
+   "Cloud Run scaling config was unavailable (service not describable, e.g. a torn-down deploy); the always-on min-instances floor is assumed $0 and may understate a deploy that ran with min-instances>=1",
+   "folded a Cloud SQL instance (db-f1-micro) as a standing floor $0.0221/hr (Enterprise-Zonal edition assumed; in-use public IPv4 included, region-approximate)",
+   "Artifact Registry image storage is not folded here: a single app image sits within the 0.5 GB free tier (storage beyond that lists at $0.10/GB-month), a de-minimis line disclosed rather than silently omitted",
+   "universal sweep: discovered run.googleapis.com/Revision 'umami-acs1c2aa298-00001-p9m' with no pricer; DISCLOSED unpriced, never silently $0 (a resource type the tool does not yet price)"
+  ],
+  "capture_date": "2026-08-29",
+  "components": [
+   {
+    "driver": "requests",
+    "name": "requests",
+    "native_unit": "per request",
+    "per_unit_usd": 4e-07,
+    "raw_unit_price": 4e-07,
+    "tier": "",
+    "unit": "per request"
+   },
+   {
+    "driver": "other",
+    "name": "compute-active-cpu",
+    "native_unit": "per vCPU-second",
+    "per_unit_usd": 3.36e-05,
+    "raw_unit_price": 3.36e-05,
+    "tier": "",
+    "unit": "vCPU-second"
+   },
+   {
+    "driver": "other",
+    "name": "compute-active-mem",
+    "native_unit": "per GiB-second",
+    "per_unit_usd": 2.5e-06,
+    "raw_unit_price": 2.5e-06,
+    "tier": "",
+    "unit": "GiB-second"
+   }
+  ],
+  "exclusions": [
+   "account-specific discounts",
+   "spot",
+   "reserved / committed-use",
+   "free-tier / credits",
+   "usage-metered egress (reported separately, not in the baseline)"
+  ],
+  "fx": null,
+  "kind": "usage",
+  "ok": true,
+  "price_source": "GCP Cloud Billing Catalog (request-based Cloud Run SKUs, ADC)",
+  "price_urls": [
+   "https://cloudbilling.googleapis.com/v1/services/152E-C115-5142/skus"
+  ],
+  "provider": "gcp",
+  "region": "a",
+  "schedule": [
+   {
+    "egress_gb": 0.4768,
+    "label": "10k",
+    "requests_per_month": 10000.0,
+    "usd_per_month": 16.1539
+   },
+   {
+    "egress_gb": 2.3842,
+    "label": "50k",
+    "requests_per_month": 50000.0,
+    "usd_per_month": 16.3093
+   },
+   {
+    "egress_gb": 4.7684,
+    "label": "100k",
+    "requests_per_month": 100000.0,
+    "usd_per_month": 16.5035
+   },
+   {
+    "egress_gb": 23.8419,
+    "label": "500k",
+    "requests_per_month": 500000.0,
+    "usd_per_month": 18.0575
+   },
+   {
+    "egress_gb": 47.6837,
+    "label": "1M",
+    "requests_per_month": 1000000.0,
+    "usd_per_month": 20.0
+   },
+   {
+    "egress_gb": 476.8372,
+    "label": "10M",
+    "requests_per_month": 10000000.0,
+    "usd_per_month": 54.965
+   }
+  ],
+  "service": "Cloud Run",
+  "traffic_estimate": {
+   "high": 54.97,
+   "low": 16.15,
+   "medium": 18.06
+  }
+ },
+ "deploy": {
+  "agent_model": "claude-opus-5",
+  "flavor": null,
+  "idle_cap_sensitivity": {
+   "120.0": 21.2,
+   "150.0": 21.2,
+   "200.0": 21.2,
+   "300.0": 21.2,
+   "60.0": 21.2,
+   "600.0": 21.2
+  },
+  "lane_summary": {
+   "agent_is_floor": true,
+   "agent_split": {
+    "first-token": 205.2,
+    "streaming": 81.5
+   },
+   "attributed_s": 1352.7,
+   "events": 90,
+   "idle_s": 0.0,
+   "lane_pct_of_wall": {
+    "agent": 21.2,
+    "human": 0.0,
+    "platform": 78.8
+   },
+   "lanes": {
+    "agent": 286.7,
+    "human": 0.0,
+    "platform": 1066.0
+   },
+   "path": "c0e10cd0-b4d4-4662-8c9b-f5596e961015.jsonl",
+   "platform_is_ceiling": true,
+   "wall_s": 1352.8
+  },
+  "ops": {
+   "curl_probes": 17,
+   "redeploys": 0,
+   "ssh_escapes": 0,
+   "tool_calls": 30,
+   "tool_errors": 6,
+   "top_tools": {
+    "Bash": 29,
+    "ToolSearch": 1
+   }
+  },
+  "session": "c0e10cd0-b4d4-4662-8c9b-f5596e961015",
+  "tokens": {
+   "cache_creation_input_tokens": 48578,
+   "cache_read_input_tokens": 1323070,
+   "input_tokens": 58,
+   "output_tokens": 21983,
+   "turns": 29
+  },
+  "transcript": "sessions/c0e10cd0-b4d4-4662-8c9b-f5596e961015.jsonl",
+  "warmth": {
+   "clone_or_pull": null,
+   "phase_timings": null,
+   "source": null
+  }
+ },
+ "deprovision": {
+  "cost": 1.4167689999999997,
+  "lane_summary": {
+   "agent_is_floor": true,
+   "agent_split": {
+    "first-token": 104.5,
+    "streaming": 51.0
+   },
+   "attributed_s": 179.0,
+   "events": 70,
+   "idle_s": 0.0,
+   "lane_pct_of_wall": {
+    "agent": 86.9,
+    "human": 0.0,
+    "platform": 13.1
+   },
+   "lanes": {
+    "agent": 155.5,
+    "human": 0.0,
+    "platform": 23.5
+   },
+   "path": "5398c084-55c3-417d-b60e-3b8da0535d7a.jsonl",
+   "platform_is_ceiling": true,
+   "wall_s": 178.9
+  },
+  "orphaned": false,
+  "session": "5398c084-55c3-417d-b60e-3b8da0535d7a",
+  "skipped": false,
+  "tokens": {
+   "cache_creation_input_tokens": 55266,
+   "cache_read_input_tokens": 1169446,
+   "input_tokens": 42,
+   "output_tokens": 11124,
+   "turns": 21
+  },
+  "transcript": "sessions/5398c084-55c3-417d-b60e-3b8da0535d7a.jsonl"
+ },
+ "first_attempt_success": true,
+ "health_code": "200",
+ "measured_at": "2026-08-29T22:46:31.250416+00:00",
+ "model": "claude-opus-5",
+ "orphan_warning": false,
+ "outcome": "SUCCESS",
+ "prompts_used": 1,
+ "read_verify": {
+  "dead": true,
+  "http_code": "404",
+  "url": "https://umami-acs1c2aa298-aggnv775ja-uc.a.run.app"
+ },
+ "recovery": {
+  "reached_healthy": true,
+  "repair_prompts": 0,
+  "rounds_to_healthy": 1
+ },
+ "rounds": [
+  {
+   "cost": 1.6983380000000001,
+   "round": 1,
+   "session": "c0e10cd0-b4d4-4662-8c9b-f5596e961015",
+   "url": "https://umami-acs1c2aa298-aggnv775ja-uc.a.run.app"
+  }
+ ],
+ "run": 14,
+ "run_token": "acs1c2aa298",
+ "screenshot": null,
+ "serving": {
+  "agent_after_serving_s": 75.3,
+  "agent_finished_at_s": 1387.2,
+  "candidates_polled": [
+   "https://umami-acs1c2aa298-aggnv775ja-uc.a.run.app"
+  ],
+  "caught_by": "concurrent-poller",
+  "http_code": "200",
+  "last_codes": {
+   "https://umami-acs1c2aa298-aggnv775ja-uc.a.run.app": "200"
+  },
+  "polls": 1,
+  "predicate": "first response from the URL with HTTP status < 500 (000 and 5xx = not serving)",
+  "served_at_s": 1311.9,
+  "served_on_first_poll": true,
+  "url_first_seen_s": 1310.3
+ },
+ "split": {
+  "agent_components_s": {
+   "inference": 246.9
+  },
+  "critical_agent_s": 246.9,
+  "critical_platform_s": 1065.0,
+  "makespan_s": 1311.9,
+  "overlap_s": 0.0,
+  "post_handoff_boot_s": 1.6,
+  "raw_agent_time_s": 246.9,
+  "schema_conformant": true,
+  "via": "acspeed.operation.split + agenttime.decompose"
+ },
+ "steps": 29,
+ "success_oracle": {
+  "bytes": 9673,
+  "content_verified": true,
+  "disclosure": "off-clock success oracle, SEPARATE from the liveness clock (t1); conservative, flags only infra-error/default pages + empty bodies, never a legitimate app 4xx",
+  "http_code": "200",
+  "note": "app content",
+  "signature": null
+ },
+ "task": "umami",
+ "tier_run": null,
+ "time_to_serving_min": 21.87,
+ "time_to_serving_s": 1311.9,
+ "url": "https://umami-acs1c2aa298-aggnv775ja-uc.a.run.app",
+ "url_ambiguous": false,
+ "url_candidates": [
+  "https://umami-acs1c2aa298-aggnv775ja-uc.a.run.app"
+ ],
+ "url_source": "external-poll"
+}

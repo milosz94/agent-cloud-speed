@@ -57,17 +57,30 @@ GX_NORMALIZER = "aws"
 SESS_RE = re.compile(r"^\|\s*\[\d+\]\(sessions/([0-9a-f-]+)\.jsonl\)", re.M)
 
 
-def _stage_dir(cloud: str, suffix: str) -> str:
-    return os.path.join(STAGING, cloud + suffix)
+def _record_dirs(cloud: str, suffix: str, tier_key: str) -> list:
+    """Where per-run records may live, in priority order.
+
+    The private staging tree first, so a re-run after a fresh batch picks up new runs; then the
+    records PUBLISHED beside the cell table, which is what makes these tables regenerable by anyone
+    who has only the artifact. Before the published copy existed a reader could see every number in
+    Part 5 and still not recompute one, which is the gap tools/publish_records.py closes."""
+    return [
+        os.path.join(STAGING, cloud + suffix),
+        os.path.join(RESULTS, cloud, f"{cloud}-{tier_key}", "records"),
+    ]
 
 
-def _records_by_session(stage: str) -> dict:
+def _records_by_session(stages) -> dict:
+    if isinstance(stages, str):
+        stages = [stages]
     out = {}
-    for path in glob.glob(os.path.join(stage, "run*.json")):
-        rec = json.load(open(path))
-        for rnd in rec.get("rounds") or []:
-            if rnd.get("session"):
-                out[rnd["session"]] = rec
+    # Later directories must not override earlier ones: staging wins where it has the run.
+    for stage in reversed(list(stages)):
+        for path in glob.glob(os.path.join(stage, "run*.json")):
+            rec = json.load(open(path))
+            for rnd in rec.get("rounds") or []:
+                if rnd.get("session"):
+                    out[rnd["session"]] = rec
     return out
 
 
@@ -75,10 +88,11 @@ def published_records(cloud: str, suffix: str, tier_key: str) -> list:
     """The published rows of a cell, resolved to run records through the session UUID."""
     cell = os.path.join(RESULTS, cloud, f"{cloud}-{tier_key}", "README.md")
     uuids = SESS_RE.findall(open(cell).read())
-    index = _records_by_session(_stage_dir(cloud, suffix))
+    index = _records_by_session(_record_dirs(cloud, suffix, tier_key))
     missing = [u for u in uuids if u not in index]
     if missing:
-        raise SystemExit(f"{cloud}-{tier_key}: {len(missing)} published rows have no run record")
+        raise SystemExit(f"{cloud}-{tier_key}: {len(missing)} published rows have no run record "
+                         f"(looked in: {', '.join(_record_dirs(cloud, suffix, tier_key))})")
     return [index[u] for u in uuids]
 
 

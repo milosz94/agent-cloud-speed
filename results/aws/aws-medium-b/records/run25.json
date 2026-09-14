@@ -1,0 +1,1430 @@
+{
+ "agent_wall_s": 1702.4,
+ "capability": {
+  "error": "capability N/A: the AWS deploy is not a shell-reachable VM (Lightsail container / App Runner / behind an ALB or CloudFront); C disclosed N/A",
+  "na": true,
+  "ok": false
+ },
+ "cloud": "aws",
+ "cost_run_rate": {
+  "all_in_hourly_usd": 0.042003,
+  "capture_date": "2026-09-06",
+  "components": [
+   {
+    "hourly_usd": 0.016,
+    "name": "dbinstance",
+    "native_unit": "Hrs",
+    "quantity": 1.0,
+    "raw_unit_price": 0.016
+   },
+   {
+    "hourly_usd": 0.0031506849315068495,
+    "name": "storage",
+    "native_unit": "GB-Mo",
+    "quantity": 20.0,
+    "raw_unit_price": 0.115
+   },
+   {
+    "hourly_usd": 0.01344086,
+    "name": "containerservice",
+    "native_unit": "Hrs",
+    "quantity": 1.0,
+    "raw_unit_price": 0.01344086
+   },
+   {
+    "hourly_usd": 0.009408602,
+    "name": "containerservice",
+    "native_unit": "Hrs",
+    "quantity": 1.0,
+    "raw_unit_price": 0.009408602
+   },
+   {
+    "hourly_usd": 2.7397260273972604e-06,
+    "name": "networkinterface",
+    "native_unit": "NetworkInterface-Assessment",
+    "quantity": 1.0,
+    "raw_unit_price": 0.002
+   }
+  ],
+  "discovery": "cloudtrail",
+  "egress": null,
+  "exclusions": [
+   "account-specific discounts",
+   "spot",
+   "reserved / committed-use",
+   "free-tier / credits",
+   "usage-metered egress (reported separately, not in the baseline)"
+  ],
+  "flavor": "containerservice+dbinstance+networkinterface+securitygroup",
+  "fx": null,
+  "kind": "standing",
+  "monthly_usd": 30.6622,
+  "n_resources": 5,
+  "no_sku_match": [
+   "ec2:CreateSecurityGroup@us-east-1"
+  ],
+  "ok": true,
+  "price_source": "AWS published price list (bulk offer index), on-demand per C19; resources discovered from CloudTrail management events; re-priced retroactively, no live describe",
+  "price_urls": [],
+  "priced_resources": [
+   {
+    "kind": "dbinstance",
+    "part": "self",
+    "quantity": 1.0,
+    "region": "us-east-1",
+    "sku": "9HPEGXQTDDGH53C9",
+    "usagetype": "InstanceUsage:db.t4g.micro"
+   },
+   {
+    "kind": "storage",
+    "part": "storage",
+    "quantity": 20.0,
+    "region": "us-east-1",
+    "sku": "9N8GA2WTNXBZXF6T",
+    "usagetype": "RDS:GP3-Storage"
+   },
+   {
+    "kind": "containerservice",
+    "part": "self",
+    "quantity": 1.0,
+    "region": "us-east-1",
+    "sku": "BVZXMH7F4UF2SP8B",
+    "usagetype": "USE1-ContainerSvcUsage:Micro-0.25CPU-1GB"
+   },
+   {
+    "kind": "containerservice",
+    "part": "self",
+    "quantity": 1.0,
+    "region": "us-east-1",
+    "sku": "TVRJUC9D5VVSWH8Q",
+    "usagetype": "USE1-ContainerSvcUsage:Nano-0.25CPU-0.5GB"
+   },
+   {
+    "kind": "networkinterface",
+    "part": "self",
+    "quantity": 1.0,
+    "region": "us-east-1",
+    "sku": "3MUZ8GNDVB5XPGSB",
+    "usagetype": "USE1-NetworkInterface-Assessment"
+   }
+  ],
+  "provider": "aws",
+  "region": "us-east-1",
+  "task_definition_collapse": [],
+  "traffic_estimate": {
+   "high": 30.66,
+   "low": 30.66,
+   "medium": 30.66
+  },
+  "unpriced_resources": [],
+  "window": [
+   "2026-09-06T08:26:27Z",
+   "2026-09-06T16:41:27Z"
+  ]
+ },
+ "deploy": {
+  "agent_model": "claude-opus-5",
+  "flavor": null,
+  "idle_cap_sensitivity": {
+   "120.0": 29.7,
+   "150.0": 29.7,
+   "200.0": 29.7,
+   "300.0": 29.7,
+   "60.0": 29.7,
+   "600.0": 29.7
+  },
+  "lane_summary": {
+   "agent_is_floor": true,
+   "agent_split": {
+    "first-token": 322.6,
+    "streaming": 182.4
+   },
+   "attributed_s": 1702.3,
+   "events": 111,
+   "idle_s": 0.0,
+   "lane_pct_of_wall": {
+    "agent": 29.7,
+    "human": 0.0,
+    "platform": 70.3
+   },
+   "lanes": {
+    "agent": 505.0,
+    "human": 0.0,
+    "platform": 1197.3
+   },
+   "path": "f6f090dd-cccb-42f1-bccf-170a4f5e1c1c.jsonl",
+   "platform_is_ceiling": true,
+   "wall_s": 1702.4
+  },
+  "ops": {
+   "curl_probes": 10,
+   "redeploys": 0,
+   "ssh_escapes": 0,
+   "tool_calls": 37,
+   "tool_errors": 3,
+   "top_tools": {
+    "Bash": 30,
+    "mcp__aws-mcp__aws___run_script": 7
+   }
+  },
+  "session": "f6f090dd-cccb-42f1-bccf-170a4f5e1c1c",
+  "tokens": {
+   "cache_creation_input_tokens": 82539,
+   "cache_read_input_tokens": 1967920,
+   "input_tokens": 68,
+   "output_tokens": 40464,
+   "turns": 34
+  },
+  "transcript": "sessions/f6f090dd-cccb-42f1-bccf-170a4f5e1c1c.jsonl",
+  "warmth": {
+   "clone_or_pull": null,
+   "phase_timings": null,
+   "source": null
+  }
+ },
+ "deprovision": {
+  "cost": 1.7364085000000002,
+  "lane_summary": {
+   "agent_is_floor": true,
+   "agent_split": {
+    "first-token": 418.2,
+    "streaming": 219.0
+   },
+   "attributed_s": 2217.3,
+   "events": 155,
+   "idle_s": 0.0,
+   "lane_pct_of_wall": {
+    "agent": 28.7,
+    "human": 5.4,
+    "platform": 65.9
+   },
+   "lanes": {
+    "agent": 637.2,
+    "human": 120.0,
+    "platform": 1460.1
+   },
+   "path": "f6f090dd-cccb-42f1-bccf-170a4f5e1c1c.jsonl",
+   "platform_is_ceiling": true,
+   "wall_s": 2217.2
+  },
+  "orphaned": false,
+  "session": "f6f090dd-cccb-42f1-bccf-170a4f5e1c1c",
+  "skipped": false,
+  "tokens": {
+   "cache_creation_input_tokens": 99421,
+   "cache_read_input_tokens": 3334913,
+   "input_tokens": 98,
+   "output_tokens": 50597,
+   "turns": 49
+  },
+  "transcript": "sessions/f6f090dd-cccb-42f1-bccf-170a4f5e1c1c.jsonl"
+ },
+ "first_attempt_success": true,
+ "health_code": "200",
+ "measured_at": "2026-09-06T16:26:27.707195+00:00",
+ "model": "claude-opus-5",
+ "orphan_warning": false,
+ "outcome": "SUCCESS",
+ "prompts_used": 1,
+ "read_verify": {
+  "dead": true,
+  "http_code": "404",
+  "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+ },
+ "reaped": {
+  "checked": true,
+  "failed": [],
+  "reaped": []
+ },
+ "recovery": {
+  "reached_healthy": true,
+  "repair_prompts": 0,
+  "rounds_to_healthy": 1
+ },
+ "rounds": [
+  {
+   "cost": 2.8251680000000006,
+   "round": 1,
+   "session": "f6f090dd-cccb-42f1-bccf-170a4f5e1c1c",
+   "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+  }
+ ],
+ "run": 25,
+ "run_token": "acs8cca8edc",
+ "screenshot": null,
+ "serving": {
+  "agent_after_serving_s": 584.7,
+  "agent_finished_at_s": 1713.5,
+  "candidates_polled": [
+   "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+  ],
+  "caught_by": "concurrent-poller",
+  "first_serve_at_s": 1128.8,
+  "first_serve_code": "200",
+  "http_code": "200",
+  "last_codes": {
+   "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com": "200"
+  },
+  "origin": [
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 160.9,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 166.9,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 172.8,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 178.7,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 184.6,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 190.6,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 196.5,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 202.4,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 208.4,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 214.3,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 220.1,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 226.1,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 232.1,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 238.0,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 243.9,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 249.8,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 255.7,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 261.7,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 267.6,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 273.5,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 279.4,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 285.4,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 291.3,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 297.2,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 303.1,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 309.1,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 315.0,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 320.9,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 326.9,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 332.7,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 338.7,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 344.6,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 350.5,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 356.4,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 362.3,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 368.2,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 374.2,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 380.1,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 386.0,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 391.9,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 397.8,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 403.8,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 409.7,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 415.6,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 421.6,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 427.5,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 433.4,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 439.3,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 445.3,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 451.2,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 457.2,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 463.1,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 469.0,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 474.9,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<!DOCTYPE html>\n<html>\n<head><title>404 No Such Service</title></head>\n<body bgcolor=\"white\">\n<center><h1>404 No Such Service</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 480.8,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "body_bytes": 156,
+    "body_sample": "<html>\n<head><title>503 Service Temporarily Unavailable</title></head>\n<body>\n<center><h1>503 Service Temporarily Unavailable</h1></center>\n</body>\n</html>\n",
+    "code": "404",
+    "edge": "aws-alb-no-upstream",
+    "server": "awselb/2.0",
+    "t_s": 486.8,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   }
+  ],
+  "poll_log": [
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1128.763,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1134.736,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1140.703,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1147.865,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1155.541,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1161.523,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1167.518,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1173.477,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1179.453,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1185.424,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1191.365,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1197.33,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1203.286,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1209.235,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1215.145,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1221.122,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1227.167,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1233.138,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1239.087,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1245.027,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1250.98,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1256.927,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1262.862,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1268.819,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1274.779,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1280.708,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1286.713,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1292.682,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1298.66,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1304.631,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1310.666,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1316.614,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1322.53,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1328.45,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1334.373,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1340.301,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1346.258,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1352.279,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1358.235,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1364.195,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1370.16,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1376.133,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1382.069,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1388.022,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1393.98,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1399.953,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1405.968,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1412.039,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1417.997,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1423.958,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1429.903,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1435.866,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1441.792,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1447.773,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1453.683,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1459.647,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1465.597,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1471.578,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1477.582,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   },
+   {
+    "bytes": 9673,
+    "code": "200",
+    "sig": "4b1f00c0f4d6",
+    "t_s": 1483.53,
+    "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+   }
+  ],
+  "poll_log_len": 97,
+  "polls": 269,
+  "predicate": "first response from the URL with HTTP status < 500 (000 and 5xx = not serving)",
+  "rejected_edge_4xx": 56,
+  "served_at_s": 1128.8,
+  "served_on_first_poll": false,
+  "t1_method": "durable-serve/1.0",
+  "url_first_seen_s": 160.0
+ },
+ "split": {
+  "agent_components_s": {
+   "inference": 402.5
+  },
+  "critical_agent_s": 402.5,
+  "critical_platform_s": 716.4,
+  "makespan_s": 1118.9,
+  "overlap_s": 0.0,
+  "post_handoff_boot_s": 175.9,
+  "raw_agent_time_s": 402.5,
+  "schema_conformant": true,
+  "via": "acspeed.operation.split + agenttime.decompose"
+ },
+ "steps": 34,
+ "success_oracle": {
+  "bytes": 9673,
+  "content_verified": true,
+  "disclosure": "off-clock success oracle, SEPARATE from the liveness clock (t1); conservative, flags only infra-error/default pages + empty bodies, never a legitimate app 4xx",
+  "http_code": "200",
+  "note": "app content",
+  "signature": null
+ },
+ "task": "umami",
+ "tier_run": {
+  "durability": {
+   "achieved": true,
+   "achieved_on_iter": 1,
+   "cycles": [
+    {
+     "agent_cost_usd": 0.6009120000000001,
+     "agent_error": false,
+     "agent_session": "f6f090dd-cccb-42f1-bccf-170a4f5e1c1c",
+     "durable": false,
+     "op_id": "restart-durability",
+     "op_type": "operate_mutate",
+     "split": {
+      "critical_agent_s": 76.2,
+      "critical_platform_s": 248.1,
+      "makespan_s": 324.2,
+      "overlap_s": 0.0,
+      "via": "acspeed.transcript window + owner_split",
+      "wall_s": 339.2
+     },
+     "started_at": 1788711250.867903,
+     "verified_at": 1788711590.1113997,
+     "verify_detail": "http 200, umami-signature=yes",
+     "verify_measured": {
+      "http_code": 200,
+      "umami_signature": true
+     },
+     "verify_ok": true,
+     "verify_unverifiable": false,
+     "wall_s": 339.2
+    }
+   ],
+   "iters": 1
+  },
+  "failures": [],
+  "instance": "umami-medium-b",
+  "operations": [
+   {
+    "agent_cost_usd": null,
+    "agent_error": false,
+    "agent_session": "f6f090dd-cccb-42f1-bccf-170a4f5e1c1c",
+    "durable": true,
+    "op_id": "deploy-serve",
+    "op_type": "provision",
+    "split": null,
+    "started_at": 1788711129.2002504,
+    "verified_at": 1788711130.1773722,
+    "verify_detail": "http 200, umami-signature=yes",
+    "verify_measured": {
+     "http_code": 200,
+     "umami_signature": true
+    },
+    "verify_ok": true,
+    "verify_unverifiable": false,
+    "wall_s": 1.0
+   },
+   {
+    "agent_cost_usd": 0.199241,
+    "agent_error": false,
+    "agent_session": "f6f090dd-cccb-42f1-bccf-170a4f5e1c1c",
+    "durable": true,
+    "op_id": "mutate:register",
+    "op_type": "operate_mutate",
+    "split": {
+     "critical_agent_s": 20.8,
+     "critical_platform_s": 2.6,
+     "makespan_s": 23.3,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 36.9
+    },
+    "started_at": 1788711130.1774144,
+    "verified_at": 1788711167.0743263,
+    "verify_detail": "probe user acspeed_probe_38ea112f authenticates",
+    "verify_measured": null,
+    "verify_ok": true,
+    "verify_unverifiable": false,
+    "wall_s": 36.9
+   },
+   {
+    "agent_cost_usd": 0.157437,
+    "agent_error": false,
+    "agent_session": "f6f090dd-cccb-42f1-bccf-170a4f5e1c1c",
+    "durable": true,
+    "op_id": "deploy-site-b",
+    "op_type": "provision",
+    "split": {
+     "critical_agent_s": 17.3,
+     "critical_platform_s": 10.1,
+     "makespan_s": 27.4,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 41.1
+    },
+    "started_at": 1788711167.0743773,
+    "verified_at": 1788711208.15266,
+    "verify_detail": "site B http 200, canonical-page=yes",
+    "verify_measured": {
+     "http_code": 200,
+     "site_b_url": "https://alcove-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+    },
+    "verify_ok": true,
+    "verify_unverifiable": false,
+    "wall_s": 41.1
+   },
+   {
+    "agent_cost_usd": 0.14820149999999999,
+    "agent_error": false,
+    "agent_session": "f6f090dd-cccb-42f1-bccf-170a4f5e1c1c",
+    "durable": true,
+    "op_id": "integrate",
+    "op_type": "operate_mutate",
+    "split": {
+     "critical_agent_s": 17.9,
+     "critical_platform_s": 2.0,
+     "makespan_s": 19.9,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 42.7
+    },
+    "started_at": 1788711208.1527002,
+    "verified_at": 1788711250.8678367,
+    "verify_detail": "[wiring] site B HTML carries umami wiring (website id 12a6a549-a6b9-4b36-9997-e47b28e1c234) | [visit] sentinel-path pageviews 0 -> 1 after a real headless visit (playwright)",
+    "verify_measured": {
+     "visit": {
+      "after": 1,
+      "before": 0,
+      "engine": "playwright",
+      "path": "/acspeed-sentinel-38ea112f",
+      "website_id": "12a6a549-a6b9-4b36-9997-e47b28e1c234"
+     },
+     "wiring": {
+      "website_id": "12a6a549-a6b9-4b36-9997-e47b28e1c234"
+     }
+    },
+    "verify_ok": true,
+    "verify_unverifiable": false,
+    "wall_s": 42.7
+   }
+  ],
+  "passed": true,
+  "score": {
+   "break_point": [],
+   "checkpoints": [
+    {
+     "name": "deploy-serve",
+     "ok": true
+    },
+    {
+     "name": "mutate:register",
+     "ok": true
+    },
+    {
+     "name": "deploy-site-b",
+     "ok": true
+    },
+    {
+     "name": "integrate",
+     "ok": true
+    },
+    {
+     "name": "restart-durability",
+     "ok": true
+    }
+   ],
+   "completed": true,
+   "full_completion_bonus": 0.5,
+   "partial_credit": 1.0,
+   "passed": 5,
+   "score": 1.5,
+   "total": 5
+  },
+  "site_b_url": "https://alcove-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com",
+  "terminal_reverify": {
+   "deploy-serve": {
+    "detail": "http 200, umami-signature=yes",
+    "ok": true
+   },
+   "deploy-site-b": {
+    "detail": "site B http 200, canonical-page=yes",
+    "ok": true
+   },
+   "integrate": {
+    "detail": "[wiring] site B HTML carries umami wiring (website id 12a6a549-a6b9-4b36-9997-e47b28e1c234) | [persist] sentinel-path pageview count 1 vs floor 1 (survived the restart)",
+    "ok": true
+   },
+   "mutate:register": {
+    "detail": "probe user acspeed_probe_38ea112f authenticates",
+    "ok": true
+   }
+  },
+  "tier": "medium"
+ },
+ "time_to_serving_min": 18.81,
+ "time_to_serving_s": 1128.8,
+ "url": "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com",
+ "url_ambiguous": false,
+ "url_candidates": [
+  "https://umami-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com",
+  "https://alcove-acs8cca8edc.w4a4v7yp5swqw.us-east-1.cs.amazonlightsail.com"
+ ],
+ "url_source": "external-poll"
+}

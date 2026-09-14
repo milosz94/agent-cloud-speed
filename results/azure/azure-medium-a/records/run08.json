@@ -1,0 +1,393 @@
+{
+ "agent_wall_s": 2573.0,
+ "capability": {
+  "error": "capability N/A: the Azure deploy is not a shell-reachable VM (Container Apps / App Service / Container Instances); C disclosed N/A",
+  "na": true,
+  "ok": false
+ },
+ "cloud": "azure",
+ "cost_run_rate": {
+  "all_in_hourly_usd": 0.034,
+  "capture_date": "2026-09-01",
+  "components": [
+   {
+    "hourly_usd": 0.017,
+    "name": "compute:app-service-plan:B1",
+    "native_unit": "plan-hour",
+    "quantity": 1.0,
+    "raw_unit_price": 0.017
+   },
+   {
+    "hourly_usd": 0.017,
+    "name": "compute:postgres-flexible",
+    "native_unit": "instance-hour",
+    "quantity": 1.0,
+    "raw_unit_price": 0.017
+   }
+  ],
+  "egress": null,
+  "exclusions": [
+   "account-specific discounts",
+   "spot",
+   "reserved / committed-use",
+   "free-tier / credits",
+   "usage-metered egress (reported separately, not in the baseline)"
+  ],
+  "flavor": "Microsoft.DBforPostgreSQL/flexibleServers+Microsoft.Web/serverFarms",
+  "fx": null,
+  "kind": "standing",
+  "monthly_usd": 24.82,
+  "ok": true,
+  "price_source": "Azure Retail Prices API (universal resource sweep, public list, USD)",
+  "price_urls": [],
+  "provider": "azure",
+  "region": "westus2",
+  "traffic_estimate": {
+   "high": 24.82,
+   "low": 24.82,
+   "medium": 24.82
+  }
+ },
+ "deploy": {
+  "agent_model": "claude-opus-5",
+  "flavor": null,
+  "idle_cap_sensitivity": {
+   "120.0": 17.7,
+   "150.0": 17.7,
+   "200.0": 17.7,
+   "300.0": 17.7,
+   "60.0": 17.7,
+   "600.0": 17.7
+  },
+  "lane_summary": {
+   "agent_is_floor": true,
+   "agent_split": {
+    "first-token": 305.8,
+    "streaming": 149.6
+   },
+   "attributed_s": 2573.0,
+   "events": 177,
+   "idle_s": 0.0,
+   "lane_pct_of_wall": {
+    "agent": 17.7,
+    "human": 0.0,
+    "platform": 82.3
+   },
+   "lanes": {
+    "agent": 455.5,
+    "human": 0.0,
+    "platform": 2117.5
+   },
+   "path": "bef9e3ac-b326-4c68-9755-2b6ae52c0238.jsonl",
+   "platform_is_ceiling": true,
+   "wall_s": 2573.0
+  },
+  "ops": {
+   "curl_probes": 19,
+   "redeploys": 0,
+   "ssh_escapes": 0,
+   "tool_calls": 60,
+   "tool_errors": 8,
+   "top_tools": {
+    "Bash": 58,
+    "ToolSearch": 1,
+    "mcp__azure__subscription_list": 1
+   }
+  },
+  "session": "bef9e3ac-b326-4c68-9755-2b6ae52c0238",
+  "tokens": {
+   "cache_creation_input_tokens": 82156,
+   "cache_read_input_tokens": 3581328,
+   "input_tokens": 122,
+   "output_tokens": 31679,
+   "turns": 61
+  },
+  "transcript": "sessions/bef9e3ac-b326-4c68-9755-2b6ae52c0238.jsonl",
+  "warmth": {
+   "clone_or_pull": "pull-mentioned",
+   "phase_timings": null,
+   "source": null
+  }
+ },
+ "deprovision": {
+  "cost": 2.45169,
+  "lane_summary": {
+   "agent_is_floor": true,
+   "agent_split": {
+    "first-token": 661.9,
+    "streaming": 273.7
+   },
+   "attributed_s": 4084.2,
+   "events": 335,
+   "idle_s": 0.0,
+   "lane_pct_of_wall": {
+    "agent": 22.9,
+    "human": 2.4,
+    "platform": 74.7
+   },
+   "lanes": {
+    "agent": 935.7,
+    "human": 99.2,
+    "platform": 3049.3
+   },
+   "path": "bef9e3ac-b326-4c68-9755-2b6ae52c0238.jsonl",
+   "platform_is_ceiling": true,
+   "wall_s": 4084.1
+  },
+  "orphaned": false,
+  "session": "bef9e3ac-b326-4c68-9755-2b6ae52c0238",
+  "skipped": false,
+  "tokens": {
+   "cache_creation_input_tokens": 131706,
+   "cache_read_input_tokens": 10994309,
+   "input_tokens": 240,
+   "output_tokens": 66101,
+   "turns": 120
+  },
+  "transcript": "sessions/bef9e3ac-b326-4c68-9755-2b6ae52c0238.jsonl"
+ },
+ "first_attempt_success": true,
+ "health_code": "403",
+ "measured_at": "2026-09-01T06:42:58.605713+00:00",
+ "model": "claude-opus-5",
+ "orphan_warning": false,
+ "outcome": "SUCCESS",
+ "prompts_used": 1,
+ "read_verify": {
+  "dead": true,
+  "http_code": "000",
+  "url": "https://umami-acsc36ab818.azurewebsites.net"
+ },
+ "reaped": {
+  "checked": true,
+  "failed": [],
+  "reaped": []
+ },
+ "recovery": {
+  "reached_healthy": true,
+  "repair_prompts": 0,
+  "rounds_to_healthy": 1
+ },
+ "rounds": [
+  {
+   "cost": 3.405943,
+   "round": 1,
+   "session": "bef9e3ac-b326-4c68-9755-2b6ae52c0238",
+   "url": "https://umami-acsc36ab818.azurewebsites.net"
+  }
+ ],
+ "run": 8,
+ "run_token": "acsc36ab818",
+ "screenshot": null,
+ "serving": {
+  "agent_after_serving_s": 1086.4,
+  "agent_finished_at_s": 2589.6,
+  "candidates_polled": [
+   "https://umami-acsc36ab818.azurewebsites.net"
+  ],
+  "caught_by": "concurrent-poller",
+  "http_code": "403",
+  "last_codes": {
+   "https://umami-acsc36ab818.azurewebsites.net": "403"
+  },
+  "polls": 90,
+  "predicate": "first response from the URL with HTTP status < 500 (000 and 5xx = not serving)",
+  "served_at_s": 1503.3,
+  "served_on_first_poll": false,
+  "url_first_seen_s": 745.1
+ },
+ "split": {
+  "agent_components_s": {
+   "inference": 335.0
+  },
+  "critical_agent_s": 335.0,
+  "critical_platform_s": 1155.8,
+  "makespan_s": 1490.8,
+  "overlap_s": 0.0,
+  "post_handoff_boot_s": 8.3,
+  "raw_agent_time_s": 335.0,
+  "schema_conformant": true,
+  "via": "acspeed.operation.split + agenttime.decompose"
+ },
+ "steps": 61,
+ "success_oracle": {
+  "bytes": 9673,
+  "content_verified": true,
+  "disclosure": "off-clock success oracle, SEPARATE from the liveness clock (t1); conservative, flags only infra-error/default pages + empty bodies, never a legitimate app 4xx",
+  "http_code": "200",
+  "note": "app content",
+  "signature": null
+ },
+ "task": "umami",
+ "tier_run": {
+  "durability": {
+   "achieved": true,
+   "achieved_on_iter": 1,
+   "cycles": [
+    {
+     "agent_cost_usd": 1.168056,
+     "agent_error": false,
+     "agent_session": "bef9e3ac-b326-4c68-9755-2b6ae52c0238",
+     "durable": false,
+     "op_id": "restart-durability",
+     "op_type": "operate_mutate",
+     "split": {
+      "critical_agent_s": 114.5,
+      "critical_platform_s": 224.5,
+      "makespan_s": 339.1,
+      "overlap_s": 0.0,
+      "via": "acspeed.transcript window + owner_split",
+      "wall_s": 368.9
+     },
+     "started_at": 1788243693.8067472,
+     "verified_at": 1788244062.69226,
+     "verify_detail": "http 200, umami-signature=yes",
+     "verify_ok": true,
+     "wall_s": 368.9
+    }
+   ],
+   "iters": 1
+  },
+  "failures": [],
+  "instance": "umami-medium",
+  "operations": [
+   {
+    "agent_cost_usd": null,
+    "agent_error": false,
+    "agent_session": "bef9e3ac-b326-4c68-9755-2b6ae52c0238",
+    "durable": true,
+    "op_id": "deploy-serve",
+    "op_type": "provision",
+    "split": null,
+    "started_at": 1788242549.1816187,
+    "verified_at": 1788242550.7356994,
+    "verify_detail": "http 200, umami-signature=yes",
+    "verify_ok": true,
+    "wall_s": 1.6
+   },
+   {
+    "agent_cost_usd": 1.567576,
+    "agent_error": false,
+    "agent_session": "bef9e3ac-b326-4c68-9755-2b6ae52c0238",
+    "durable": true,
+    "op_id": "mutate:register",
+    "op_type": "operate_mutate",
+    "split": {
+     "critical_agent_s": 150.9,
+     "critical_platform_s": 379.6,
+     "makespan_s": 530.5,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 550.4
+    },
+    "started_at": 1788242550.7357404,
+    "verified_at": 1788243101.1772141,
+    "verify_detail": "probe user acspeed_probe_4c62d44f authenticates",
+    "verify_ok": true,
+    "wall_s": 550.4
+   },
+   {
+    "agent_cost_usd": 1.3132805,
+    "agent_error": false,
+    "agent_session": "bef9e3ac-b326-4c68-9755-2b6ae52c0238",
+    "durable": true,
+    "op_id": "deploy-site-b",
+    "op_type": "provision",
+    "split": {
+     "critical_agent_s": 126.4,
+     "critical_platform_s": 212.8,
+     "makespan_s": 339.2,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 357.4
+    },
+    "started_at": 1788243101.1772628,
+    "verified_at": 1788243458.609381,
+    "verify_detail": "site B http 200, canonical-page=yes",
+    "verify_ok": true,
+    "wall_s": 357.4
+   },
+   {
+    "agent_cost_usd": 1.014218,
+    "agent_error": false,
+    "agent_session": "bef9e3ac-b326-4c68-9755-2b6ae52c0238",
+    "durable": true,
+    "op_id": "integrate",
+    "op_type": "operate_mutate",
+    "split": {
+     "critical_agent_s": 88.4,
+     "critical_platform_s": 114.8,
+     "makespan_s": 203.2,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 235.2
+    },
+    "started_at": 1788243458.6094177,
+    "verified_at": 1788243693.8066807,
+    "verify_detail": "[wiring] site B HTML carries umami wiring (website id fb152a13-8d56-41c9-9bf0-2cc34d53aa91) | [visit] sentinel-path pageviews 0 -> 1 after a real headless visit (chromium-cli)",
+    "verify_ok": true,
+    "wall_s": 235.2
+   }
+  ],
+  "passed": true,
+  "score": {
+   "break_point": [],
+   "checkpoints": [
+    {
+     "name": "deploy-serve",
+     "ok": true
+    },
+    {
+     "name": "mutate:register",
+     "ok": true
+    },
+    {
+     "name": "deploy-site-b",
+     "ok": true
+    },
+    {
+     "name": "integrate",
+     "ok": true
+    },
+    {
+     "name": "restart-durability",
+     "ok": true
+    }
+   ],
+   "completed": true,
+   "full_completion_bonus": 0.5,
+   "partial_credit": 1.0,
+   "passed": 5,
+   "score": 1.5,
+   "total": 5
+  },
+  "site_b_url": "https://alcove-quiet-nook-7b3e91.azurewebsites.net",
+  "terminal_reverify": {
+   "deploy-serve": {
+    "detail": "http 200, umami-signature=yes",
+    "ok": true
+   },
+   "deploy-site-b": {
+    "detail": "site B http 200, canonical-page=yes",
+    "ok": true
+   },
+   "integrate": {
+    "detail": "[wiring] site B HTML carries umami wiring (website id fb152a13-8d56-41c9-9bf0-2cc34d53aa91) | [persist] sentinel-path pageview count 1 vs floor 1 (survived the restart)",
+    "ok": true
+   },
+   "mutate:register": {
+    "detail": "probe user acspeed_probe_4c62d44f authenticates",
+    "ok": true
+   }
+  },
+  "tier": "medium"
+ },
+ "time_to_serving_min": 25.05,
+ "time_to_serving_s": 1503.3,
+ "url": "https://umami-acsc36ab818.azurewebsites.net",
+ "url_ambiguous": false,
+ "url_candidates": [
+  "https://umami-acsc36ab818.azurewebsites.net"
+ ],
+ "url_source": "external-poll"
+}

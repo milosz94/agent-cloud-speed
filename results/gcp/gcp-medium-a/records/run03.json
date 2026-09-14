@@ -1,0 +1,451 @@
+{
+ "agent_wall_s": 481.7,
+ "capability": {
+  "error": "capability N/A: the GCP deploy is not a shell-reachable VM (Cloud Run / App Engine / serverless); C disclosed N/A",
+  "na": true,
+  "ok": false
+ },
+ "cloud": "gcp",
+ "cost_run_rate": {
+  "assumptions": [
+   "egress GB estimated as requests x 50 KB average response size",
+   "request grid (per month): 10k, 50k, 100k, 500k, 1M, 10M",
+   "active compute (driver='other') folded into the per-request cost assuming 1 vCPU + 0.5 GiB held 0.1s per request; always-on / provisioned components folded as a flat monthly floor",
+   "folded a Cloud Run min-instances floor: 1 min instance(s) x (1 vCPU + 1 GiB) always allocated at the request-based Min-Instance idle SKUs = $0.018/hr; the per-request usage schedule is on top",
+   "folded a Cloud SQL instance (db-f1-micro) as a standing floor $0.0221/hr (Enterprise-Zonal edition assumed; in-use public IPv4 included, region-approximate)",
+   "Artifact Registry image storage is not folded here: a single app image sits within the 0.5 GB free tier (storage beyond that lists at $0.10/GB-month), a de-minimis line disclosed rather than silently omitted",
+   "universal sweep: discovered run.googleapis.com/Revision 'umami-acs6878e530-00001-sms' with no pricer; DISCLOSED unpriced, never silently $0 (a resource type the tool does not yet price)"
+  ],
+  "capture_date": "2026-08-31",
+  "components": [
+   {
+    "driver": "requests",
+    "name": "requests",
+    "native_unit": "per request",
+    "per_unit_usd": 4e-07,
+    "raw_unit_price": 4e-07,
+    "tier": "",
+    "unit": "per request"
+   },
+   {
+    "driver": "other",
+    "name": "compute-active-cpu",
+    "native_unit": "per vCPU-second",
+    "per_unit_usd": 2.4e-05,
+    "raw_unit_price": 2.4e-05,
+    "tier": "",
+    "unit": "vCPU-second"
+   },
+   {
+    "driver": "other",
+    "name": "compute-active-mem",
+    "native_unit": "per GiB-second",
+    "per_unit_usd": 2.5e-06,
+    "raw_unit_price": 2.5e-06,
+    "tier": "",
+    "unit": "GiB-second"
+   }
+  ],
+  "exclusions": [
+   "account-specific discounts",
+   "spot",
+   "reserved / committed-use",
+   "free-tier / credits",
+   "usage-metered egress (reported separately, not in the baseline)"
+  ],
+  "fx": null,
+  "kind": "usage",
+  "ok": true,
+  "price_source": "GCP Cloud Billing Catalog (request-based Cloud Run SKUs, ADC)",
+  "price_urls": [
+   "https://cloudbilling.googleapis.com/v1/services/152E-C115-5142/skus"
+  ],
+  "provider": "gcp",
+  "region": "us-central1",
+  "schedule": [
+   {
+    "egress_gb": 0.4768,
+    "label": "10k",
+    "requests_per_month": 10000.0,
+    "usd_per_month": 29.2843
+   },
+   {
+    "egress_gb": 2.3842,
+    "label": "50k",
+    "requests_per_month": 50000.0,
+    "usd_per_month": 29.4013
+   },
+   {
+    "egress_gb": 4.7684,
+    "label": "100k",
+    "requests_per_month": 100000.0,
+    "usd_per_month": 29.5475
+   },
+   {
+    "egress_gb": 23.8419,
+    "label": "500k",
+    "requests_per_month": 500000.0,
+    "usd_per_month": 30.7175
+   },
+   {
+    "egress_gb": 47.6837,
+    "label": "1M",
+    "requests_per_month": 1000000.0,
+    "usd_per_month": 32.18
+   },
+   {
+    "egress_gb": 476.8372,
+    "label": "10M",
+    "requests_per_month": 10000000.0,
+    "usd_per_month": 58.505
+   }
+  ],
+  "service": "Cloud Run",
+  "traffic_estimate": {
+   "high": 58.51,
+   "low": 29.28,
+   "medium": 30.72
+  }
+ },
+ "deploy": {
+  "agent_model": "claude-opus-5",
+  "flavor": null,
+  "idle_cap_sensitivity": {
+   "120.0": 37.9,
+   "150.0": 37.9,
+   "200.0": 37.9,
+   "300.0": 37.9,
+   "60.0": 37.9,
+   "600.0": 37.9
+  },
+  "lane_summary": {
+   "agent_is_floor": true,
+   "agent_split": {
+    "first-token": 116.9,
+    "streaming": 65.5
+   },
+   "attributed_s": 481.7,
+   "events": 73,
+   "idle_s": 0.0,
+   "lane_pct_of_wall": {
+    "agent": 37.9,
+    "human": 0.0,
+    "platform": 62.1
+   },
+   "lanes": {
+    "agent": 182.4,
+    "human": 0.0,
+    "platform": 299.3
+   },
+   "path": "79bf64f7-f357-4f00-ad9f-c34e41b4f4c2.jsonl",
+   "platform_is_ceiling": true,
+   "wall_s": 481.7
+  },
+  "ops": {
+   "curl_probes": 8,
+   "redeploys": 0,
+   "ssh_escapes": 0,
+   "tool_calls": 26,
+   "tool_errors": 2,
+   "top_tools": {
+    "Bash": 25,
+    "ToolSearch": 1
+   }
+  },
+  "session": "79bf64f7-f357-4f00-ad9f-c34e41b4f4c2",
+  "tokens": {
+   "cache_creation_input_tokens": 40790,
+   "cache_read_input_tokens": 885508,
+   "input_tokens": 42,
+   "output_tokens": 13597,
+   "turns": 21
+  },
+  "transcript": "sessions/79bf64f7-f357-4f00-ad9f-c34e41b4f4c2.jsonl",
+  "warmth": {
+   "clone_or_pull": null,
+   "phase_timings": null,
+   "source": null
+  }
+ },
+ "deprovision": {
+  "cost": 1.6166850000000001,
+  "lane_summary": {
+   "agent_is_floor": true,
+   "agent_split": {
+    "first-token": 319.2,
+    "streaming": 149.8
+   },
+   "attributed_s": 1523.8,
+   "events": 168,
+   "idle_s": 0.0,
+   "lane_pct_of_wall": {
+    "agent": 30.8,
+    "human": 10.6,
+    "platform": 58.6
+   },
+   "lanes": {
+    "agent": 469.0,
+    "human": 161.7,
+    "platform": 893.1
+   },
+   "path": "79bf64f7-f357-4f00-ad9f-c34e41b4f4c2.jsonl",
+   "platform_is_ceiling": true,
+   "wall_s": 1523.8
+  },
+  "orphaned": false,
+  "session": "79bf64f7-f357-4f00-ad9f-c34e41b4f4c2",
+  "skipped": false,
+  "tokens": {
+   "cache_creation_input_tokens": 134303,
+   "cache_read_input_tokens": 3449426,
+   "input_tokens": 110,
+   "output_tokens": 35650,
+   "turns": 55
+  },
+  "transcript": "sessions/79bf64f7-f357-4f00-ad9f-c34e41b4f4c2.jsonl"
+ },
+ "first_attempt_success": true,
+ "health_code": "200",
+ "measured_at": "2026-08-31T22:12:37.945623+00:00",
+ "model": "claude-opus-5",
+ "orphan_warning": false,
+ "outcome": "SUCCESS",
+ "prompts_used": 1,
+ "read_verify": {
+  "dead": true,
+  "http_code": "404",
+  "url": "https://umami-acs6878e530-299813327652.us-central1.run.app"
+ },
+ "reaped": {
+  "checked": true,
+  "failed": [],
+  "reaped": []
+ },
+ "recovery": {
+  "reached_healthy": true,
+  "repair_prompts": 0,
+  "rounds_to_healthy": 1
+ },
+ "rounds": [
+  {
+   "cost": 1.1919539999999997,
+   "round": 1,
+   "session": "79bf64f7-f357-4f00-ad9f-c34e41b4f4c2",
+   "url": "https://umami-acs6878e530-299813327652.us-central1.run.app"
+  }
+ ],
+ "run": 3,
+ "run_token": "acs6878e530",
+ "screenshot": null,
+ "serving": {
+  "agent_after_serving_s": 71.0,
+  "agent_finished_at_s": 516.9,
+  "candidates_polled": [
+   "https://umami-acs6878e530-299813327652.us-central1.run.app"
+  ],
+  "caught_by": "concurrent-poller",
+  "http_code": "200",
+  "last_codes": {
+   "https://umami-acs6878e530-299813327652.us-central1.run.app": "200"
+  },
+  "polls": 1,
+  "predicate": "first response from the URL with HTTP status < 500 (000 and 5xx = not serving)",
+  "served_at_s": 445.9,
+  "served_on_first_poll": true,
+  "url_first_seen_s": 435.0
+ },
+ "split": {
+  "agent_components_s": {
+   "inference": 119.7
+  },
+  "critical_agent_s": 119.7,
+  "critical_platform_s": 291.8,
+  "makespan_s": 411.6,
+  "overlap_s": 0.0,
+  "post_handoff_boot_s": 8.6,
+  "raw_agent_time_s": 119.7,
+  "schema_conformant": true,
+  "via": "acspeed.operation.split + agenttime.decompose"
+ },
+ "steps": 21,
+ "success_oracle": {
+  "bytes": 9673,
+  "content_verified": true,
+  "disclosure": "off-clock success oracle, SEPARATE from the liveness clock (t1); conservative, flags only infra-error/default pages + empty bodies, never a legitimate app 4xx",
+  "http_code": "200",
+  "note": "app content",
+  "signature": null
+ },
+ "task": "umami",
+ "tier_run": {
+  "durability": {
+   "achieved": true,
+   "achieved_on_iter": 1,
+   "cycles": [
+    {
+     "agent_cost_usd": 0.7421675000000001,
+     "agent_error": false,
+     "agent_session": "79bf64f7-f357-4f00-ad9f-c34e41b4f4c2",
+     "durable": false,
+     "op_id": "restart-durability",
+     "op_type": "operate_mutate",
+     "split": {
+      "critical_agent_s": 102.4,
+      "critical_platform_s": 403.6,
+      "makespan_s": 506.0,
+      "overlap_s": 0.0,
+      "via": "acspeed.transcript window + owner_split",
+      "wall_s": 542.1
+     },
+     "started_at": 1788213523.5486414,
+     "verified_at": 1788214065.6352434,
+     "verify_detail": "http 200, umami-signature=yes",
+     "verify_ok": true,
+     "wall_s": 542.1
+    }
+   ],
+   "iters": 1
+  },
+  "failures": [],
+  "instance": "umami-medium",
+  "operations": [
+   {
+    "agent_cost_usd": null,
+    "agent_error": false,
+    "agent_session": "79bf64f7-f357-4f00-ad9f-c34e41b4f4c2",
+    "durable": true,
+    "op_id": "deploy-serve",
+    "op_type": "provision",
+    "split": null,
+    "started_at": 1788213031.175797,
+    "verified_at": 1788213031.6662004,
+    "verify_detail": "http 200, umami-signature=yes",
+    "verify_ok": true,
+    "wall_s": 0.5
+   },
+   {
+    "agent_cost_usd": 0.246553,
+    "agent_error": false,
+    "agent_session": "79bf64f7-f357-4f00-ad9f-c34e41b4f4c2",
+    "durable": true,
+    "op_id": "mutate:register",
+    "op_type": "operate_mutate",
+    "split": {
+     "critical_agent_s": 29.0,
+     "critical_platform_s": 2.3,
+     "makespan_s": 31.3,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 67.7
+    },
+    "started_at": 1788213031.6662407,
+    "verified_at": 1788213099.3911865,
+    "verify_detail": "probe user acspeed_probe_4d328a97 authenticates",
+    "verify_ok": true,
+    "wall_s": 67.7
+   },
+   {
+    "agent_cost_usd": 0.6973744999999999,
+    "agent_error": false,
+    "agent_session": "79bf64f7-f357-4f00-ad9f-c34e41b4f4c2",
+    "durable": true,
+    "op_id": "deploy-site-b",
+    "op_type": "provision",
+    "split": {
+     "critical_agent_s": 89.3,
+     "critical_platform_s": 81.9,
+     "makespan_s": 171.2,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 206.5
+    },
+    "started_at": 1788213099.3912222,
+    "verified_at": 1788213305.8612552,
+    "verify_detail": "site B http 200, canonical-page=yes",
+    "verify_ok": true,
+    "wall_s": 206.5
+   },
+   {
+    "agent_cost_usd": 1.082659,
+    "agent_error": false,
+    "agent_session": "79bf64f7-f357-4f00-ad9f-c34e41b4f4c2",
+    "durable": true,
+    "op_id": "integrate",
+    "op_type": "operate_mutate",
+    "split": {
+     "critical_agent_s": 65.9,
+     "critical_platform_s": 106.0,
+     "makespan_s": 171.9,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 217.7
+    },
+    "started_at": 1788213305.8612967,
+    "verified_at": 1788213523.548584,
+    "verify_detail": "[wiring] site B HTML carries umami wiring (website id c59d32d1-d128-45a2-bb3a-0041c930359e) | [visit] sentinel-path pageviews 0 -> 1 after a real headless visit (chromium-cli)",
+    "verify_ok": true,
+    "wall_s": 217.7
+   }
+  ],
+  "passed": true,
+  "score": {
+   "break_point": [],
+   "checkpoints": [
+    {
+     "name": "deploy-serve",
+     "ok": true
+    },
+    {
+     "name": "mutate:register",
+     "ok": true
+    },
+    {
+     "name": "deploy-site-b",
+     "ok": true
+    },
+    {
+     "name": "integrate",
+     "ok": true
+    },
+    {
+     "name": "restart-durability",
+     "ok": true
+    }
+   ],
+   "completed": true,
+   "full_completion_bonus": 0.5,
+   "partial_credit": 1.0,
+   "passed": 5,
+   "score": 1.5,
+   "total": 5
+  },
+  "site_b_url": "https://alcove-299813327652.us-central1.run.app",
+  "terminal_reverify": {
+   "deploy-serve": {
+    "detail": "http 200, umami-signature=yes",
+    "ok": true
+   },
+   "deploy-site-b": {
+    "detail": "site B http 200, canonical-page=yes",
+    "ok": true
+   },
+   "integrate": {
+    "detail": "[wiring] site B HTML carries umami wiring (website id c59d32d1-d128-45a2-bb3a-0041c930359e) | [persist] sentinel-path pageview count 1 vs floor 1 (survived the restart)",
+    "ok": true
+   },
+   "mutate:register": {
+    "detail": "probe user acspeed_probe_4d328a97 authenticates",
+    "ok": true
+   }
+  },
+  "tier": "medium"
+ },
+ "time_to_serving_min": 7.43,
+ "time_to_serving_s": 445.9,
+ "url": "https://umami-acs6878e530-299813327652.us-central1.run.app",
+ "url_ambiguous": false,
+ "url_candidates": [
+  "https://umami-acs6878e530-299813327652.us-central1.run.app"
+ ],
+ "url_source": "external-poll"
+}

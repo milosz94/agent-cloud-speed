@@ -1,0 +1,394 @@
+{
+ "agent_wall_s": 2578.8,
+ "capability": {
+  "error": "capability N/A: the Azure deploy is not a shell-reachable VM (Container Apps / App Service / Container Instances); C disclosed N/A",
+  "na": true,
+  "ok": false
+ },
+ "cloud": "azure",
+ "cost_run_rate": {
+  "all_in_hourly_usd": 0.05421,
+  "capture_date": "2026-09-02",
+  "components": [
+   {
+    "hourly_usd": 0.035,
+    "name": "compute:app-service-plan:B2",
+    "native_unit": "plan-hour",
+    "quantity": 1.0,
+    "raw_unit_price": 0.035
+   },
+   {
+    "hourly_usd": 0.01921,
+    "name": "compute:postgres-flexible",
+    "native_unit": "instance-hour",
+    "quantity": 1.0,
+    "raw_unit_price": 0.01921
+   }
+  ],
+  "egress": null,
+  "exclusions": [
+   "account-specific discounts",
+   "spot",
+   "reserved / committed-use",
+   "free-tier / credits",
+   "usage-metered egress (reported separately, not in the baseline)"
+  ],
+  "flavor": "Microsoft.DBforPostgreSQL/flexibleServers+Microsoft.Web/serverFarms",
+  "fx": null,
+  "kind": "standing",
+  "monthly_usd": 39.5733,
+  "ok": true,
+  "price_source": "Azure Retail Prices API (universal resource sweep, public list, USD)",
+  "price_urls": [],
+  "provider": "azure",
+  "region": "centralus",
+  "traffic_estimate": {
+   "high": 39.57,
+   "low": 39.57,
+   "medium": 39.57
+  }
+ },
+ "deploy": {
+  "agent_model": "claude-opus-5",
+  "flavor": null,
+  "idle_cap_sensitivity": {
+   "120.0": 19.2,
+   "150.0": 19.2,
+   "200.0": 19.2,
+   "300.0": 19.2,
+   "60.0": 19.2,
+   "600.0": 19.2
+  },
+  "lane_summary": {
+   "agent_is_floor": true,
+   "agent_split": {
+    "first-token": 327.2,
+    "streaming": 168.0
+   },
+   "attributed_s": 2578.8,
+   "events": 192,
+   "idle_s": 0.0,
+   "lane_pct_of_wall": {
+    "agent": 19.2,
+    "human": 0.0,
+    "platform": 80.8
+   },
+   "lanes": {
+    "agent": 495.2,
+    "human": 0.0,
+    "platform": 2083.6
+   },
+   "path": "ca89af8f-f311-42a5-9187-46d9487971a0.jsonl",
+   "platform_is_ceiling": true,
+   "wall_s": 2578.8
+  },
+  "ops": {
+   "curl_probes": 22,
+   "redeploys": 0,
+   "ssh_escapes": 0,
+   "tool_calls": 72,
+   "tool_errors": 9,
+   "top_tools": {
+    "Bash": 70,
+    "ToolSearch": 1,
+    "mcp__azure__subscription_list": 1
+   }
+  },
+  "session": "ca89af8f-f311-42a5-9187-46d9487971a0",
+  "tokens": {
+   "cache_creation_input_tokens": 96788,
+   "cache_read_input_tokens": 4495134,
+   "input_tokens": 114,
+   "output_tokens": 36140,
+   "turns": 57
+  },
+  "transcript": "sessions/ca89af8f-f311-42a5-9187-46d9487971a0.jsonl",
+  "warmth": {
+   "clone_or_pull": "pull-mentioned",
+   "phase_timings": null,
+   "source": null
+  }
+ },
+ "deprovision": {
+  "cost": 2.0301955000000005,
+  "lane_summary": {
+   "agent_is_floor": true,
+   "agent_split": {
+    "first-token": 439.5,
+    "streaming": 246.9
+   },
+   "attributed_s": 2961.3,
+   "events": 261,
+   "idle_s": 0.0,
+   "lane_pct_of_wall": {
+    "agent": 23.2,
+    "human": 2.7,
+    "platform": 74.1
+   },
+   "lanes": {
+    "agent": 686.4,
+    "human": 79.9,
+    "platform": 2195.0
+   },
+   "path": "ca89af8f-f311-42a5-9187-46d9487971a0.jsonl",
+   "platform_is_ceiling": true,
+   "wall_s": 2961.2
+  },
+  "orphaned": false,
+  "session": "ca89af8f-f311-42a5-9187-46d9487971a0",
+  "skipped": false,
+  "tokens": {
+   "cache_creation_input_tokens": 125130,
+   "cache_read_input_tokens": 7450138,
+   "input_tokens": 160,
+   "output_tokens": 49142,
+   "turns": 80
+  },
+  "transcript": "sessions/ca89af8f-f311-42a5-9187-46d9487971a0.jsonl"
+ },
+ "first_attempt_success": true,
+ "health_code": "403",
+ "measured_at": "2026-09-02T05:25:06.140052+00:00",
+ "model": "claude-opus-5",
+ "orphan_warning": false,
+ "outcome": "SUCCESS",
+ "prompts_used": 1,
+ "read_verify": {
+  "dead": true,
+  "http_code": "000",
+  "url": "https://umami-acsafaf989f.azurewebsites.net"
+ },
+ "reaped": {
+  "checked": true,
+  "failed": [],
+  "reaped": []
+ },
+ "recovery": {
+  "reached_healthy": true,
+  "repair_prompts": 0,
+  "rounds_to_healthy": 1
+ },
+ "rounds": [
+  {
+   "cost": 4.1233580000000005,
+   "round": 1,
+   "session": "ca89af8f-f311-42a5-9187-46d9487971a0",
+   "url": "https://umami-acsafaf989f.azurewebsites.net"
+  }
+ ],
+ "run": 4,
+ "run_token": "acsafaf989f",
+ "screenshot": null,
+ "serving": {
+  "agent_after_serving_s": 1128.0,
+  "agent_finished_at_s": 2595.6,
+  "candidates_polled": [
+   "https://umami-acsafaf989f.azurewebsites.net"
+  ],
+  "caught_by": "concurrent-poller",
+  "http_code": "403",
+  "last_codes": {
+   "https://umami-acsafaf989f.azurewebsites.net": "403"
+  },
+  "polls": 112,
+  "predicate": "first response from the URL with HTTP status < 500 (000 and 5xx = not serving)",
+  "served_at_s": 1467.6,
+  "served_on_first_poll": false,
+  "url_first_seen_s": 675.1
+ },
+ "split": {
+  "agent_components_s": {
+   "inference": 331.0
+  },
+  "critical_agent_s": 331.0,
+  "critical_platform_s": 1124.2,
+  "makespan_s": 1455.3,
+  "overlap_s": 0.0,
+  "post_handoff_boot_s": 6.6,
+  "raw_agent_time_s": 331.0,
+  "schema_conformant": true,
+  "via": "acspeed.operation.split + agenttime.decompose"
+ },
+ "steps": 57,
+ "success_oracle": {
+  "bytes": 9673,
+  "content_verified": true,
+  "disclosure": "off-clock success oracle, SEPARATE from the liveness clock (t1); conservative, flags only infra-error/default pages + empty bodies, never a legitimate app 4xx",
+  "http_code": "200",
+  "note": "app content",
+  "signature": null
+ },
+ "task": "umami",
+ "tier_run": {
+  "durability": {
+   "achieved": true,
+   "achieved_on_iter": 1,
+   "cycles": [
+    {
+     "agent_cost_usd": 1.3199014999999998,
+     "agent_error": false,
+     "agent_session": "ca89af8f-f311-42a5-9187-46d9487971a0",
+     "durable": false,
+     "op_id": "restart-durability",
+     "op_type": "operate_mutate",
+     "split": {
+      "critical_agent_s": 119.0,
+      "critical_platform_s": 98.8,
+      "makespan_s": 217.9,
+      "overlap_s": 0.0,
+      "via": "acspeed.transcript window + owner_split",
+      "wall_s": 233.6
+     },
+     "started_at": 1788326178.151083,
+     "verified_at": 1788326411.776269,
+     "verify_detail": "http 200, umami-signature=yes",
+     "verify_ok": true,
+     "wall_s": 233.6
+    }
+   ],
+   "iters": 1
+  },
+  "failures": [],
+  "instance": "umami-medium-b",
+  "operations": [
+   {
+    "agent_cost_usd": null,
+    "agent_error": false,
+    "agent_session": "ca89af8f-f311-42a5-9187-46d9487971a0",
+    "durable": true,
+    "op_id": "deploy-serve",
+    "op_type": "provision",
+    "split": null,
+    "started_at": 1788326030.3280962,
+    "verified_at": 1788326031.552213,
+    "verify_detail": "http 200, umami-signature=yes",
+    "verify_ok": true,
+    "wall_s": 1.2
+   },
+   {
+    "agent_cost_usd": 0.303826,
+    "agent_error": false,
+    "agent_session": "ca89af8f-f311-42a5-9187-46d9487971a0",
+    "durable": true,
+    "op_id": "mutate:register",
+    "op_type": "operate_mutate",
+    "split": {
+     "critical_agent_s": 26.9,
+     "critical_platform_s": 7.4,
+     "makespan_s": 34.3,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 54.5
+    },
+    "started_at": 1788326031.5522614,
+    "verified_at": 1788326086.0732286,
+    "verify_detail": "probe user acspeed_probe_a0667aae authenticates",
+    "verify_ok": true,
+    "wall_s": 54.5
+   },
+   {
+    "agent_cost_usd": 0.1921945,
+    "agent_error": false,
+    "agent_session": "ca89af8f-f311-42a5-9187-46d9487971a0",
+    "durable": true,
+    "op_id": "deploy-site-b",
+    "op_type": "provision",
+    "split": {
+     "critical_agent_s": 18.2,
+     "critical_platform_s": 1.9,
+     "makespan_s": 20.1,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 35.2
+    },
+    "started_at": 1788326086.0732698,
+    "verified_at": 1788326121.2366946,
+    "verify_detail": "site B http 200, canonical-page=yes",
+    "verify_ok": true,
+    "wall_s": 35.2
+   },
+   {
+    "agent_cost_usd": 0.27027999999999996,
+    "agent_error": false,
+    "agent_session": "ca89af8f-f311-42a5-9187-46d9487971a0",
+    "durable": true,
+    "op_id": "integrate",
+    "op_type": "operate_mutate",
+    "split": {
+     "critical_agent_s": 27.1,
+     "critical_platform_s": 3.2,
+     "makespan_s": 30.3,
+     "overlap_s": 0.0,
+     "via": "acspeed.transcript window + owner_split",
+     "wall_s": 56.9
+    },
+    "started_at": 1788326121.2367346,
+    "verified_at": 1788326178.1510208,
+    "verify_detail": "[wiring] site B HTML carries umami wiring (website id f05ea3c7-3fb2-4194-8999-5b980949bc7e) | [visit] sentinel-path pageviews 0 -> 1 after a real headless visit (chromium-cli)",
+    "verify_ok": true,
+    "wall_s": 56.9
+   }
+  ],
+  "passed": true,
+  "score": {
+   "break_point": [],
+   "checkpoints": [
+    {
+     "name": "deploy-serve",
+     "ok": true
+    },
+    {
+     "name": "mutate:register",
+     "ok": true
+    },
+    {
+     "name": "deploy-site-b",
+     "ok": true
+    },
+    {
+     "name": "integrate",
+     "ok": true
+    },
+    {
+     "name": "restart-durability",
+     "ok": true
+    }
+   ],
+   "completed": true,
+   "full_completion_bonus": 0.5,
+   "partial_credit": 1.0,
+   "passed": 5,
+   "score": 1.5,
+   "total": 5
+  },
+  "site_b_url": "https://alcove-acsafaf989f.azurewebsites.net",
+  "terminal_reverify": {
+   "deploy-serve": {
+    "detail": "http 200, umami-signature=yes",
+    "ok": true
+   },
+   "deploy-site-b": {
+    "detail": "site B http 200, canonical-page=yes",
+    "ok": true
+   },
+   "integrate": {
+    "detail": "[wiring] site B HTML carries umami wiring (website id f05ea3c7-3fb2-4194-8999-5b980949bc7e) | [persist] sentinel-path pageview count 1 vs floor 1 (survived the restart)",
+    "ok": true
+   },
+   "mutate:register": {
+    "detail": "probe user acspeed_probe_a0667aae authenticates",
+    "ok": true
+   }
+  },
+  "tier": "medium"
+ },
+ "time_to_serving_min": 24.46,
+ "time_to_serving_s": 1467.6,
+ "url": "https://umami-acsafaf989f.azurewebsites.net",
+ "url_ambiguous": false,
+ "url_candidates": [
+  "https://umami-acsafaf989f.azurewebsites.net",
+  "https://alcove-acsafaf989f.azurewebsites.net"
+ ],
+ "url_source": "external-poll"
+}
