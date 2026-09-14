@@ -14,6 +14,8 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest"]
+# tools/paper_figures.py only; the harness and the tables need neither.
+figures = ["matplotlib"]
 
 [project.scripts]
 acspeed = "acspeed.cli:main"
