@@ -28,8 +28,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 from acspeed import gold, repro, weighting  # noqa: E402
 from build_tables import wilson  # noqa: E402
 
-# Raw per-run records. Not part of the published artifact: point
-# ACSPEED_STAGING at your own acspeed-results tree to regenerate tables from your own runs.
+# Raw per-run records. The records behind the PUBLISHED cells ship in the artifact, under
+# results/<cloud>/<cloud>-<tier>/records/, and _record_dirs falls back to them, so these tables
+# regenerate with ACSPEED_STAGING unset. Point ACSPEED_STAGING at your own acspeed-results tree to
+# regenerate them from your own runs instead.
 STAGING = os.environ.get("ACSPEED_STAGING") or os.path.join(
     (os.environ.get("ACSPEED_DATA") or os.path.expanduser("~/.acspeed")), "_staging")
 RESULTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "results")

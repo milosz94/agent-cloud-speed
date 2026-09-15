@@ -72,7 +72,9 @@ run 19 as `ok` while printing `shortfall={'lightsail': (3, 1)}`.
 
 ## Instrument version
 
-Every run in this cell measures t1 by the **first-serve** rule, including runs 15 to 19 measured after
-the durable-serve fix landed (`475d4b6`, 2026-09-04 17:37). `durable_serving` is called only from the
-single-run path (`autorun.py:1763`); `drive_suite`, which runs the medium tiers, never calls it, and no
-medium run in any cell carries a `poll_log`. The durable-serve rule is an Easy-tier rule today.
+This cell is split across the two t1 rules, and the records say which is which. Four of the twelve
+published runs (3, 5, 6, 8) measure t1 by the **first-serve** rule and carry no `poll_log`; the other
+eight (13, 16, 22 to 27) carry `t1_method: durable-serve/1.0` and a `poll_log`. An earlier version of
+this note said every run here was first-serve and that no medium run anywhere carried a `poll_log`;
+that was written before the durable-serve rule reached the medium path and the published records
+refute it. Read `serving.t1_method` per run rather than this paragraph.
