@@ -117,8 +117,8 @@ def _legs(rec: dict):
 def task_M(rec: dict) -> float | None:
     """Part 4's per-task total M: the critical-path sum over the task's legs. Every leg contributes
     its own makespan, which already includes the platform-owned boot span up to the readiness
-    signal, so M, the platform/agent columns and the overlap stay on one scale and
-    ``M = platform + agent + overlap`` holds by construction. Time-to-serving is NOT substituted
+    signal, so M, the platform/agent columns and the third term stay on one scale and
+    ``M = platform + agent + other`` holds by construction (the paper's column is named *other*). Time-to-serving is NOT substituted
     for the deploy leg: it is the externally polled signal Part 3 uses for the floor ratio, and
     mixing the two bases would make this table's columns fail to add up."""
     legs = _legs(rec)
@@ -128,7 +128,7 @@ def task_M(rec: dict) -> float | None:
 
 
 def task_split(rec: dict):
-    """Platform, agent and overlap critical-path seconds summed over the task's legs."""
+    """Platform, agent and other critical-path seconds summed over the task's legs."""
     legs = _legs(rec)
     if not legs:
         return None, None, None
@@ -417,7 +417,7 @@ def check_against_tex(cells: list) -> list:
     results tree, in either direction."""
     if not TEX or not os.path.exists(TEX):
         print("SKIP: set ACSPEED_PAPER_TEX to combined_p5body.tex to diff the rows against the paper.")
-        return []
+        return None
     tex = open(TEX).read()
     missing = []
     for body in (table_51(cells), table_52(cells)):
@@ -434,14 +434,18 @@ def main() -> None:
     cells = all_cells()
     if "--check" in sys.argv:
         problems = check_identity(cells)
-        drift = check_against_tex(cells)
+        drift = check_against_tex(cells)          # None means the TeX diff was SKIPPED, not that it passed
         for b in problems:
             print("IDENTITY: " + b)
-        for d in drift:
+        for d in (drift or []):
             print("DRIFT (row not in paper): " + d)
         if problems or drift:
             raise SystemExit(1)
-        print("OK: identity holds and every generated row is present verbatim in Part 5.")
+        if drift is None:
+            print("OK: identity holds. TeX comparison SKIPPED (ACSPEED_PAPER_TEX unset), so the rows "
+                  "were NOT diffed against the paper.")
+        else:
+            print("OK: identity holds and every generated row is present verbatim in Part 5.")
         return
     problems = check_identity(cells)
     if problems:

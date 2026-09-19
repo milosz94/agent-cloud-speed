@@ -27,6 +27,11 @@ acspeed-run --adapter <cloud> --model claude-opus-5
 | 3 | 2658 | 1120 | 27 | 368 | 546 | 597 | $3.88 | $81.05 | $81.05 | $81.05 | $81.05 | 5/5 |
 | 4 | 2612 | 283 | 1139 | 319 | 346 | 524 | $12.38 | $44.53 | $44.53 | $44.53 | $44.53 | 5/5 |
 
+In this table `deploy (t1)` is deploy-to-serving, the elapsed time to the liveness signal, and `total`
+sums the columns on that basis. The paper's $M$ instead sums each leg's own critical path, and its
+deploy leg ends before $t_1$ (Part 4, S2), so the same run reads slightly lower there: run 1 is 666 s
+deploy and 3060 s total here against 652 s and 3046 s in the paper. Same run, two stated definitions.
+
 Published results are in [`results/`](results/).
 
 ## Requirements
