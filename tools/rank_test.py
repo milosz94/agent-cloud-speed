@@ -63,8 +63,8 @@ def _ranks(vals):
 
 
 def mannwhitney(x, y):
-    """Two-sided Mann-Whitney. Exact when untied, normal approximation with tie correction when not.
-    Returns (U, p, method)."""
+    """Two-sided Mann-Whitney. Exact when untied, normal approximation with the tie-corrected
+    variance when tied. Returns (U, p, method)."""
     m, n = len(x), len(y)
     r = _ranks(list(x) + list(y))
     rx = sum(r[:m])
@@ -77,8 +77,15 @@ def mannwhitney(x, y):
         p = 2.0 * sum(counts[: int(u) + 1]) / total
         return u, min(1.0, p), "exact"
     import math
+    from collections import Counter
     mu = m * n / 2.0
-    sd = math.sqrt(m * n * (m + n + 1) / 12.0)
+    # Tie-corrected variance (Mann-Whitney with ties): the ordinary m*n*(m+n+1)/12 is reduced by a
+    # term in the tie-group sizes. Without it the variance is overstated and p is conservative, so
+    # the old "normal+ties" label named a correction the code did not apply.
+    N = m + n
+    tie_term = sum(t ** 3 - t for t in Counter(list(x) + list(y)).values())
+    var = (m * n / 12.0) * ((N + 1) - tie_term / float(N * (N - 1))) if N > 1 else 0.0
+    sd = math.sqrt(var) if var > 0 else 0.0
     z = (abs(u1 - mu) - 0.5) / sd if sd else 0.0
     p = 2.0 * (1.0 - 0.5 * (1.0 + math.erf(z / math.sqrt(2.0))))
     return u, min(1.0, p), "normal+ties"
