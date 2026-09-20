@@ -312,10 +312,12 @@ def check_easy_pairing_alignment(cells: list) -> list:
     so a single unmeasured makespan shifts every index after it.
     """
     problems, tiers = [], {name: (key, sfx) for key, sfx, name in TIERS}
+    checked = set()
     for c in cells:
         if c["tier"] != EASY_TIER:
             continue
         cloud, (key, sfx) = c["cloud"], tiers[c["tier"]]
+        checked.add(cloud)
         uuids = published_uuids(cloud, key)
         recs = published_records(cloud, sfx, key)
         where = f"{cloud} {c['tier']}"
@@ -324,16 +326,31 @@ def check_easy_pairing_alignment(cells: list) -> list:
                             f"{len(c['Ms'])} makespans, {len(c['cost'])} cost records. A dropped "
                             f"makespan shifts Ms against cost and the pairing is no longer run-for-run")
             continue
+        # DISTINCTNESS. This replaces an assertion that could not fail. An earlier version asserted
+        # that recs[i] carries uuids[i]; published_records returns index[uuids[i]] and index is keyed
+        # by that very session, so it compared a value to the key it was fetched by and passed under
+        # every possible row order, including reversed and shuffled. Verified 2026-09-21, and an
+        # independent mutation test found deleting it left the whole suite green. What that assertion
+        # CLAIMED to catch is a row-to-record join gone wrong, and these two catch it.
+        if len(set(uuids)) != len(uuids):
+            problems.append(f"{where}: a session UUID is published twice, so one run supplies two "
+                            f"rows and the cell carries a pseudo-replicate")
+        if len({id(r) for r in recs}) != len(recs):
+            problems.append(f"{where}: two published rows resolve to the SAME run record, so a run is "
+                            f"counted twice and another published run has no record of its own")
         for i, r in enumerate(recs):
-            sessions = {rnd.get("session") for rnd in (r.get("rounds") or [])}
-            if uuids[i] not in sessions:
-                problems.append(f"{where} position {i}: the record does not carry published session "
-                                f"{uuids[i]}, so the row order and the record order disagree")
             if task_M(r) != c["Ms"][i]:
                 problems.append(f"{where} position {i}: Ms[{i}]={c['Ms'][i]} is not this run's "
                                 f"makespan {task_M(r)}")
             if (r.get("cost_run_rate") or {}) != c["cost"][i]:
                 problems.append(f"{where} position {i}: cost[{i}] is not this run's cost record")
+            if _hourly(c["cost"][i]) is None:
+                problems.append(f"{where} position {i}: no hourly rate, so the paired draw has a "
+                                f"makespan with no cost beside it")
+    absent = [c for c in ANON if c not in checked]
+    if absent:
+        problems.append("no Easy cell reached this check for " + ", ".join(absent)
+                        + ": the pairing guard ran vacuously and proves nothing")
     return problems
 
 
@@ -546,19 +563,22 @@ def main() -> None:
     cells = all_cells()
     if "--check" in sys.argv:
         problems = check_identity(cells)
-        problems += check_easy_pairing_alignment(cells)
+        pairing = check_easy_pairing_alignment(cells)
         drift = check_against_tex(cells)          # None means the TeX diff was SKIPPED, not that it passed
         for b in problems:
             print("IDENTITY: " + b)
+        for b in pairing:
+            print("PAIRING: " + b)
         for d in (drift or []):
             print("DRIFT (row not in paper): " + d)
-        if problems or drift:
+        if problems or pairing or drift:
             raise SystemExit(1)
         if drift is None:
-            print("OK: identity holds. TeX comparison SKIPPED (ACSPEED_PAPER_TEX unset), so the rows "
-                  "were NOT diffed against the paper.")
+            print("OK: identity holds and the Easy-cell pairing is run-for-run. TeX comparison "
+                  "SKIPPED (ACSPEED_PAPER_TEX unset), so the rows were NOT diffed against the paper.")
         else:
-            print("OK: identity holds and every generated row is present verbatim in Part 5.")
+            print("OK: identity holds, the Easy-cell pairing is run-for-run, and every generated row is "
+                  "present verbatim in Part 5.")
         return
     problems = check_identity(cells) + check_easy_pairing_alignment(cells)
     if problems:

@@ -81,6 +81,54 @@ class EasyPairingAlignment(unittest.TestCase):
         self.assertTrue(problems)
         self.assertTrue(any(p.startswith("gcp") for p in problems))
 
+    # ---------------------------------------------------------------------------------------
+    # The assertions below read the RESULTS tree rather than the cell dict, so they are driven by
+    # substituting what published_uuids / published_records return. That is the assertion logic
+    # under test, fed exactly the shapes the real functions produce. The suite's remaining blind
+    # spot, named by the audit that prompted these: no test mutates an actual record file.
+    # ---------------------------------------------------------------------------------------
+
+    def _with_sources(self, uuids, recs):
+        """Run the check against one Azure Easy cell with published_uuids/records substituted."""
+        cells = copy.deepcopy(self.cells)
+        cell = _easy(cells, "azure")
+        cell["Ms"] = [pt.task_M(r) for r in recs]
+        cell["cost"] = [(r.get("cost_run_rate") or {}) for r in recs]
+        cells = [c for c in cells if not (c["cloud"] == "azure" and c["tier"] != "Easy")]
+        u, r = pt.published_uuids, pt.published_records
+        pt.published_uuids = lambda cl, k: uuids if cl == "azure" else u(cl, k)
+        pt.published_records = lambda cl, sx, k: recs if cl == "azure" else r(cl, sx, k)
+        try:
+            return pt.check_easy_pairing_alignment(cells)
+        finally:
+            pt.published_uuids, pt.published_records = u, r
+
+    def test_a_session_published_twice_is_caught(self):
+        """One run supplying two published rows is a pseudo-replicate, not a repetition."""
+        recs = pt.published_records("azure", "", "easy")
+        uuids = pt.published_uuids("azure", "easy")
+        problems = self._with_sources(uuids[:-1] + [uuids[0]], recs)
+        self.assertTrue(any("published twice" in p for p in problems), problems)
+
+    def test_two_rows_resolving_to_one_record_is_caught(self):
+        """The failure the old UUID assertion claimed to catch, and could not."""
+        recs = pt.published_records("azure", "", "easy")
+        problems = self._with_sources(pt.published_uuids("azure", "easy"), recs[:-1] + [recs[0]])
+        self.assertTrue(any("SAME run record" in p for p in problems), problems)
+
+    def test_an_unpriced_position_is_caught(self):
+        """A makespan with no hourly rate beside it would pair against nothing."""
+        recs = [dict(r) for r in pt.published_records("azure", "", "easy")]
+        recs[4]["cost_run_rate"] = {}
+        problems = self._with_sources(pt.published_uuids("azure", "easy"), recs)
+        self.assertTrue(any("position 4: no hourly rate" in p for p in problems), problems)
+
+    def test_a_vacuous_run_is_reported_not_passed(self):
+        """check(no Easy cells) used to return [], which reads as 'verified' and proves nothing."""
+        problems = pt.check_easy_pairing_alignment([c for c in self.cells if c["tier"] != "Easy"])
+        self.assertTrue(any("vacuously" in p for p in problems), problems)
+        self.assertEqual(pt.check_easy_pairing_alignment([])[0].count("vacuously"), 1)
+
     def test_the_bootstrap_refuses_rather_than_warns(self):
         """Detecting the break is not enough: the paired bootstrap must not produce a number."""
         cells = copy.deepcopy(self.cells)
