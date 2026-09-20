@@ -86,10 +86,15 @@ def _records_by_session(stages) -> dict:
     return out
 
 
+def published_uuids(cloud: str, tier_key: str) -> list:
+    """The session UUIDs of a cell's published rows, in printed order. One per published run."""
+    cell = os.path.join(RESULTS, cloud, f"{cloud}-{tier_key}", "README.md")
+    return SESS_RE.findall(open(cell).read())
+
+
 def published_records(cloud: str, suffix: str, tier_key: str) -> list:
     """The published rows of a cell, resolved to run records through the session UUID."""
-    cell = os.path.join(RESULTS, cloud, f"{cloud}-{tier_key}", "README.md")
-    uuids = SESS_RE.findall(open(cell).read())
+    uuids = published_uuids(cloud, tier_key)
     index = _records_by_session(_record_dirs(cloud, suffix, tier_key))
     missing = [u for u in uuids if u not in index]
     if missing:
@@ -291,6 +296,47 @@ BOOT_B = 10000
 BOOT_SEED = 20260907
 
 
+def check_easy_pairing_alignment(cells: list) -> list:
+    """Position i of an Easy cell's ``Ms`` and of its ``cost`` must be the SAME RUN.
+
+    ``_suite_replicates`` pairs the cost draw to the Easy-cell makespan draw BY INDEX. A shift between
+    the two lists would pair one run's time with another run's cost on every replicate, silently.
+
+    NOTHING ELSE DETECTS THAT. Pairing every makespan with a randomly relabelled run's cost moves the
+    frontier frequency by less than the bootstrap's own Monte Carlo noise (measured: 7.797 against
+    7.739), so the paired-versus-unpaired sensitivity Part 5 reports cannot catch it, and neither can a
+    length guard, because two lists of equal length can still be in different orders. This walks both
+    lists back to the run records and to the published session UUIDs.
+
+    The live hazard is concrete: ``cell()`` builds ``Ms`` with a falsy filter and ``cost`` without one,
+    so a single unmeasured makespan shifts every index after it.
+    """
+    problems, tiers = [], {name: (key, sfx) for key, sfx, name in TIERS}
+    for c in cells:
+        if c["tier"] != EASY_TIER:
+            continue
+        cloud, (key, sfx) = c["cloud"], tiers[c["tier"]]
+        uuids = published_uuids(cloud, key)
+        recs = published_records(cloud, sfx, key)
+        where = f"{cloud} {c['tier']}"
+        if not (len(recs) == len(uuids) == len(c["Ms"]) == len(c["cost"])):
+            problems.append(f"{where}: {len(uuids)} published rows, {len(recs)} records, "
+                            f"{len(c['Ms'])} makespans, {len(c['cost'])} cost records. A dropped "
+                            f"makespan shifts Ms against cost and the pairing is no longer run-for-run")
+            continue
+        for i, r in enumerate(recs):
+            sessions = {rnd.get("session") for rnd in (r.get("rounds") or [])}
+            if uuids[i] not in sessions:
+                problems.append(f"{where} position {i}: the record does not carry published session "
+                                f"{uuids[i]}, so the row order and the record order disagree")
+            if task_M(r) != c["Ms"][i]:
+                problems.append(f"{where} position {i}: Ms[{i}]={c['Ms'][i]} is not this run's "
+                                f"makespan {task_M(r)}")
+            if (r.get("cost_run_rate") or {}) != c["cost"][i]:
+                problems.append(f"{where} position {i}: cost[{i}] is not this run's cost record")
+    return problems
+
+
 EASY_TIER = "Easy"
 
 # The Easy cell is the one cell whose runs supply BOTH frontier coordinates (the cost coordinate is read
@@ -314,6 +360,11 @@ def _suite_replicates(cells: list, paired: bool = None, seed: int = None):
     (E_X, G_X) plus the frontier-membership count, i.e. exactly the three quantities Part 4 promises.
     """
     paired = COST_PAIRED if paired is None else paired
+    if paired:
+        misaligned = check_easy_pairing_alignment(cells)
+        if misaligned:
+            raise SystemExit("paired cost resampling refuses to run on misaligned cells:\n  "
+                             + "\n  ".join(misaligned))
     rnd = random.Random(BOOT_SEED if seed is None else seed)
     by_cloud, rates = {}, {}
     for c in cells:
@@ -495,6 +546,7 @@ def main() -> None:
     cells = all_cells()
     if "--check" in sys.argv:
         problems = check_identity(cells)
+        problems += check_easy_pairing_alignment(cells)
         drift = check_against_tex(cells)          # None means the TeX diff was SKIPPED, not that it passed
         for b in problems:
             print("IDENTITY: " + b)
@@ -508,7 +560,7 @@ def main() -> None:
         else:
             print("OK: identity holds and every generated row is present verbatim in Part 5.")
         return
-    problems = check_identity(cells)
+    problems = check_identity(cells) + check_easy_pairing_alignment(cells)
     if problems:
         print("IDENTITY CHECK FAILED, not emitting:", file=sys.stderr)
         for b in problems:
