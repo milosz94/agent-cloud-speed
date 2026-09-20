@@ -291,34 +291,68 @@ BOOT_B = 10000
 BOOT_SEED = 20260907
 
 
-def _suite_replicates(cells: list):
+EASY_TIER = "Easy"
+
+# The Easy cell is the one cell whose runs supply BOTH frontier coordinates (the cost coordinate is read
+# from it alone; the time coordinate is the suite total over all three tiers). COST_PAIRED resamples whole
+# run records there, so a replicate's time and its cost coordinate come off one draw and carry whatever
+# within-run association exists between them. False draws the two independently, which is the scheme this
+# generator shipped with and the sensitivity Part 5's frontier note reports against.
+#
+# The independent draw is taken under BOTH schemes and discarded when pairing. That is deliberate, not a
+# leftover: it keeps one seeded stream, so the two schemes run on IDENTICAL time replicates. The E_X and
+# G_X intervals therefore do not move with this switch, and the two frontier frequencies differ only in
+# how the cost coordinate was drawn, which is the comparison the note makes.
+COST_PAIRED = True
+
+
+def _suite_replicates(cells: list, paired: bool = None, seed: int = None):
     """Resample RUNS within each task, recompute E_X, G_X and the frontier on every replicate.
 
     The suite is fixed by design, so runs are the only resampled unit for a sampling interval: task-level
     sensitivity is carried separately by leave-one-out, never folded in here. Returns per-cloud lists of
     (E_X, G_X) plus the frontier-membership count, i.e. exactly the three quantities Part 4 promises.
     """
-    rnd = random.Random(BOOT_SEED)
+    paired = COST_PAIRED if paired is None else paired
+    rnd = random.Random(BOOT_SEED if seed is None else seed)
     by_cloud, rates = {}, {}
     for c in cells:
         by_cloud.setdefault(c["cloud"], {})[c["tier"]] = c["Ms"]
-        if c["tier"] == "Easy":
-            rs = [_hourly(x) for x in c["cost"]]
-            rates[c["cloud"]] = [r for r in rs if r is not None]
+        if c["tier"] == EASY_TIER:
+            rates[c["cloud"]] = [_hourly(x) for x in c["cost"]]   # index-aligned with this cell's Ms
     clouds = list(by_cloud)
     ex = {c: [] for c in clouds}
     gx = {c: [] for c in clouds}
     front = {c: 0 for c in clouds}
     for _ in range(BOOT_B):
-        means = {c: {t: (sum(rnd.choices(ms, k=len(ms))) / len(ms)) if ms else None
-                     for t, ms in tiers.items()}
-                 for c, tiers in by_cloud.items()}
+        means, easy_pick = {}, {}
+        for c, tiers in by_cloud.items():
+            means[c] = {}
+            for t, ms in tiers.items():
+                if not ms:
+                    means[c][t] = None
+                    continue
+                pick = rnd.choices(range(len(ms)), k=len(ms))     # same draw count as choices(ms, ...)
+                if t == EASY_TIER:
+                    easy_pick[c] = pick
+                means[c][t] = sum(ms[i] for i in pick) / len(ms)
         tot = {c: weighting.suite_total(m) for c, m in means.items()}
         ref = means[GX_NORMALIZER]
         cost = {}
         for c in clouds:
-            rs = rates.get(c) or []
-            cost[c] = sum(rnd.choices(rs, k=len(rs))) / len(rs) if rs else None
+            rs = [r for r in (rates.get(c) or []) if r is not None]
+            if not rs:
+                cost[c] = None
+                continue
+            pick = rnd.choices(range(len(rs)), k=len(rs))         # taken under both schemes, see above
+            if paired:
+                easy = by_cloud[c].get(EASY_TIER) or []
+                if c not in easy_pick or len(rs) != len(easy):
+                    raise SystemExit(                              # visible, never a silent mispairing
+                        f"paired cost resampling needs one priced run per Easy-cell makespan on {c}: "
+                        f"{len(rs)} priced rates against {len(easy)} makespans")
+                pick = easy_pick[c]
+            cost[c] = sum(rs[i] for i in pick) / len(rs)
         runs = [weighting.Run(label=c, time=tot[c], cost=cost[c]) for c in clouds if cost[c] is not None]
         on = {r.label for r in weighting.pareto_frontier(runs)} if runs else set()
         for c in clouds:
@@ -338,12 +372,19 @@ def _pct(xs, lo=2.5, hi=97.5):
 
 def suite_uncertainty(cells: list) -> dict:
     """Per-cloud percentile intervals on E_X and G_X, frontier-membership frequency, and the pairwise
-    difference verdicts Part 1's rule asks for (interval on the DIFFERENCE excluding zero)."""
-    ex, gx, front = _suite_replicates(cells)
+    difference verdicts Part 1's rule asks for (interval on the DIFFERENCE excluding zero).
+
+    front_pct is the paired scheme (COST_PAIRED); front_pct_unpaired is the independent-draw scheme the
+    frontier note reports as its sensitivity. Both are emitted so the note's comparison is generated
+    rather than transcribed by hand.
+    """
+    ex, gx, front = _suite_replicates(cells, paired=True)
+    _, _, front_u = _suite_replicates(cells, paired=False)
     out = {}
     for c in ex:
         out[c] = {"ex_ci": _pct(ex[c]), "gx_ci": _pct(gx[c]),
-                  "front_pct": 100.0 * front[c] / BOOT_B}
+                  "front_pct": 100.0 * front[c] / BOOT_B,
+                  "front_pct_unpaired": 100.0 * front_u[c] / BOOT_B}
     pairs = {}
     for a in ex:
         for b in ex:
@@ -354,6 +395,26 @@ def suite_uncertainty(cells: list) -> dict:
             pairs[(a, b)] = {"ci": (lo, hi), "decided": not (lo <= 0 <= hi)}
     out["_pairs"] = pairs
     return out
+
+
+def frontier_scheme_sensitivity(cells: list, seeds) -> dict:
+    """Paired minus unpaired frontier-membership frequency, repeated over several seeds.
+
+    The two schemes share one stream at each seed, so at a given seed they run on identical time
+    replicates and the difference isolates the cost draw. Repeating over seeds is what says whether that
+    difference is a real effect or the frequency's own Monte Carlo noise at BOOT_B replicates; Part 5's
+    frontier note reports it over the ten seeds listed in NOTE_SEEDS.
+    """
+    rows = {}
+    for sd in seeds:
+        _, _, fp = _suite_replicates(cells, paired=True, seed=sd)
+        _, _, fu = _suite_replicates(cells, paired=False, seed=sd)
+        for c in fp:
+            rows.setdefault(c, []).append(100.0 * (fp[c] - fu[c]) / BOOT_B)
+    return rows
+
+
+NOTE_SEEDS = (20260907, 1, 2, 3, 7, 11, 101, 2026, 31337, 99991)
 
 
 def table_52(cells: list) -> str:
