@@ -105,75 +105,9 @@ def boot_diff_ci(x, y, seed=BOOT_SEED):
     return lo, hi
 
 
-PERM_N = 200000
-PERM_SEED = 20260920
-
-
-def strat_perm_p(blocks, stat="sum", seed=PERM_SEED):
-    """Part 1's SECOND half for a statistic that is a SUM (or log-ratio mean) over BLOCKS.
-
-    Part 1 requires a two-sample rank test on the raw runs alongside the difference interval, and
-    binds every later part to it. Part 5's per-cell comparisons get Mann-Whitney. The suite summaries
-    E_X and G_X are sums over the three tier blocks, and a rank test on a single pooled sample is not
-    defined for them, so before 2026-09-20 they carried the interval half alone. Measured under a
-    permutation null at these per-cell counts, that half alone runs at roughly 1.7x its nominal rate,
-    so the omission was not cosmetic.
-
-    The raw-runs test for a blocked statistic is the randomization test on those blocks: permute run
-    labels WITHIN each tier, leaving block structure and per-cell n intact. Part 4 already treats the
-    tiers as Fisher blocks ("the block holds the input and the goal identical", citing fisher1935),
-    so this is that same design's own test rather than a new instrument.
-
-    blocks: list of (x, y), one per tier, x and y the two clouds' per-run totals in that tier.
-    stat:   "sum" for E_X (difference of means, summed over blocks)
-            "logratio" for G_X (mean over blocks of log(mean_x / mean_y))
-    Returns the two-sided p value. Ties are impossible here (all 94 totals are distinct) but the
-    >= comparison is used regardless, which is the conservative direction.
-    """
-    import math
-    rnd = random.Random(seed)
-
-    def value(pairs):
-        if stat == "sum":
-            return sum(sum(a) / len(a) - sum(b) / len(b) for a, b in pairs)
-        if stat == "logratio":
-            return sum(math.log((sum(a) / len(a)) / (sum(b) / len(b)))
-                       for a, b in pairs) / len(pairs)
-        raise ValueError(stat)
-
-    obs = abs(value(blocks))
-    pools = [(list(x) + list(y), len(x)) for x, y in blocks]
-    hits = 0
-    for _ in range(PERM_N):
-        drawn = []
-        for pool, nx in pools:
-            p = pool[:]
-            rnd.shuffle(p)
-            drawn.append((p[:nx], p[nx:]))
-        if abs(value(drawn)) >= obs - 1e-9:
-            hits += 1
-    return (hits + 1) / float(PERM_N + 1)     # add-one: never reports an impossible p of exactly 0
-
-
-def _selftest_perm():
-    """Two blocks drawn from one distribution must not be separated; a large shift must be."""
-    r = random.Random(7)
-    same = [([r.gauss(100, 10) for _ in range(10)], [r.gauss(100, 10) for _ in range(10)])
-            for _ in range(3)]
-    shifted = [([v + 400 for v in a], b) for a, b in same]
-    p_same = strat_perm_p(same, "sum")
-    p_shift = strat_perm_p(shifted, "sum")
-    assert p_same > 0.10, f"null case should not separate, got {p_same}"
-    assert p_shift < 0.001, f"shifted case should separate, got {p_shift}"
-    return p_same, p_shift
-
-
 def main() -> None:
     # self-test the exact null before using it
     assert _u_counts(3, 3) == (1, 1, 2, 3, 3, 3, 3, 2, 1, 1), _u_counts(3, 3)
-    ps, pd = _selftest_perm()
-    print(f"permutation self-test: null p={ps:.3f} (want > 0.10), shifted p={pd:.5f} "
-          f"(want < 0.001)")
 
     cells = {}
     for cloud in pt.ANON:
@@ -212,45 +146,6 @@ def main() -> None:
           f"they disagree on {disagree}.")
     print("BLOCKED = the bootstrap interval excludes zero but the rank test does not agree, so"
           " Part 1's rule forbids claiming the difference.")
-
-    # ---- the SUITE summaries, which carried the interval half alone before 2026-09-20 ----
-    print("\nSuite summaries. Part 1's rule binds these too; its second half here is the "
-          "randomization\ntest on the tier blocks (Fisher's randomized-block design, already "
-          "Part 4's framing).")
-    ex_ci, gx_ci = {}, {}
-    cells_raw = pt.all_cells()
-    ex_draws, gx_draws, _f = pt._suite_replicates(cells_raw)
-
-    def pctl(xs):
-        ys = sorted(xs)
-        n = len(ys)
-        at = lambda q: ys[min(n - 1, max(0, int(round(q * (n - 1)))))]    # noqa: E731
-        return at(0.025), at(0.975)
-
-    clouds = list(pt.ANON)
-    print(f"\n{'suite comparison':34s} {'interval on the difference':>28s} {'excl':>6s} "
-          f"{'perm p':>9s} {'rule':>10s}")
-    for i in range(len(clouds)):
-        for j in range(i + 1, len(clouds)):
-            a, b = clouds[i], clouds[j]
-            d = [u - v for u, v in zip(ex_draws[a], ex_draws[b])]
-            lo, hi = pctl(d)
-            excl = (lo > 0) or (hi < 0)
-            blocks = [(cells[(a, name)], cells[(b, name)]) for _, _, name in pt.TIERS]
-            pp = strat_perm_p(blocks, "sum")
-            verdict = "DIFFERENT" if (excl and pp < ALPHA) else "undecided"
-            print(f"E_X {pt.ANON[a]} minus {pt.ANON[b]:<18s} [{lo:11.0f},{hi:11.0f}] "
-                  f"{str(excl):>6s} {pp:9.5f} {verdict:>10s}")
-    for c in clouds:
-        if c == pt.GX_NORMALIZER:
-            continue
-        lo, hi = pctl(gx_draws[c])
-        excl = not (lo <= 1.0 <= hi)
-        blocks = [(cells[(c, name)], cells[(pt.GX_NORMALIZER, name)]) for _, _, name in pt.TIERS]
-        pp = strat_perm_p(blocks, "logratio")
-        verdict = "DIFFERENT" if (excl and pp < ALPHA) else "undecided"
-        print(f"G_X {pt.ANON[c]} vs normalizer{'':<7s} [{lo:11.3f},{hi:11.3f}] "
-              f"{str(excl):>6s} {pp:9.5f} {verdict:>10s}")
 
 
 if __name__ == "__main__":
