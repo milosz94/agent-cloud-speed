@@ -19,6 +19,9 @@ import glob
 import json
 import os
 import random
+from fractions import Fraction
+from itertools import combinations_with_replacement
+from math import factorial
 import re
 import sys
 from collections import OrderedDict
@@ -429,6 +432,93 @@ def _suite_replicates(cells: list, paired: bool = None, seed: int = None):
             if c in on:
                 front[c] += 1
     return ex, gx, front
+
+
+EXACT_SUBJECT = "azure"          # the one cloud whose membership reduces to a cost comparison here
+EXACT_FASTER = "gcp"             # faster than the subject in every replicate drawn
+EXACT_DEARER = "aws"             # can never be cheaper than the subject, by arithmetic
+
+
+def _mean_law(vals):
+    """Exact law of the bootstrap mean of ``vals``: n iid uniform draws with replacement.
+
+    The rates take few distinct values, so the resampled mean is a finite multinomial and its law
+    is a set of exact rationals. Floats are converted with Fraction(x), which is the stored binary
+    value exactly, not an approximation of it.
+    """
+    n = len(vals)
+    counts = {v: vals.count(v) for v in set(vals)}
+    distinct = sorted(counts)
+    total = Fraction(n ** n)
+    law = {}
+    for combo in combinations_with_replacement(range(len(distinct)), n):
+        mult = [combo.count(i) for i in range(len(distinct))]
+        ways = factorial(n)
+        for m in mult:
+            ways //= factorial(m)
+        w = ways
+        for i, m in enumerate(mult):
+            w *= counts[distinct[i]] ** m
+        mean = sum(Fraction(distinct[i]) * m for i, m in enumerate(mult)) / n
+        law[mean] = law.get(mean, Fraction(0)) + Fraction(w) / total
+    return law
+
+
+def frontier_exact(cells: list, replicates: int = 200000) -> dict:
+    """Azure's frontier-membership probability in closed form, with no sampling at all.
+
+    Two conditions collapse the two-coordinate comparison to a one-coordinate one. Both are
+    CHECKED here, never assumed, because both are properties of this wave rather than of the
+    estimator and must not be carried forward silently into another one.
+
+      A, arithmetic. AWS's cheapest Easy run is dearer than Azure's dearest, so no resample can
+         put AWS's cost mean at or below Azure's and AWS can never dominate Azure.
+      B, empirical. GCP's suite total fell below Azure's in every replicate drawn, so whether GCP
+         dominates Azure turns on the cost coordinate alone.
+
+    Given A and B, Azure is non-dominated exactly when GCP's resampled cost mean exceeds Azure's,
+    and that probability is a rational number over the finite law of each cell's resampled mean.
+
+    Returns the probability, the two condition checks, and the bootstrap's own estimate beside it.
+    Raises SystemExit if either condition fails.
+    """
+    by_cloud, rates = {}, {}
+    for c in cells:
+        by_cloud.setdefault(c["cloud"], {})[c["tier"]] = c["Ms"]
+        if c["tier"] == EASY_TIER:
+            rates[c["cloud"]] = [r for r in (_hourly(x) for x in c["cost"]) if r is not None]
+
+    dear_min, subj_max = min(rates[EXACT_DEARER]), max(rates[EXACT_SUBJECT])
+    if not dear_min > subj_max:
+        raise SystemExit(
+            f"condition A fails: {EXACT_DEARER}'s cheapest Easy run {dear_min:.6f} is not dearer "
+            f"than {EXACT_SUBJECT}'s dearest {subj_max:.6f}, so {EXACT_DEARER} can dominate "
+            f"{EXACT_SUBJECT} and the comparison no longer reduces to cost")
+
+    rnd = random.Random(BOOT_SEED)
+    slower = 0
+    for _ in range(replicates):
+        means = {c: {t: (sum(rnd.choices(ms, k=len(ms))) / len(ms)) if ms else None
+                     for t, ms in tiers.items()}
+                 for c, tiers in by_cloud.items()}
+        if weighting.suite_total(means[EXACT_FASTER]) > weighting.suite_total(means[EXACT_SUBJECT]):
+            slower += 1
+    if slower:
+        raise SystemExit(
+            f"condition B fails: {EXACT_FASTER} was slower than {EXACT_SUBJECT} in {slower} of "
+            f"{replicates} replicates, so its dominance no longer turns on cost alone and this "
+            f"frequency must be read off the bootstrap, not enumerated")
+
+    fast, subj = _mean_law(rates[EXACT_FASTER]), _mean_law(rates[EXACT_SUBJECT])
+    p = sum(wf * ws for f, wf in fast.items() for t, ws in subj.items() if f > t)
+    _, _, front = _suite_replicates(cells)
+    return {"p": p, "pct": float(p) * 100.0,
+            "outcomes": len(fast) * len(subj),
+            "distinct_rates": {EXACT_FASTER: len(set(rates[EXACT_FASTER])),
+                               EXACT_SUBJECT: len(set(rates[EXACT_SUBJECT]))},
+            "condition_a": (dear_min, subj_max),
+            "condition_b": (replicates - slower, replicates),
+            "bootstrap_pct": 100.0 * front[EXACT_SUBJECT] / BOOT_B}
 
 
 def _pct(xs, lo=2.5, hi=97.5):

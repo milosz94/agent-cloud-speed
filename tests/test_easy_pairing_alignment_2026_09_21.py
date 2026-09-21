@@ -138,5 +138,58 @@ class EasyPairingAlignment(unittest.TestCase):
             pt._suite_replicates(cells, paired=True)
 
 
+class FrontierExact(unittest.TestCase):
+    """Azure's frontier frequency is enumerated, not sampled. Its two preconditions must refuse.
+
+    The reduction that makes enumeration possible is a property of THIS wave, not of the estimator:
+    AWS's cheapest Easy run happens to be dearer than Azure's dearest, and GCP happened to be faster
+    than Azure in every replicate. If a later wave breaks either, the closed form is simply wrong,
+    and it must fail loudly rather than keep printing a number.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.cells = pt.all_cells()
+        except (SystemExit, OSError) as exc:
+            raise unittest.SkipTest(f"no results tree: {exc}")
+
+    def test_the_exact_value_is_what_the_paper_prints(self):
+        r = pt.frontier_exact(self.cells, replicates=20000)
+        self.assertEqual(f"{r['pct']:.6f}", "7.768696")
+        self.assertEqual(f"{r['pct']:.2f}", "7.77")
+        self.assertEqual(r["outcomes"], 26026)
+
+    def test_the_law_of_each_resampled_mean_sums_to_one(self):
+        for cloud in ("gcp", "azure"):
+            cell = next(c for c in self.cells if c["cloud"] == cloud and c["tier"] == "Easy")
+            rates = [pt._hourly(x) for x in cell["cost"]]
+            self.assertEqual(sum(pt._mean_law(rates).values()), 1)
+
+    def test_the_exact_value_agrees_with_the_bootstrap(self):
+        """Not a proof, a smoke alarm: the two must not disagree by more than sampling allows."""
+        r = pt.frontier_exact(self.cells, replicates=20000)
+        self.assertLess(abs(r["pct"] - r["bootstrap_pct"]), 1.0)
+
+    def test_condition_A_refuses_when_the_dearer_cloud_could_be_cheaper(self):
+        """If AWS could undercut Azure it could dominate Azure, and cost alone no longer decides."""
+        cells = copy.deepcopy(self.cells)
+        aws = next(c for c in cells if c["cloud"] == "aws" and c["tier"] == "Easy")
+        aws["cost"] = [{"traffic_estimate": {"low": 0.1}} for _ in aws["cost"]]
+        with self.assertRaises(SystemExit) as cm:
+            pt.frontier_exact(cells, replicates=2000)
+        self.assertIn("condition A fails", str(cm.exception))
+
+    def test_condition_B_refuses_when_the_faster_cloud_is_ever_slower(self):
+        """If GCP can be slower than Azure, its dominance stops turning on cost alone."""
+        cells = copy.deepcopy(self.cells)
+        for c in cells:
+            if c["cloud"] == "gcp":
+                c["Ms"] = [m * 10 for m in c["Ms"]]
+        with self.assertRaises(SystemExit) as cm:
+            pt.frontier_exact(cells, replicates=2000)
+        self.assertIn("condition B fails", str(cm.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
