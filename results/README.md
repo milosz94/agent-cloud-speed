@@ -18,9 +18,12 @@ upfront).
 
 In the medium tables every time is a **critical-path** second (Part 1's spine: platform-time and
 agent-time do not add, they interleave; off-path work is free in wall-clock and shows up on the cost axis,
-never the time axis). Each per-operation column is that operation's critical path, and **total = M**, the
-per-task critical-path wall-clock summed over the operations, so the row's operation columns sum to its
-total. This is one definition for both regimes: online has no cross-operation overlap so M equals the
+never the time axis). Each per-operation column is that operation's critical path, with one
+exception: **deploy (t1)** is the externally polled time-to-serving, which ends after the deploy leg
+itself does. The row's operation columns sum to its `total`, and because of that exception `total` is
+**not** Part 4's `M`: M takes the deploy leg's own critical path instead. On aws-medium-a run 1 that is
+666 s deploy and 3060 s total here against 652 s and 3046 s in the paper. Same run, two stated
+definitions; the top-level `README.md` carries the same note. This is one definition for both regimes: online has no cross-operation overlap so M equals the
 serial sum, disclosed does not, which is what makes the A-vs-B comparison honest.
 
 ### [aws/](aws/)
