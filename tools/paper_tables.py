@@ -324,17 +324,28 @@ def check_easy_pairing_alignment(cells: list) -> list:
         uuids = published_uuids(cloud, key)
         recs = published_records(cloud, sfx, key)
         where = f"{cloud} {c['tier']}"
-        if not (len(recs) == len(uuids) == len(c["Ms"]) == len(c["cost"])):
-            problems.append(f"{where}: {len(uuids)} published rows, {len(recs)} records, "
-                            f"{len(c['Ms'])} makespans, {len(c['cost'])} cost records. A dropped "
-                            f"makespan shifts Ms against cost and the pairing is no longer run-for-run")
+        # len(recs) == len(uuids) is NOT tested: published_records returns one record per uuid or
+        # raises, so that term can never fail and a mutation test confirmed it kills no test.
+        if not (len(recs) == len(c["Ms"]) == len(c["cost"])):
+            problems.append(f"{where}: {len(recs)} records, {len(c['Ms'])} makespans, "
+                            f"{len(c['cost'])} cost records. A dropped makespan shifts Ms against "
+                            f"cost and the pairing is no longer run-for-run")
+            continue
+        if len(recs) < 2:
+            problems.append(f"{where}: {len(recs)} published row(s), so no ordering was verified "
+                            f"and a green result here proves nothing about the pairing")
             continue
         # DISTINCTNESS. This replaces an assertion that could not fail. An earlier version asserted
         # that recs[i] carries uuids[i]; published_records returns index[uuids[i]] and index is keyed
         # by that very session, so it compared a value to the key it was fetched by and passed under
         # every possible row order, including reversed and shuffled. Verified 2026-09-21, and an
-        # independent mutation test found deleting it left the whole suite green. What that assertion
-        # CLAIMED to catch is a row-to-record join gone wrong, and these two catch it.
+        # independent mutation test found deleting it left the whole suite green.
+        #
+        # Scope, stated narrowly: these catch the DUPLICATED form of a bad row-to-record join, where
+        # one run serves two published rows. They do not catch the PERMUTED form, where two rows swap
+        # records; that moves Ms and cost together so the pairing stays correct, and tools/audit_fields.py
+        # catches it as a field mismatch. The UUID test below is a message refinement of the id() test
+        # rather than an independent control: a repeated uuid always yields a repeated record object.
         if len(set(uuids)) != len(uuids):
             problems.append(f"{where}: a session UUID is published twice, so one run supplies two "
                             f"rows and the cell carries a pseudo-replicate")

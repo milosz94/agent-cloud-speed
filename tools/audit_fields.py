@@ -73,7 +73,12 @@ def expected_medium(rec: dict) -> dict:
 
 
 def published_rows(cloud: str, cell: str) -> list:
-    lines = [l for l in open(f"results/{cloud}/{cloud}-{cell}/README.md") if l.startswith("|")]
+    # pt.RESULTS, not a relative "results/...": the records side already resolves from __file__, so a
+    # relative path here meant the two halves could read DIFFERENT trees, and the tool only worked at
+    # all from the repository root. Found 2026-09-21 when a corruption test repointed the tree and
+    # this half kept reading the real one, reporting the corrupted cell clean.
+    readme = os.path.join(pt.RESULTS, cloud, f"{cloud}-{cell}", "README.md")
+    lines = [l for l in open(readme) if l.startswith("|")]
     hdr = [h.strip() for h in lines[0].strip().strip("|").split("|")]
     out = []
     for l in lines[2:]:
@@ -91,8 +96,17 @@ def _num(x):
 
 def main() -> int:
     bad = checked = 0
+    skipped = []
     for cloud, sfx, cell in CELLS:
-        recs = pt.published_records(cloud, sfx, cell)
+        try:
+            recs = pt.published_records(cloud, sfx, cell)
+        except SystemExit as exc:
+            # A cell whose records are not published is not a defect in what IS published. redu's
+            # are deliberately withheld, so on the public artifact this raised and the tool exited 1
+            # on a pristine tree: an operator could not tell a real mismatch from that standing
+            # failure. Skipped cells are now named and counted, and only real mismatches fail.
+            skipped.append(f"{cloud}-{cell}: {exc}".split(" (looked in")[0])
+            continue
         rows = published_rows(cloud, cell)
         if len(recs) != len(rows):
             print(f"  ROW COUNT {cloud}-{cell}: {len(recs)} records vs {len(rows)} published rows")
@@ -132,7 +146,10 @@ def main() -> int:
                     print(f"  {cloud}-{cell} row{i} total: published {t}, neither "
                           f"sum-of-rounded {sum(round(x) for x in raw)} nor round-of-sum {round(sum(raw))}")
                     bad += 1
-    print(f"\nchecked {checked} published field values across {len(CELLS)} cells: "
+    for sk in skipped:
+        print(f"  SKIPPED {sk}")
+    print(f"\nchecked {checked} published field values across {len(CELLS) - len(skipped)} of "
+          f"{len(CELLS)} cells ({len(skipped)} skipped, no published records): "
           f"{bad if bad else 'NO'} mismatch{'es' if bad != 1 else ''}")
     return 1 if bad else 0
 

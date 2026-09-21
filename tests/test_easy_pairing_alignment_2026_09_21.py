@@ -20,6 +20,8 @@ worse than no checker at all.
 """
 import copy
 import os
+import shutil
+import tempfile
 import unittest
 
 from tools import paper_tables as pt
@@ -103,12 +105,66 @@ class EasyPairingAlignment(unittest.TestCase):
         finally:
             pt.published_uuids, pt.published_records = u, r
 
-    def test_a_session_published_twice_is_caught(self):
-        """One run supplying two published rows is a pseudo-replicate, not a repetition."""
-        recs = pt.published_records("azure", "", "easy")
-        uuids = pt.published_uuids("azure", "easy")
-        problems = self._with_sources(uuids[:-1] + [uuids[0]], recs)
+    def test_a_session_published_twice_is_caught_on_a_real_tree(self):
+        """One run supplying two published rows is a pseudo-replicate, not a repetition.
+
+        This one mutates an actual README rather than substituting the readers, because the
+        substituted version constructed a state the real readers cannot produce: published_records
+        derives recs FROM uuids, so a duplicated uuid always yields a duplicated record object too.
+        The audit that found that also found this file had no test touching a real file at all.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            for cloud in ("aws", "gcp", "azure"):
+                src = os.path.join(pt.RESULTS, cloud, f"{cloud}-easy")
+                dst = os.path.join(tmp, cloud, f"{cloud}-easy")
+                os.makedirs(dst)
+                shutil.copy(os.path.join(src, "README.md"), dst)
+                shutil.copytree(os.path.join(src, "records"), os.path.join(dst, "records"))
+            readme = os.path.join(tmp, "azure", "azure-easy", "README.md")
+            text = open(readme).read()
+            uuids = pt.SESS_RE.findall(text)
+            self.assertGreater(len(uuids), 1)
+            open(readme, "w").write(text.replace(uuids[-1], uuids[0]))   # last row now names run 1
+
+            results, staging = pt.RESULTS, pt.STAGING
+            pt.RESULTS, pt.STAGING = tmp, os.path.join(tmp, "_no_staging")
+            try:
+                cells = copy.deepcopy(self.cells)
+                problems = pt.check_easy_pairing_alignment(cells)
+            finally:
+                pt.RESULTS, pt.STAGING = results, staging
         self.assertTrue(any("published twice" in p for p in problems), problems)
+        self.assertTrue(any("SAME run record" in p for p in problems), problems)
+
+    def test_a_single_row_cell_is_reported_not_passed(self):
+        """One row cannot be misordered, so a green result on it verifies nothing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            for cloud in ("aws", "gcp", "azure"):
+                src = os.path.join(pt.RESULTS, cloud, f"{cloud}-easy")
+                dst = os.path.join(tmp, cloud, f"{cloud}-easy")
+                os.makedirs(dst)
+                shutil.copy(os.path.join(src, "README.md"), dst)
+                shutil.copytree(os.path.join(src, "records"), os.path.join(dst, "records"))
+            readme = os.path.join(tmp, "azure", "azure-easy", "README.md")
+            lines, kept, seen = open(readme).read().split("\n"), [], 0
+            for ln in lines:
+                if pt.SESS_RE.match(ln):
+                    seen += 1
+                    if seen > 1:
+                        continue
+                kept.append(ln)
+            open(readme, "w").write("\n".join(kept))
+
+            results, staging = pt.RESULTS, pt.STAGING
+            pt.RESULTS, pt.STAGING = tmp, os.path.join(tmp, "_no_staging")
+            try:
+                cells = copy.deepcopy(self.cells)
+                az = _easy(cells, "azure")            # the cell a one-row tree would have produced
+                az["Ms"], az["cost"] = az["Ms"][:1], az["cost"][:1]
+                problems = pt.check_easy_pairing_alignment(cells)
+            finally:
+                pt.RESULTS, pt.STAGING = results, staging
+        self.assertTrue(any("proves nothing" in p for p in problems), problems)
 
     def test_two_rows_resolving_to_one_record_is_caught(self):
         """The failure the old UUID assertion claimed to catch, and could not."""
