@@ -194,6 +194,30 @@ class EasyPairingAlignment(unittest.TestCase):
             pt._suite_replicates(cells, paired=True)
 
 
+class DefaultScheme(unittest.TestCase):
+    """COST_PAIRED must actually govern something, or it is decoration.
+
+    An audit noted that suite_uncertainty names both schemes explicitly, so flipping the constant
+    changed no published number and no test. This makes the constant load-bearing: the no-argument
+    path must be the paired one, which is exactly what the reviewer asked for.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.cells = pt.all_cells()
+        except (SystemExit, OSError) as exc:
+            raise unittest.SkipTest(f"no results tree: {exc}")
+
+    def test_the_default_path_is_the_paired_one(self):
+        self.assertTrue(pt.COST_PAIRED)
+        _, _, default = pt._suite_replicates(self.cells)
+        _, _, paired = pt._suite_replicates(self.cells, paired=True)
+        _, _, unpaired = pt._suite_replicates(self.cells, paired=False)
+        self.assertEqual(default, paired)
+        self.assertNotEqual(default, unpaired)
+
+
 class FrontierExact(unittest.TestCase):
     """Azure's frontier frequency is enumerated, not sampled. Its two preconditions must refuse.
 

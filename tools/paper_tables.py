@@ -543,9 +543,15 @@ def suite_uncertainty(cells: list) -> dict:
     """Per-cloud percentile intervals on E_X and G_X, frontier-membership frequency, and the pairwise
     difference verdicts Part 1's rule asks for (interval on the DIFFERENCE excluding zero).
 
-    front_pct is the paired scheme (COST_PAIRED); front_pct_unpaired is the independent-draw scheme the
-    frontier note reports as its sensitivity. Both are emitted so the note's comparison is generated
-    rather than transcribed by hand.
+    front_pct is the paired scheme and front_pct_unpaired the independent-draw one. Both are named
+    EXPLICITLY here rather than through COST_PAIRED: this function's job is the comparison, so it must
+    compute both whichever way the default is set. COST_PAIRED governs the default of
+    _suite_replicates and nothing else; an audit pointed out that flipping it changes no published
+    number, so test_the_default_path_is_the_paired_one exists to make it load-bearing.
+
+    Neither is the figure Part 5 prints. That is frontier_exact, which enumerates rather than samples.
+    These two are what the note reports beside it, to show how far a 10,000-replicate draw lands from
+    the enumerated value.
     """
     ex, gx, front = _suite_replicates(cells, paired=True)
     _, _, front_u = _suite_replicates(cells, paired=False)
@@ -571,8 +577,11 @@ def frontier_scheme_sensitivity(cells: list, seeds) -> dict:
 
     The two schemes share one stream at each seed, so at a given seed they run on identical time
     replicates and the difference isolates the cost draw. Repeating over seeds is what says whether that
-    difference is a real effect or the frequency's own Monte Carlo noise at BOOT_B replicates; Part 5's
-    frontier note reports it over the ten seeds listed in NOTE_SEEDS.
+    difference is a real effect or the frequency's own Monte Carlo noise at BOOT_B replicates.
+
+    Part 5 no longer reports a ten-seed spread: since 230d8450 the note gives the enumerated value and
+    the two schemes' 10,000-replicate estimates beside it. This stays as a diagnostic, and NOTE_SEEDS
+    is the seed set it was measured over. The stale reference was found by audit on 2026-09-21.
     """
     rows = {}
     for sd in seeds:
