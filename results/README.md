@@ -25,7 +25,7 @@ itself does. The row's operation columns sum to its `total`, and because of that
 666 s deploy and 3060 s total here against 652 s and 3046 s in the paper. Same run, two stated
 definitions; the top-level `README.md` carries the same note. Both regimes use one definition: each leg's own critical
 path, summed unconditionally. The published operation windows are disjoint in both (zero overlapping
-windows across all 81 medium rows), so neither regime is credited for overlap and the A-vs-B comparison
+windows across the 62 medium rows whose per-run records are published here), so neither regime is credited for overlap and the A-vs-B comparison
 stays on one basis.
 
 ### [aws/](aws/)

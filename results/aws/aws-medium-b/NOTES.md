@@ -12,13 +12,14 @@ The mapping is:
 | attempt id | 3 | 5 | 6 | 8 | 13 | 16 | 22 | 23 | 24 | 25 | 26 | 27 |
 
 n = 12 fair of 27 attempted; 10 of the 12 reached the goal predicate (attempts 5, 6, 8, 16, 22, 23,
-24, 25, 26, 27 = README rows 2, 3, 4, 6, 7, 8, 9, 10, 11, 12). Every column but `deploy (t1)` is a
-critical-path second; `deploy (t1)` is the externally polled time-to-serving, which ends after the
-deploy leg itself does. The per-operation columns sum to this table's `total`, which is therefore **not**
+24, 25, 26, 27 = README rows 2, 3, 4, 6, 7, 8, 9, 10, 11, 12). Every per-operation time column is a
+critical-path second except `deploy (t1)`, which is the externally polled time-to-serving and ends
+after the deploy leg itself does. The per-operation columns sum to this table's `total`, which is therefore **not**
 Part 4's `M`: M takes the deploy leg's own critical path instead, and averages 2,685 s over this cell
-against this table's 2,720 s. `agent $` is the deploy round plus the
-deprovision turn only; it excludes the agent spend on the four scored operations, which for attempt 13
-(README row 5) is a further $11.58.
+against this table's 2,720 s. `agent $` is the agent's LLM cost for the task
+being measured: the deploy round, plus each scored operation, plus the durability cycles. The
+deprovision turn is teardown bookkeeping and stays out, which is the rule this cell's `README.md` and
+`PLAYBOOK.md` both state.
 
 Runs 22 to 27 are the first six measured after the cost path was rebuilt (2026-09-06). Every
 earlier row was priced by the enumerate-then-price adapter; these six were priced from

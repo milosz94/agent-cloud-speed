@@ -22,5 +22,5 @@ split could not be recomputed from what was stored.
 `agent $` is the agent's LLM cost for **the task being measured**: the deploy round, plus each
 operation, plus the durability cycles. Teardown is harness bookkeeping and stays out, matching the rule
 `PLAYBOOK.md` states for the easy tier. The parts are disjoint time windows of one session (verified:
-zero overlapping windows across all 81 medium rows), so they sum without double counting, and the
+zero overlapping windows across the 62 medium rows whose per-run records are published here), so they sum without double counting, and the
 `deploy-serve` operation carries no cost of its own on any row because the deploy round already holds it.
