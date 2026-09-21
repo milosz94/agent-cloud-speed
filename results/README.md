@@ -23,8 +23,10 @@ exception: **deploy (t1)** is the externally polled time-to-serving, which ends 
 itself does. The row's operation columns sum to its `total`, and because of that exception `total` is
 **not** Part 4's `M`: M takes the deploy leg's own critical path instead. On aws-medium-a run 1 that is
 666 s deploy and 3060 s total here against 652 s and 3046 s in the paper. Same run, two stated
-definitions; the top-level `README.md` carries the same note. This is one definition for both regimes: online has no cross-operation overlap so M equals the
-serial sum, disclosed does not, which is what makes the A-vs-B comparison honest.
+definitions; the top-level `README.md` carries the same note. Both regimes use one definition: each leg's own critical
+path, summed unconditionally. The published operation windows are disjoint in both (zero overlapping
+windows across all 81 medium rows), so neither regime is credited for overlap and the A-vs-B comparison
+stays on one basis.
 
 ### [aws/](aws/)
 
