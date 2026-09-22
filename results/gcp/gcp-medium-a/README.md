@@ -13,6 +13,16 @@
 | [9](sessions/c14d2415-c14d-4b80-b46f-46a38d918be3.jsonl) | 1031 | 479 | 40 | 185 | 169 | 158 | $2.68 | - | $29.28 | $30.72 | $58.51 | 5/5 |
 | [10](sessions/08465ab0-b4d4-4989-8595-76bdb545871e.jsonl) | 4290 | 463 | 46 | 206 | 952 | 2623 | $9.31 | - | $68.67 | $68.67 | $68.67 | 4/5 |
 
+## Excluded run, and why (stated, not hidden)
+
+| run | t1 (s) | why excluded |
+|----:|-------:|:-------------|
+| 11 | 255.3 | HTTP **403** on the **first poll**: a Cloud Run IAM denial answered before the app did |
+
+run11 is the only 403 in this cell and its 255.3 s sits well below the 365 to 485 s band of the ten
+published runs, so its `t1` measures the IAM edge rather than the app. The harness now refuses this class
+of stop at measurement time, and gold 1.1.0 excludes it from the floor and the frontier.
+
 `agent $` is the agent's LLM cost for **the task being measured**: the deploy round, plus each
 operation, plus the durability cycles. Teardown is harness bookkeeping and stays out, matching the rule
 `PLAYBOOK.md` states for the easy tier. The parts are disjoint time windows of one session (verified:

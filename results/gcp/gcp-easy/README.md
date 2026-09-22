@@ -1,5 +1,8 @@
 # gcp: Easy-tier umami (2026-09-04)
 
+n=12 of 16 attempted: run01 to run04 and run09 to run16 are published; run05 to run08 predate the
+corrected cost tool and are not published.
+
 | run | t1 (s) | platform (s) | agent (s) | steps | tokens | agent $ | fixed $/mo | $/mo @ 10k req | $/mo @ 500k req | $/mo @ 10M req |
 |----:|-------:|-------------:|----------:|------:|-------:|--------:|-----------:|---------------:|----------------:|---------------:|
 | [1](sessions/3d982983-4a23-43ad-9a19-94a3b9bb2e4c.jsonl) | 484.1 | 323.3 | 160.8 | 20 | 13388 | $1.18 | - | $29.28 | $30.72 | $58.51 |
