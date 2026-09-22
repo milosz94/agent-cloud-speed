@@ -180,6 +180,14 @@ def arch_class(rec: dict) -> str:
     # instead of silently reporting "managed container".
     has_db = any(("rds" in n or "sql" in n or "postgres" in n or "relationaldatabase" in n
                   or n == "dbinstance") for n in names)
+    # A usage-metered surface lists only its per-request lines in components; every always-on resource
+    # is folded into the schedule's standing floor instead (cost.py's standing_floor_hourly_usd), and
+    # the fold is recorded in assumptions. Reading components alone therefore reported all 32 GCP runs
+    # as having no database when every one of them live-enumerated a Cloud SQL instance and priced it
+    # into the floor. Measured 2026-09-22: 32 of 32 GCP records carry the Cloud SQL fold.
+    if not has_db:
+        folded = " ".join(crr.get("assumptions") or []).lower()
+        has_db = any(k in folded for k in ("cloud sql", "rds", "managed postgres", "flexible server"))
     # The SERVICE field decides before any component heuristic, because Azure Container Apps and Cloud
     # Run emit byte-identical components (compute-active-cpu, compute-active-mem, requests) and differ
     # only by name. Classifying on components alone put Azure in the Cloud Run bucket.
