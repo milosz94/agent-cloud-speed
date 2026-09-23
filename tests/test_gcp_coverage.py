@@ -9,6 +9,7 @@ Gaps closed here:
   GAP 4  Cloud SQL public IPv4 (post-2024 in-use external IPv4) was uncharged; now added when ipv4Enabled.
   GAP 5  Artifact Registry image storage is disclosed (de-minimis, within the free tier), never silent.
 """
+import json
 import unittest
 from unittest import mock
 
@@ -317,6 +318,47 @@ class TestTornDownFloorDisclosed(unittest.TestCase):
             ur = ad.run_rate("https://umami-1.europe-west1.run.app", capture_date="2026-08-29")
         self.assertIsNotNone(ur)
         self.assertTrue(any("scaling config was unavailable" in a for a in ur.assumptions))
+
+
+class V2ServiceResourceIsReadable(unittest.TestCase):
+    """cloud_run_scaling_from_v2_service is the provenance the two re-priced GCP Easy records name.
+
+    Those records say their scaling configuration was "read from the Cloud Run Admin v2 Service resource
+    recorded in this run's own published transcript". A reader who follows that sentence lands on this
+    function, so it has to be exercised: shipped with no caller and no test, the provenance line would
+    point at code nothing runs. The fixtures below are the two Service resources as the transcripts
+    record them, trimmed to the fields the resolver reads.
+    """
+
+    RUN12 = {"name": "projects/redu-425516/locations/us-central1/services/umami-acs547c2aaa",
+             "uri": "https://umami-acs547c2aaa-aggnv775ja-uc.a.run.app",
+             "template": {"scaling": {"minInstanceCount": 1, "maxInstanceCount": 3},
+                          "containers": [{"resources": {"limits": {"cpu": "1", "memory": "1Gi"},
+                                                        "startupCpuBoost": True}}]}}
+
+    def test_reads_region_scale_and_size_off_the_v2_resource(self):
+        got = g.cloud_run_scaling_from_v2_service(self.RUN12)
+        self.assertEqual(got["region"], "us-central1")     # from the resource name, never the URL
+        self.assertEqual(got["service"], "umami-acs547c2aaa")
+        self.assertEqual(got["min_scale"], 1)
+        self.assertEqual(got["cpu"], 1.0)
+        self.assertEqual(got["mem_gib"], 1.0)
+
+    def test_cpu_idle_absent_with_resources_set_is_instance_based(self):
+        # Google's v2 reference: cpuIdle is "true by default. However, if ResourceRequirements is set,
+        # the caller must explicitly set this field to true to preserve the default behavior."
+        self.assertTrue(g.cloud_run_scaling_from_v2_service(self.RUN12)["instance_based"])
+
+    def test_cpu_idle_true_is_request_based(self):
+        doc = json.loads(json.dumps(self.RUN12))
+        doc["template"]["containers"][0]["resources"]["cpuIdle"] = True
+        self.assertFalse(g.cloud_run_scaling_from_v2_service(doc)["instance_based"])
+
+    def test_the_a_run_app_url_yields_no_region_so_the_resource_name_is_the_only_source(self):
+        # the defect this whole path exists for: the parse returned "a", which is not a region
+        self.assertIsNone(g.cloud_run_region_from_url(self.RUN12["uri"]))
+        self.assertEqual(g.cloud_run_region_from_url(
+            "https://umami-123456789.us-central1.run.app"), "us-central1")
 
 
 def _folded_compute(reqs):

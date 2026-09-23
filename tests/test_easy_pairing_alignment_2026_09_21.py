@@ -242,7 +242,10 @@ class FrontierExact(unittest.TestCase):
         # cpuIdle unset with resources set = CPU always allocated), at the instance-based SKUs the live
         # catalogue returns, which is run03's published treatment of the identical configuration. They
         # now carry run03's flat $68.675/mo, so GCP Easy holds 2 distinct hourly rates where it held 3
-        # and the enumeration space is C(11,1) x C(13,3) = 11 x 286 = 3,718, not C(14,2) x C(13,3).
+        # and the enumeration space is C(13,1) x C(13,3) = 13 x 286 = 3,718, not C(14,2) x C(13,3).
+        # (12 runs over 2 distinct rates gives C(12+2-1, 2-1) = C(13,1) = 13 multisets. An earlier
+        # version of this comment wrote C(11,1), which is 11 x 286 = 3,146: the printed 3,718 was
+        # right and the derivation beside it was not, which is the harder kind of error to see.)
         r = pt.frontier_exact(self.cells, replicates=20000)
         self.assertEqual(f"{r['pct']:.6f}", "68.297206")
         self.assertEqual(f"{r['pct']:.2f}", "68.30")
