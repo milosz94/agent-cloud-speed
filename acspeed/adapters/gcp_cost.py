@@ -122,7 +122,55 @@ def cloud_run_region_from_url(url: str) -> Optional[str]:
     if not host.endswith(".run.app"):
         return None
     left = host[: -len(".run.app")]
+    # The newer ``<svc>-<hash>-<regioncode>.a.run.app`` form carries no region: the segment before
+    # ``run.app`` is the literal ``a``, and the ``-uc`` style region CODE that precedes it is not a
+    # region NAME. Parsing it yielded region ``a``, which mis-tiered the request-based CPU/Memory
+    # price (Tier-2 read where Tier-1 applies). Region-less is the honest answer for this form; the
+    # region is read off the resolved service instead.
+    if not left or left.endswith(".a") or left == "a":
+        return None
     return left.rsplit(".", 1)[1] if "." in left else None
+
+
+def cloud_run_scaling_from_v2_service(doc: dict) -> Optional[dict]:
+    """The same {min_scale, cpu, mem_gib, instance_based, service, region} the inventory resolver returns,
+    read instead off a Cloud Run Admin **v2** Service resource as the API returns it.
+
+    Why this exists beside the v1 path: ``gcloud run services list`` returns the v1 (Knative) projection,
+    where CPU allocation is the annotation ``run.googleapis.com/cpu-throttling``. A service created or read
+    through the v2 REST API carries the same setting as ``template.containers[].resources.cpuIdle``, and the
+    region as a segment of the resource ``name`` rather than in a label. Reading the v2 form lets a run be
+    priced from the Service document its own transcript recorded, with no URL parsing at all.
+
+    The cpu-allocation rule is the vendor's, quoted so it is auditable: the v2 reference says of ``cpuIdle``
+    "Determines whether CPU is only allocated during requests (true by default). However, if
+    ResourceRequirements is set, the caller must explicitly set this field to true to preserve the default
+    behavior." So with ``resources`` present, ``cpuIdle`` false OR ABSENT means CPU is allocated for the
+    instance's lifetime, which the billing-settings page calls instance-based billing. Absent with no
+    ``resources`` set is the plain default, request-based.
+    """
+    if not isinstance(doc, dict):
+        return None
+    tmpl = doc.get("template") or {}
+    scaling = tmpl.get("scaling") or {}
+    containers = tmpl.get("containers") or []
+    res = ((containers[0] if containers else {}) or {}).get("resources") or {}
+    limits = res.get("limits") or {}
+    name = str(doc.get("name") or "")
+    m = re.search(r"/locations/([^/]+)/", name)
+    region = m.group(1) if m else None
+    svc = name.rsplit("/", 1)[-1] if "/" in name else name
+    try:
+        min_scale = int(scaling.get("minInstanceCount") or 0)
+    except (TypeError, ValueError):
+        min_scale = 0
+    cpu = _parse_run_cpu(limits.get("cpu"))
+    mem = _parse_run_mem_gib(limits.get("memory"))
+    instance_based = bool(limits) and res.get("cpuIdle") is not True
+    return {"service": svc or None, "region": region, "min_scale": min_scale,
+            "cpu": float(cpu if cpu is not None else 1.0),
+            "mem_gib": float(mem if mem is not None else 0.5),
+            "instance_based": instance_based}
 
 
 def _first_tier_price(sku: dict) -> Optional[float]:

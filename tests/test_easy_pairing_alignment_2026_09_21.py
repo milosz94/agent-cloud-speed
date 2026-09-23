@@ -235,10 +235,18 @@ class FrontierExact(unittest.TestCase):
             raise unittest.SkipTest(f"no results tree: {exc}")
 
     def test_the_exact_value_is_what_the_paper_prints(self):
+        # Repinned 2026-09-23. GCP Easy run12 and run14 were priced without the always-on Cloud Run
+        # floor: the URL parse read region "a" off the newer <svc>-<hash>-<rc>.a.run.app form, resolved
+        # no service, and the floor was disclosed as assumed $0. Both were re-priced from the Cloud Run
+        # Admin v2 Service resource their own transcripts record (minInstanceCount 1, 1 vCPU + 1 GiB,
+        # cpuIdle unset with resources set = CPU always allocated), at the instance-based SKUs the live
+        # catalogue returns, which is run03's published treatment of the identical configuration. They
+        # now carry run03's flat $68.675/mo, so GCP Easy holds 2 distinct hourly rates where it held 3
+        # and the enumeration space is C(11,1) x C(13,3) = 11 x 286 = 3,718, not C(14,2) x C(13,3).
         r = pt.frontier_exact(self.cells, replicates=20000)
-        self.assertEqual(f"{r['pct']:.6f}", "7.768696")
-        self.assertEqual(f"{r['pct']:.2f}", "7.77")
-        self.assertEqual(r["outcomes"], 26026)
+        self.assertEqual(f"{r['pct']:.6f}", "68.297206")
+        self.assertEqual(f"{r['pct']:.2f}", "68.30")
+        self.assertEqual(r["outcomes"], 3718)
 
     def test_the_law_of_each_resampled_mean_sums_to_one(self):
         for cloud in ("gcp", "azure"):

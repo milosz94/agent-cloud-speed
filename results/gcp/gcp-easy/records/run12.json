@@ -11,41 +11,14 @@
    "egress GB estimated as requests x 50 KB average response size",
    "request grid (per month): 10k, 50k, 100k, 500k, 1M, 10M",
    "active compute (driver='other') folded into the per-request cost assuming 1 vCPU + 0.5 GiB held 0.1s per request; always-on / provisioned components folded as a flat monthly floor",
-   "Cloud Run scaling config was unavailable (service not describable, e.g. a torn-down deploy); the always-on min-instances floor is assumed $0 and may understate a deploy that ran with min-instances>=1",
+   "Cloud Run uses instance-based billing (--no-cpu-throttling): 1 instance(s) x (1 vCPU + 1 GiB) at the instance-based SKUs = $0.072/hr, billed by instance lifetime (no per-request Requests fee); above this baseline more instances start under load and are billed the same way (above-baseline scaling not modeled per-request here)",
+   "scaling configuration read from the Cloud Run Admin v2 Service resource recorded in this run's own published transcript (minInstanceCount 1, resources.limits 1 vCPU / 1 GiB, region from the resource name); the earlier URL parse resolved no service and dropped the floor, which the released tool now corrects",
    "folded a Cloud SQL instance (db-f1-micro) as a standing floor $0.0221/hr (Enterprise-Zonal edition assumed; in-use public IPv4 included, region-approximate)",
    "Artifact Registry image storage is not folded here: a single app image sits within the 0.5 GB free tier (storage beyond that lists at $0.10/GB-month), a de-minimis line disclosed rather than silently omitted",
    "universal sweep: discovered run.googleapis.com/Revision 'umami-acs547c2aaa-00001-8ts' with no pricer; DISCLOSED unpriced, never silently $0 (a resource type the tool does not yet price)"
   ],
   "capture_date": "2026-08-29",
-  "components": [
-   {
-    "driver": "requests",
-    "name": "requests",
-    "native_unit": "per request",
-    "per_unit_usd": 4e-07,
-    "raw_unit_price": 4e-07,
-    "tier": "",
-    "unit": "per request"
-   },
-   {
-    "driver": "other",
-    "name": "compute-active-cpu",
-    "native_unit": "per vCPU-second",
-    "per_unit_usd": 3.36e-05,
-    "raw_unit_price": 3.36e-05,
-    "tier": "",
-    "unit": "vCPU-second"
-   },
-   {
-    "driver": "other",
-    "name": "compute-active-mem",
-    "native_unit": "per GiB-second",
-    "per_unit_usd": 2.5e-06,
-    "raw_unit_price": 2.5e-06,
-    "tier": "",
-    "unit": "GiB-second"
-   }
-  ],
+  "components": [],
   "exclusions": [
    "account-specific discounts",
    "spot",
@@ -56,55 +29,55 @@
   "fx": null,
   "kind": "usage",
   "ok": true,
-  "price_source": "GCP Cloud Billing Catalog (request-based Cloud Run SKUs, ADC)",
+  "price_source": "GCP Cloud Billing Catalog (instance-based Cloud Run SKUs, ADC)",
   "price_urls": [
    "https://cloudbilling.googleapis.com/v1/services/152E-C115-5142/skus"
   ],
   "provider": "gcp",
-  "region": "a",
+  "region": "us-central1",
   "schedule": [
    {
     "egress_gb": 0.4768,
     "label": "10k",
     "requests_per_month": 10000.0,
-    "usd_per_month": 16.1539
+    "usd_per_month": 68.675
    },
    {
     "egress_gb": 2.3842,
     "label": "50k",
     "requests_per_month": 50000.0,
-    "usd_per_month": 16.3093
+    "usd_per_month": 68.675
    },
    {
     "egress_gb": 4.7684,
     "label": "100k",
     "requests_per_month": 100000.0,
-    "usd_per_month": 16.5035
+    "usd_per_month": 68.675
    },
    {
     "egress_gb": 23.8419,
     "label": "500k",
     "requests_per_month": 500000.0,
-    "usd_per_month": 18.0575
+    "usd_per_month": 68.675
    },
    {
     "egress_gb": 47.6837,
     "label": "1M",
     "requests_per_month": 1000000.0,
-    "usd_per_month": 20.0
+    "usd_per_month": 68.675
    },
    {
     "egress_gb": 476.8372,
     "label": "10M",
     "requests_per_month": 10000000.0,
-    "usd_per_month": 54.965
+    "usd_per_month": 68.675
    }
   ],
   "service": "Cloud Run",
   "traffic_estimate": {
-   "high": 54.97,
-   "low": 16.15,
-   "medium": 18.06
+   "high": 68.67,
+   "low": 68.67,
+   "medium": 68.67
   }
  },
  "deploy": {
