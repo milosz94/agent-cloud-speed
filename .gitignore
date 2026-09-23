@@ -19,3 +19,11 @@ sandbox/vmconfig-local.json
 # private substrate denylist (names the infra we strip -- never publish)
 /acspeed/_substrate_rules.py
 node_modules/
+
+# build_tables.py writes its report beside the records it reads. On 2026-09-23 an audit agent ran
+# it, the files landed in a PUBLISHED records directory, and a git add -A swept them into the v1.2.1
+# tag and from there into the Zenodo deposit. One of them stated the cell cost from the FIRST record
+# alone, which for gcp-easy was the un-repriced $29.28, so the deposit carried a surface refuting the
+# paper frontier column it was cut to support.
+results/*/*/records/tables.json
+results/*/*/records/tables.txt
