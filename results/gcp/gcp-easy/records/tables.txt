@@ -1,0 +1,49 @@
+================================================================================================
+AGENT-CLOUD SPEED TEST  |  adapter=gcp  |  app=umami   (all numbers via acspeed)
+n=12   model=claude-opus-5   generated 2026-09-23 13:33 UTC
+================================================================================================
+
+HEADLINE  (Part 1/2 spine: wall = critical_platform + critical_agent, in SECONDS)
+  time-to-serving         804.1s [95% CI 652.8, 981.2]  (n=12)
+    = critical_platform   618.4s [95% CI 467.6, 797.4]  (n=12)
+    + critical_agent      185.7s [95% CI 168.5, 203.7]  (n=12)
+    (overlap              0.0s [95% CI 0.0, 0.0]  (n=12))
+  first-attempt LIVENESS  12/12 = 100.0% (Wilson 95% CI 75.7-100)
+  eventual (w/ repair)    12/12 = 100.0% (Wilson 95% CI 75.7-100)
+  content-verified        12/12 (served root is real app content, not an infra/default page; off-clock success oracle, separate from the liveness clock t1)
+  agent session (whole)   855.7s [95% CI 704.6, 1033.8]  (n=12)   of which after serving 51.6s [95% CI 38.4, 65.3]  (n=12)
+  steps (LLM calls)       24.2 [95% CI 21.6, 26.7]  (n=12)   (whole session)
+  agent API cost          1.3 usd [95% CI 1.2, 1.5]  (n=12)   (whole session)
+  efficiency (Part 3)     floor-ratio 3.0x [95% CI 2.5, 3.7]  (n=12)  (F_C=264.2s min-platform floor, n=12; bracket [264.2, 478.7]s = x1.812; selection-excess 0, 1-op suite; gold provision-deploy/1.1.0)
+    competitive ratio is an INTERVAL [M/best, M/F_C], not a point; per-run [[1.011, 1.832], [3.043, 5.513], [1.666, 3.019], [1.059, 1.919], [1.525, 2.763], [1.576, 2.855], [1.662, 3.012], [1.591, 2.883], [1.506, 2.729], [2.741, 4.966], [1.778, 3.221], [1.0, 1.812]]
+    floor sensitivity: bracket ratio 1.647..2.013 at F_C(1+/-0.1) (denominator leverage; refutable + versioned gold)
+  (reading)               efficiency + capability are WORKLOAD-RELATIVE (Part 4): an axis ceiling lowers measured efficiency only for workloads bound by that axis; each figure carries its axis set, never a bare cross-workload verdict
+  cold/warm               POOLED above; per-run warmth shown below (real stratification = C8)
+
+TABLE A  (per run, seconds; t-serve = t1 - t0 by EXTERNAL poll; agt_end = agent's own finish)
+       run   outcome       rpr    flavor   t-serve   agt_end   platf_s   agent_s    boot_s     steps       tok         $      warm      dead
+         1   SUCCESS         0         -     484.1     542.2     323.3     160.8       1.7        20     13388    1.1758         -      True
+         2   SUCCESS         0         -    1456.5    1488.7    1300.4     156.1       2.1        18     10485    0.9446         -      True
+         3   SUCCESS         0         -     797.5     826.3     637.7     159.8       5.8        19     11652    0.9809         -      True
+         4   SUCCESS         0         -     507.1     530.6     327.0     180.1      11.1        21     13348    1.0966         -      True
+         9   SUCCESS         0         -     730.0     834.5     527.5     202.5       1.2        32     19142    1.8469         -      True
+        10   SUCCESS         0         -     754.4     780.6     621.2     133.2       8.9        20      9443    0.9314         -      True
+        11   SUCCESS         0         -     795.7     842.6     622.1     173.6       0.6        23     14141    1.4926         -      True
+        12   SUCCESS         0         -     761.8     838.1     553.9     207.9       0.4        28     18640      1.49         -      True
+        13   SUCCESS         0         -     720.9     744.7     550.7     170.2      10.6        23     12193    1.1419         -      True
+        14   SUCCESS         0         -    1311.9    1387.2    1065.0     246.9       1.6        29     21983    1.6983         -      True
+        15   SUCCESS         0         -     850.9     912.6     628.0     222.9       2.7        28     18117    1.5956         -      True
+        16   SUCCESS         0         -     478.7     540.3     264.2     214.5       2.7        29     17574    1.5069         -      True
+  ** runs [1, 2, 3, 4, 9, 10, 11, 12, 13, 14, 15, 16]: URL served on the very FIRST poll; check it was not a leftover deployment **
+
+TABLE B  (keyed to the paper)
+  Part 1 split (seconds)  platform [323.3, 1300.4, 637.7, 327.0, 527.5, 621.2, 622.1, 553.9, 550.7, 1065.0, 628.0, 264.2]  agent [160.8, 156.1, 159.8, 180.1, 202.5, 133.2, 173.6, 207.9, 170.2, 246.9, 222.9, 214.5]  overlap [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  (trace clipped at t1)
+  Part 1 capability C     DEFERRED (sysbench/STREAM/fio off-clock; network is a VM-to-VM axis, scored only for multi-VM operations, C17/C18)
+  Part 1 portable proxy   steps [20, 18, 19, 21, 32, 20, 23, 28, 23, 29, 28, 29]
+  Part 2 operation        PROVISION; end-signal = the app answers: first response from the URL with HTTP status < 500 (000 and 5xx = not serving); external concurrent poll, never self-report; caught by ['concurrent-poller', 'concurrent-poller', 'concurrent-poller', 'concurrent-poller', 'concurrent-poller', 'concurrent-poller', 'concurrent-poller', 'concurrent-poller', 'concurrent-poller', 'concurrent-poller', 'concurrent-poller', 'concurrent-poller']
+  Part 3 efficiency       floor-ratio [1.83, 5.51, 3.02, 1.92, 2.76, 2.86, 3.01, 2.88, 2.73, 4.97, 3.22, 1.81]  (F_C 264.2s = min-observed platform floor; best-achieved 478.7s; bracket width 214.5s = x1.812); exec-excess [219.9, 1192.3, 533.3, 242.9, 465.8, 490.2, 531.5, 497.6, 456.7, 1047.7, 586.7, 214.5]s; selection 0 (1-op)
+  Part 4 cost frontier    USAGE-METERED (Cloud Run): per-usage schedule (requests/mo): 10k->$29.2843/mo  50k->$29.4013/mo  100k->$29.5475/mo  500k->$30.7175/mo  1M->$32.18/mo  10M->$58.505/mo
+    (assumption: egress GB estimated as requests x 50 KB average response size; egress + provisioned floor folded, active per-second compute listed separately)
+  Part 4 cost by traffic  est total $/mo: low $29.28 (10k) / medium $30.72 (500k) / high $58.51 (10M req/mo)
+  Part 5 speed+liveness   time-to-serving [484.1, 1456.5, 797.5, 507.1, 730.0, 754.4, 795.7, 761.8, 720.9, 1311.9, 850.9, 478.7] s; first-attempt 12/12 = 3.0x [95% CI 2.5, 3.7]  (n=12)% (Wilson CI)
+================================================================================================

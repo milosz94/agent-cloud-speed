@@ -43,8 +43,8 @@
     "driver": "other",
     "name": "compute-active-cpu",
     "native_unit": "per vCPU-second",
-    "per_unit_usd": 3.36e-05,
-    "raw_unit_price": 3.36e-05,
+    "per_unit_usd": 2.4e-05,
+    "raw_unit_price": 2.4e-05,
     "tier": "",
     "unit": "vCPU-second"
    },
@@ -73,50 +73,50 @@
    "https://cloudbilling.googleapis.com/v1/services/152E-C115-5142/skus"
   ],
   "provider": "gcp",
-  "region": "a",
+  "region": "us-central1",
   "schedule": [
    {
     "egress_gb": 0.4768,
     "label": "10k",
     "requests_per_month": 10000.0,
-    "usd_per_month": 47.1788
+    "usd_per_month": 47.1692
    },
    {
     "egress_gb": 2.3842,
     "label": "50k",
     "requests_per_month": 50000.0,
-    "usd_per_month": 47.3342
+    "usd_per_month": 47.2862
    },
    {
     "egress_gb": 4.7684,
     "label": "100k",
     "requests_per_month": 100000.0,
-    "usd_per_month": 47.5285
+    "usd_per_month": 47.4325
    },
    {
     "egress_gb": 23.8419,
     "label": "500k",
     "requests_per_month": 500000.0,
-    "usd_per_month": 49.0825
+    "usd_per_month": 48.6025
    },
    {
     "egress_gb": 47.6837,
     "label": "1M",
     "requests_per_month": 1000000.0,
-    "usd_per_month": 51.025
+    "usd_per_month": 50.065
    },
    {
     "egress_gb": 476.8372,
     "label": "10M",
     "requests_per_month": 10000000.0,
-    "usd_per_month": 85.99
+    "usd_per_month": 76.3899
    }
   ],
   "service": "Cloud Run",
   "traffic_estimate": {
-   "high": 85.99,
-   "low": 47.18,
-   "medium": 49.08
+   "high": 76.39,
+   "low": 47.17,
+   "medium": 48.6
   }
  },
  "deploy": {
