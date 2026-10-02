@@ -40,8 +40,12 @@ platform (Part 5, S3). Runs fall on both sides of that amendment and Table 5.1 p
 paper discloses. A sensitivity meant to describe the PUBLISHED numbers therefore has to hold each leg
 at the rule its own published value was produced under, and vary only the threshold. That is what
 `published_rule` recovers, and `verify_default` proves it: rebuilding every leg at the adopted 60 s
-reproduces the record on 358 of 359. The check can fail and does: aws-medium-b run 3's deploy leg
-matches neither rule under any window searched, and is carried as an open finding.
+reproduces the record on 359 of 359. The check can fail: until v1.2.3 this tool ended every deploy
+window at first_event + makespan_s, which is 310.5 s short on the one leg (aws-medium-b run 3) whose
+published makespan, under the earlier rule, leaves out held-out idle inside its window, so that leg
+matched neither rule. A deploy window now ends at first_event + makespan_s + the time inside it that
+neither lane owns (held-out idle, human), taken at its fixed point under each rule (`deploy_end`); on
+every other deploy leg that time is zero and the window is unchanged.
 """
 from __future__ import annotations
 
@@ -64,9 +68,9 @@ TOL = 0.15          # seconds; the records store splits rounded to 0.1
 def legs():
     """Every published leg, as (cloud, label, window, published split).
 
-    The window is ("deploy", path, t1) or ("op", path, started_at, verified_at). A deploy leg's t1 is
-    recovered as first_event + makespan_s, which is the published serving epoch by construction;
-    `verify_default` is what makes that a checked claim rather than an assumption.
+    The window is ("deploy", path, first_event, makespan_s) or ("op", path, started_at, verified_at).
+    A deploy leg's end is resolved per owner rule by `deploy_end`; `published_rule` is what makes the
+    resolved window a checked claim rather than an assumption.
     """
     out = []
     for cloud in pt.ANON:
@@ -82,8 +86,8 @@ def legs():
                 if isinstance(pub, dict) and pub.get("makespan_s"):
                     rows = transcript._load_rows(path)
                     if len(rows) >= 2:
-                        t1 = transcript._epoch(rows[0]) + pub["makespan_s"]
-                        out.append((cloud, f"{label} deploy", ("deploy", path, t1), pub))
+                        out.append((cloud, f"{label} deploy",
+                                    ("deploy", path, transcript._epoch(rows[0]), pub["makespan_s"]), pub))
                 tier_run = rec.get("tier_run") or {}
                 items = list(tier_run.get("operations") or [])
                 items += list((tier_run.get("durability") or {}).get("cycles") or [])
@@ -92,6 +96,30 @@ def legs():
                     if isinstance(sp, dict) and a is not None and b is not None:
                         out.append((cloud, f"{label} {op.get('op_id')}", ("op", path, a, b), sp))
     return out
+
+
+def deploy_end(path, first, makespan, idle_is_platform: bool) -> float:
+    """The deploy window's end epoch: first event + published makespan + the time inside the window that
+    neither lane owns (held-out idle, human), which the published makespan leaves out. Extending the
+    window can bring more such time into it, so iterate to the fixed point. On the window each leg is
+    published on, that time is nonzero on one of the 94 deploy legs: aws-medium-b run 3, 310.5 s."""
+    t1 = first + makespan
+    for _ in range(20):
+        spans = transcript.trace_from_transcript(path, until_epoch=t1, idle_is_platform=idle_is_platform)
+        neither = sum(s.duration for s in spans if s.owner not in (PLATFORM, AGENT))
+        nxt = first + makespan + neither
+        if abs(nxt - t1) < 1e-6:
+            break
+        t1 = nxt
+    return t1
+
+
+def resolve(window, idle_is_platform: bool):
+    """A leg's window with a deploy leg's end resolved under the given rule."""
+    if window[0] == "deploy" and len(window) == 4:
+        _kind, path, first, makespan = window
+        return ("deploy", path, deploy_end(path, first, makespan, idle_is_platform))
+    return window
 
 
 def rebuild(window, idle_is_platform: bool):
@@ -135,18 +163,24 @@ def published_rule(all_legs):
 
     On 324 of the 359 legs the two rules give the same answer, so the leg says nothing about which was
     used and either flag is correct for it. The remaining 35 are diagnostic and do say.
+    The deploy window is resolved at the adopted threshold under the rule tested and then held fixed: the
+    sweep varies the threshold on the window the leg was published on, never the window itself.
     """
     transcript.MAX_GEN_GAP = DEFAULT
-    rules, unexplained = {}, []
+    rules, windows, unexplained, both = {}, {}, [], set()
     for i, (_cloud, label, window, pub) in enumerate(all_legs):
-        if _agrees(rebuild(window, True), pub):
-            rules[i] = True
-        elif _agrees(rebuild(window, False), pub):
-            rules[i] = False
+        wt, wf = resolve(window, True), resolve(window, False)
+        at, af = _agrees(rebuild(wt, True), pub), _agrees(rebuild(wf, False), pub)
+        if at and af:
+            both.add(i)
+        if at:
+            rules[i], windows[i] = True, wt
+        elif af:
+            rules[i], windows[i] = False, wf
         else:
-            rules[i] = True
-            unexplained.append((label, pub, rebuild(window, True), rebuild(window, False)))
-    return rules, unexplained
+            rules[i], windows[i] = True, wt
+            unexplained.append((label, pub, rebuild(wt, True), rebuild(wf, False)))
+    return rules, windows, unexplained, both
 
 
 def main() -> None:
@@ -157,7 +191,7 @@ def main() -> None:
             kinds.get("deploy" if label.endswith(" deploy") else "operation", 0) + 1
     print(f"published legs: {len(all_legs)}  ({kinds})")
 
-    rules, unexplained = published_rule(all_legs)
+    rules, windows, unexplained, both = published_rule(all_legs)
     print(f"legs rebuilt exactly at the {DEFAULT:.0f}s default: "
           f"{len(all_legs) - len(unexplained)}/{len(all_legs)}")
     for label, pub, got_t, got_f in unexplained:
@@ -167,19 +201,26 @@ def main() -> None:
         print(f"      earlier rule:    {got_f}")
     diag = sum(1 for i in rules if rules[i] is False)
     print(f"legs published under the earlier owner rule (diagnostic): {diag}")
+    print(f"legs both rules reproduce (their rule is not recoverable from the record): {len(both)}")
     print()
 
-    table = {}
+    table, cells = {}, {}
     for thr in GRID:
         transcript.MAX_GEN_GAP = thr
         acc = {c: [0.0, 0.0] for c in pt.ANON}          # agent_s, makespan_s
-        for i, (cloud, _label, window, _pub) in enumerate(all_legs):
-            got = rebuild(window, rules[i])
+        cell = {}
+        for i, (cloud, label, _window, _pub) in enumerate(all_legs):
+            got = rebuild(windows[i], rules[i])
             if not got:
                 continue
             acc[cloud][0] += got["critical_agent_s"]
             acc[cloud][1] += got["makespan_s"]
+            k = label.split(" run ")[0]
+            cell.setdefault(k, [0.0, 0.0])
+            cell[k][0] += got["critical_agent_s"]
+            cell[k][1] += got["makespan_s"]
         table[thr] = acc
+        cells[thr] = cell
     transcript.MAX_GEN_GAP = DEFAULT                     # never leave the module mutated
 
     head = "  ".join(f"{pt.ANON[c]:>7s}" for c in pt.ANON)
@@ -200,6 +241,70 @@ def main() -> None:
         base = 100.0 * table[DEFAULT][c][0] / table[DEFAULT][c][1]
         print(f"{pt.ANON[c]:6s} agent share ranges {min(vals):.2f}% to {max(vals):.2f}% "
               f"(swing {max(vals)-min(vals):.2f} points; default {base:.2f}%)")
+
+    print()
+    print("per cell (Part 5, section 3): agent share of the cell's legs, lowest and highest over the grid")
+    swings = {}
+    for k in sorted(cells[DEFAULT]):
+        vals = [100.0 * cells[t][k][0] / cells[t][k][1] for t in GRID if cells[t].get(k) and cells[t][k][1]]
+        swings[k] = max(vals) - min(vals)
+        base = 100.0 * cells[DEFAULT][k][0] / cells[DEFAULT][k][1]
+        print(f"  {k:16s} {min(vals):6.2f}% to {max(vals):6.2f}%  (swing {swings[k]:5.2f} points; default {base:.2f}%)")
+    lo, hi = min(swings, key=swings.get), max(swings, key=swings.get)
+    print(f"  swing across the nine cells: {swings[lo]:.1f} points ({lo}) to {swings[hi]:.1f} ({hi})")
+
+    # The 60 s default cannot tell which rule produced the legs both rules reproduce; the reading above puts
+    # them under the amended rule. The two other readings, each leg on its published window:
+    for name, rule_of in (("earlier rule on the legs both rules reproduce",
+                           lambda i: False if i in both else rules[i]),
+                          ("amended rule on every leg", lambda i: True)):
+        acc = {}
+        for thr in GRID:
+            transcript.MAX_GEN_GAP = thr
+            for i, (_cloud, label, _window, _pub) in enumerate(all_legs):
+                got = rebuild(windows[i], rule_of(i))
+                if not got:
+                    continue
+                k = label.split(" run ")[0]
+                a = acc.setdefault(k, {}).setdefault(thr, [0.0, 0.0])
+                a[0] += got["critical_agent_s"]
+                a[1] += got["makespan_s"]
+        transcript.MAX_GEN_GAP = DEFAULT
+        sw = {k: max(100.0 * v[t][0] / v[t][1] for t in GRID) - min(100.0 * v[t][0] / v[t][1] for t in GRID)
+              for k, v in acc.items()}
+        zero = sum(1 for x in sw.values() if x < 0.05)
+        print(f"  reading: {name}: swing {min(sw.values()):.1f} to {max(sw.values()):.1f} points; "
+              f"zero on {zero} of {len(sw)} cells")
+        moved = []
+        for k in sorted(acc):
+            was = 100.0 * cells[DEFAULT][k][0] / cells[DEFAULT][k][1]
+            now = 100.0 * acc[k][DEFAULT][0] / acc[k][DEFAULT][1]
+            if abs(now - was) >= 0.05:
+                moved.append(f"{k} {was:.1f} to {now:.1f}")
+        print(f"      at {DEFAULT:.0f} s the agent share moves on {len(moved)} cells: {'; '.join(moved) or 'none'}")
+
+    # The floor F_C of each cell is the minimum of its deploy legs' critical-platform time (Part 3, S2), so it
+    # moves with the threshold too (Part 5, S3): each cell's floor at every grid point, against its value at
+    # the adopted 60 s (which is the published floor, to the records' rounding).
+    floors = {}
+    for thr in GRID:
+        transcript.MAX_GEN_GAP = thr
+        for i, (_cloud, label, _window, _pub) in enumerate(all_legs):
+            if label.endswith(" deploy"):
+                got = rebuild(windows[i], rules[i])
+                if got:
+                    k = label.split(" run ")[0]
+                    f = floors.setdefault(k, {})
+                    f[thr] = min(f.get(thr, float("inf")), got["critical_platform_s"])
+    transcript.MAX_GEN_GAP = DEFAULT
+    moves = {k: [100.0 * (f[t] / f[DEFAULT] - 1.0) for t in GRID] for k, f in floors.items()}
+    varies = [k for k, v in moves.items() if max(v) - min(v) >= 0.05]
+    print()
+    print("per cell floor F_C over the grid, percent from its 60 s value")
+    for k in sorted(moves):
+        print(f"  {k:16s} floor {floors[k][DEFAULT]:7.1f} s   {min(moves[k]):+6.1f}% to {max(moves[k]):+6.1f}%")
+    print(f"  the floor moves on {len(varies)} of {len(moves)} cells, by between "
+          f"{min(min(v) for v in moves.values()):+.0f} and {max(max(v) for v in moves.values()):+.0f} percent")
 
     print()
     print(f"leg wall-clock analysed: {sum(table[DEFAULT][c][1] for c in pt.ANON):,.0f} s")
