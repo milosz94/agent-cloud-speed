@@ -210,7 +210,7 @@ def fig_makespan(cells, out):
             k += 1
     ax.set_xticks(pos)
     ax.set_xticklabels(labels, rotation=20, ha="right")
-    ax.set_ylabel("task makespan $M$ (s)")
+    ax.set_ylabel("per-task total $M$ (s)")
     # Headroom: the per-cloud labels sit above the data, so they must not collide with a whisker.
     top = max(max(d) for d in data) * 1.12
     ax.set_ylim(0, top)

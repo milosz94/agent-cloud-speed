@@ -173,8 +173,8 @@ def selfcheck(items):
         body = os.path.join(tex, "combined_p5body.tex")
         if os.path.exists(body):
             t = " ".join(open(body, encoding="utf-8").read().split())
-            if "AWS versus Azure pair is unresolved by the $G_X$ interval and by leave-one-out" not in t:
-                fails.append("paper no longer states the AWS-vs-Azure pair unresolved by G_X and LOO; "
+            if "AWS versus Azure pair is unresolved by the $G_X$ interval" not in t:
+                fails.append("paper no longer states the AWS-vs-Azure pair unresolved by G_X; "
                              "the emitted paragraph's 'third reason' clause is now unsupported")
             if "AWS\nminus Azure [$-$31, 2,399] s" not in t.replace(" ", " ") and \
                "AWS minus Azure [$-$31, 2,399] s" not in t:
@@ -261,7 +261,7 @@ would correct the same quantities twice: within that family
 {len(su['res']['bonferroni'][0])} of {len(su['live'])} survive Bonferroni and
 {len(su['res']['holm'][0])} survive Holm, the difference being AWS minus Azure, printed above as
 [{lo:,.0f}, {hi:,.0f}]~s and widening to [{b3[0]:,.0f}, {b3[1]:,.0f}]~s. That is the pair this part
-already reports unresolved by the $G_X$ interval and by leave-one-out, so a correction is a third
+already reports unresolved by the $G_X$ interval, so a correction is a second
 reason rather than a new one. What no procedure and no family size tried here disturbs is
 {nm([{'lab': x} for x in robust])}. This is disclosed as a sensitivity and not adopted as the rule:
 Part~1's rule is pre-registered and bound by every later part, this wave reports every comparison it

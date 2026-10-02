@@ -105,7 +105,32 @@ def boot_diff_ci(x, y, seed=BOOT_SEED):
     return lo, hi
 
 
+# Comparisons Part 5, section 5 does not claim although they pass both halves of Part 1's rule.
+NOT_CLAIMED = {
+    "AWS: Medium online vs disclosed": "both cells shift between their halves (exchangeability test, Part 5 section 5)",
+}
+
+
+def seed_sweep(comparisons, a: int, b: int) -> None:
+    """For each comparison, on how many bootstrap seeds in [a, b] the difference interval excludes zero
+    (Part 5, section 5 reports 65 of 200 for AWS vs Azure on Medium (disclosed) over seeds 0 to 199)."""
+    n = b - a + 1
+    print(f"{'comparison':44s} intervals excluding 0, seeds {a}..{b}")
+    for label, x, y in comparisons:
+        k = 0
+        for sd in range(a, b + 1):
+            lo, hi = boot_diff_ci(x, y, seed=sd)
+            k += (lo > 0) or (hi < 0)
+        print(f"{label:44s} {k:4d} of {n}")
+
+
 def main() -> None:
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--seed", type=int, default=BOOT_SEED, help="bootstrap seed (default: the published one)")
+    ap.add_argument("--seed-sweep", type=int, nargs=2, metavar=("FIRST", "LAST"),
+                    help="count, per comparison, the seeds in FIRST..LAST whose interval excludes zero")
+    args = ap.parse_args()
     # self-test the exact null before using it
     assert _u_counts(3, 3) == (1, 1, 2, 3, 3, 3, 3, 2, 1, 1), _u_counts(3, 3)
 
@@ -130,12 +155,14 @@ def main() -> None:
           f"{'MW p':>8s} {'sig':>5s} {'rule':>10s}")
     agree = disagree = 0
     for label, x, y in comparisons:
-        lo, hi = boot_diff_ci(x, y)
+        lo, hi = boot_diff_ci(x, y, seed=args.seed)
         excl = (lo > 0) or (hi < 0)
         u, p, method = mannwhitney(x, y)
         sig = p < ALPHA
         claimed = excl and sig
         flag = "DIFFERENT" if claimed else ("undecided" if not excl else "BLOCKED")
+        if claimed and label in NOT_CLAIMED:
+            flag = "NOT CLAIMED"
         if excl == sig:
             agree += 1
         else:
@@ -146,6 +173,11 @@ def main() -> None:
           f"they disagree on {disagree}.")
     print("BLOCKED = the bootstrap interval excludes zero but the rank test does not agree, so"
           " Part 1's rule forbids claiming the difference.")
+    for lab, why in NOT_CLAIMED.items():
+        print(f"NOT CLAIMED = {lab}: passes both halves but {why}.")
+    if args.seed_sweep:
+        print()
+        seed_sweep(comparisons, *args.seed_sweep)
 
 
 if __name__ == "__main__":

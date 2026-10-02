@@ -19,8 +19,9 @@ and its ratio to the observed best-achieved frontier (``best_ratio``), plus per-
 its own observed floor. The ADMITTED COUNTERFACTUAL references are labelled as such and never asserted exact
 -- the floor ``F_C`` (``floor_ratio``) and the selection excess (``selection_excess_s``, regret against a
 schedule the agent did not run) are reported only on the designed suite and revised down when an observed
-trace undercuts the floor. The two-sided bracket F_C <= optimum <= best-achieved is the honest headline (the
-floor is loose, so the bracket WIDTH, not the floor ratio alone, is the first-class number).
+trace undercuts the floor. [F_C, best-achieved] is reported as an interval between two measured references, not as a proved
+bracket on the optimum: F_C is a sample minimum, so the interval WIDTH, not the floor ratio alone, is the
+first-class number. The field names keep the word bracket.
 """
 from __future__ import annotations
 
