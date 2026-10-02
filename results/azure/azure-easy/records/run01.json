@@ -12,6 +12,7 @@
    "request grid (per month): 10k, 50k, 100k, 500k, 1M, 10M",
    "active compute (driver='other') folded into the per-request cost assuming 1 vCPU + 0.5 GiB held 0.1s per request; always-on / provisioned components folded as a flat monthly floor",
    "Container Apps always-on idle floor: minReplicas=1 x (1 vCPU x $3e-06/vCPU-s + 2 GiB x $3e-06/GiB-s) x 3600 = $0.0324/hr (idle meters, billed on top of active per-request usage)",
+   "managed Postgres Flexible Server 'Standard_B1ms' (32 GB) folded into the standing floor: $0.0235/hr = $17.19/mo",
    "Microsoft.App/managedEnvironments 'env-umami-9k3x7q2p': no standing charge for this resource type (disclosed)"
   ],
   "capture_date": "2026-08-29",

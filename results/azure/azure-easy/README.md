@@ -12,3 +12,11 @@
 | [8](sessions/0851185a-4602-4585-850e-16e796e52db2.jsonl) | 1531.8 | 1231.1 | 300.7 | 56 | 25858 | $2.80 | - | $39.77 | $41.22 | $69.24 |
 | [9](sessions/1112ebf6-be56-4b63-b513-9cb035c3abfc.jsonl) | 1378.7 | 1086.5 | 292.2 | 38 | 24426 | $2.12 | - | $39.77 | $41.22 | $69.24 |
 | [10](sessions/e2dad3f6-6358-4ae4-a70d-bc56b5e0ff20.jsonl) | 2149.8 | 1885.4 | 264.4 | 51 | 20067 | $2.10 | - | $39.77 | $41.22 | $69.24 |
+
+## Record correction (release 1.2.3)
+
+Run 1 (`records/run01.json`): its price notes now carry the line naming its managed Postgres Flexible Server
+('Standard_B1ms', 32 GB, northeurope), which its transcript creates (`az postgres flexible-server create`) and
+which its price already included: its schedule ($40.87/month at 10k requests) is identical to run 2's in the same
+region, whose notes carry the same line. Only the label line was added; no time, split, price or score changed.
+The architecture strata this cell reports become mc+db x7, paas+db x3 (were mc+db x6, paas+db x3, mc x1).
