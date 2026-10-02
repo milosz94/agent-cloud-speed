@@ -55,7 +55,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import copy                                                          # noqa: E402
+
 import paper_tables as pt                                            # noqa: E402
+from acspeed import gold                                             # noqa: E402
 from acspeed import transcript                                       # noqa: E402
 from acspeed import operation as acs_op                              # noqa: E402
 from acspeed.operation import AGENT, PLATFORM, Span, owner_split     # noqa: E402
@@ -305,6 +308,32 @@ def main() -> None:
         print(f"  {k:16s} floor {floors[k][DEFAULT]:7.1f} s   {min(moves[k]):+6.1f}% to {max(moves[k]):+6.1f}%")
     print(f"  the floor moves on {len(varies)} of {len(moves)} cells, by between "
           f"{min(min(v) for v in moves.values()):+.0f} and {max(max(v) for v in moves.values()):+.0f} percent")
+
+    # The ratio interval's upper arm (Table 5.1) is the cell mean of each run's ratio to that floor, so it
+    # moves with it: recomputed by gold.part3_provision on copies of the records whose deploy split is the
+    # leg re-derived at each grid point.
+    deploy_of = {label[:-len(" deploy")]: i for i, (_c, label, _w, _p) in enumerate(all_legs)
+                 if label.endswith(" deploy")}
+    print()
+    print("per cell ratio interval upper arm over the grid (Table 5.1 prints the 60 s value)")
+    for cloud in pt.ANON:
+        for tier_key, suffix, _name in pt.TIERS:
+            recs = pt.published_records(cloud, suffix, tier_key)
+            arms = []
+            for thr in GRID:
+                transcript.MAX_GEN_GAP = thr
+                rr = copy.deepcopy(recs)
+                for r in rr:
+                    i = deploy_of.get(f"{cloud}-{tier_key} run {r.get('run')}")
+                    got = rebuild(windows[i], rules[i]) if i is not None else None
+                    if got:
+                        r["split"].update(got)
+                per = (gold.part3_provision(rr) or {}).get("per_run") or []
+                if per:
+                    arms.append(sum(p["floor_ratio"] for p in per) / len(per))
+            transcript.MAX_GEN_GAP = DEFAULT
+            if arms:
+                print(f"  {cloud + '-' + tier_key:16s} {min(arms):6.2f} to {max(arms):6.2f}  (60 s: {arms[GRID.index(DEFAULT)]:.2f})")
 
     print()
     print(f"leg wall-clock analysed: {sum(table[DEFAULT][c][1] for c in pt.ANON):,.0f} s")
