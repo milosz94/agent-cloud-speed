@@ -68,7 +68,6 @@ def cells():
     return out
 
 
-CLOUDS = CLOUDS
 TN = [t for _, t in TIERS]
 
 
