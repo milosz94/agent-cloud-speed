@@ -30,8 +30,8 @@ zero overlapping windows across the 62 medium rows whose per-run records are pub
 ## Record correction (release 1.2.3, pricer fix)
 
 10 of this cell's records carried cost lines priced from another product, billed FOR a resource rather than the
-resource (VPC Network Access Analyzer per network interface assessed, IoT positioning per position solved, DevOps Guru
-per analysed resource-hour), none of which any run used. `tools/drop_foreign_aws_lines.py` removes them under the fixed
+resource (VPC Network Access Analyzer per network interface assessed, 12 lines; IoT positioning per position solved,
+10 lines; DevOps Guru per analysed CloudFront distribution-hour, 12 lines), none of which any run used. `tools/drop_foreign_aws_lines.py` removes them under the fixed
 pricer rules, lists each under `no_sku_match` and keeps the removed lines with the totals before under
 `removed_2026_10_03`; each total falls by at most $0.00002 an hour. No printed cell mean or frontier result in the
 paper changes; run 2 moves from $72.04 to $72.03 a month, here and in the paper's page-1 table.

@@ -3,15 +3,20 @@
 The 23 Sep review found 63 of the 261 published AWS cost lines (26 of 32 records) priced from a product that bills FOR a
 resource rather than the resource: VPC Network Access Analyzer per network interface assessed, IoT positioning per
 position solved (a target group), DevOps Guru per analysed CloudFront distribution or S3 bucket per hour. None was used.
-Removing them moves no printed cost coordinate or frontier result; reading the 14 DevOps Guru lines' unit as hourly
-without the product rule would add real charges that do not exist, so the product rule is the fix and the unit rule only
-its guard. The VPC API is logged under ec2, so an AmazonVPC line stays an ec2 resource's own product. A refused line
-keeps its reason in no_sku_match.
+Removing them moves no printed cell mean or frontier result. The product rule removes the 33 IoT positioning and DevOps
+Guru lines; the unit rule removes the 30 Network Access Analyzer lines, because the VPC API is logged under ec2, so an
+AmazonVPC line passes the product rule for an ec2 resource. Reading the 14 DevOps Guru lines' unit as hourly without the
+product rule would add real charges that do not exist. A refused line keeps its reason in no_sku_match, in the live
+pricer and in tools/reprice_aws.py.
 """
+import os
+import sys
 import unittest
 from unittest import mock
 
 from acspeed.adapters import aws_ct_cost as ct
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
 
 
 def _sku(usagetype, usd, unit):
@@ -117,6 +122,18 @@ class AtThePointOfUse(unittest.TestCase):
         got = _price(tg, "AWSELB", [], "AmazonVPC", [_sku("USE1-VpcEndpoint-Hours", 0.01, "Hrs")])
         self.assertFalse(got["priced"], got)
 
+    def test_ec2_resource_is_not_priced_from_another_service_s_line(self):
+        eni = {"kind": "networkinterface", "event": "CreateNetworkInterface", "region": "us-east-1", "src": "ec2",
+               "params": {"interfaceType": "interface"}}
+        got = _price(eni, "AmazonEC2", [], "AmazonDevOpsGuru", [_sku("USE1-EC2-Instance-GroupB", 0.0042, "usagehours")])
+        self.assertFalse(got["priced"], got)
+
+    def test_head_noun_is_the_last_word_not_any_word(self):
+        cf = {"kind": "distribution", "event": "CreateDistribution", "region": "us-east-1", "src": "cloudfront",
+              "params": {"priceClass": "PriceClass_All"}}
+        got = _price(cf, "AmazonCloudFront", [], "AmazonDevOpsGuru", [_sku("USE1-DistributionGroupB", 0.0042, "Hrs")])
+        self.assertFalse(got["priced"], got)
+
     def test_eni_assessment_from_amazonvpc_is_still_refused(self):
         eni = {"kind": "networkinterface", "event": "CreateNetworkInterface", "region": "us-east-1", "src": "ec2",
                "params": {"interfaceType": "interface"}}
@@ -127,6 +144,35 @@ class AtThePointOfUse(unittest.TestCase):
 
 
 class RefusalIsRecorded(unittest.TestCase):
+    def _live(self, reason):
+        res = {"kind": "networkinterface", "event": "CreateNetworkInterface", "region": "us-east-1", "src": "ec2",
+               "params": {}}
+        with mock.patch.object(ct, "discover", return_value=([res], [])), \
+             mock.patch.object(ct, "collapse_task_definitions", side_effect=lambda r: (r, [])), \
+             mock.patch.object(ct, "billable_parts", side_effect=lambda r: [dict(r, part="self")]), \
+             mock.patch.object(ct, "price_resource_universal", return_value={"priced": False, "reason": reason}):
+            return ct.run_rate_universal("tok", "2026-10-03", regions=["us-east-1"], describe=lambda r: {})
+
+    def test_unit_refusal_keeps_its_reason_in_no_sku_match(self):
+        d = self._live("USE1-NetworkInterface-Assessment is billed per NetworkInterface-Assessment: no standing hourly rate")
+        self.assertTrue(d["ok"])
+        self.assertIn("no standing hourly rate", d["no_sku_match"][0])
+
+    def test_retroactive_reprice_keeps_both_reasons(self):
+        import reprice_aws
+        res = {"kind": "networkinterface", "event": "CreateNetworkInterface", "region": "us-east-1", "src": "ec2",
+               "params": {}}
+        rec = {"run_token": "tok", "measured_at": "2026-09-01T12:00:00+00:00"}
+        for reason in ("USE1-Solved-IP-Positions (AWSIoT) is not this resource's own line",
+                       "USE1-NetworkInterface-Assessment is billed per NetworkInterface-Assessment: no standing hourly rate"):
+            with mock.patch.object(ct, "discover", return_value=([res], [])), \
+                 mock.patch.object(ct, "collapse_task_definitions", side_effect=lambda r: (r, [])), \
+                 mock.patch.object(ct, "billable_parts", side_effect=lambda r: [dict(r, part="self")]), \
+                 mock.patch.object(ct, "price_resource_universal", return_value={"priced": False, "reason": reason}):
+                d = reprice_aws.reprice(rec, ["us-east-1"])
+            self.assertTrue(d["ok"])
+            self.assertIn(reason, d["no_sku_match"][0])
+
     def test_refused_line_keeps_its_reason_in_no_sku_match(self):
         res = {"kind": "targetgroup", "event": "CreateTargetGroup", "region": "us-east-1",
                "src": "elasticloadbalancing", "params": {}}

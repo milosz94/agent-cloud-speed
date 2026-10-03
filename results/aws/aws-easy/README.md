@@ -16,8 +16,8 @@
 ## Record correction (release 1.2.3, pricer fix)
 
 9 of this cell's records carried cost lines priced from another product, billed FOR a resource rather than the
-resource (VPC Network Access Analyzer per network interface assessed, IoT positioning per position solved, DevOps Guru
-per analysed resource-hour), none of which any run used. `tools/drop_foreign_aws_lines.py` removes them under the fixed
+resource (VPC Network Access Analyzer per network interface assessed, 10 lines; IoT positioning per position solved,
+9 lines), none of which any run used. `tools/drop_foreign_aws_lines.py` removes them under the fixed
 pricer rules, lists each under `no_sku_match` and keeps the removed lines with the totals before under
 `removed_2026_10_03`; each total falls by at most $0.00002 an hour and no figure in the paper changes.
 No time, split or score changed.
