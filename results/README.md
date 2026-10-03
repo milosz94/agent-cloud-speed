@@ -3,6 +3,10 @@
 An agent deploys the umami app + its database to a public URL on each cloud; `acspeed` measures each run
 externally. App: umami. Model: `claude-opus-5`. How runs land here: `PLAYBOOK.md`.
 
+**What the paper covers.** The paper this release accompanies (*A Reproducible, Cloud-Agnostic Baseline
+for Measuring Agent-Cloud Operation Efficiency*) reports the `aws`, `gcp` and `azure` cells only. Any other
+cloud's folder here, now or added later, is not part of that paper.
+
 ## Layout
 
 One folder per cloud, one subfolder per **cell**. A cell is one cloud x tier x regime cut, and it is the

@@ -8,6 +8,6 @@
 
 - **floor-ratio**: mean deploy time / F_C; deploy time = the deploy leg's own critical path, which on the Easy tier equals the externally polled time-to-serving and on the Medium tiers ends before it
 - **95% CI**: bootstrap over the n runs
-- **F_C**: fastest platform-only time observed (cloud provisioning and boot waits; no agent can go below it)
-- **bracket**: [F_C, best observed run]; the true optimum lies inside, x = its width
+- **F_C**: fastest platform-only time observed (cloud provisioning and boot waits) over this cell's clean runs: a sample minimum that later runs can lower, not a proved lower bound
+- **bracket**: [F_C, best observed run], an interval between two measured references, not a proved bracket on the optimum; x = its width
 - **gold**: version of the reference definition; compare ratios only within one version
