@@ -484,7 +484,7 @@ def _mean_law(vals):
 
 
 def frontier_exact(cells: list, replicates: int = 200000) -> dict:
-    """Azure's frontier-membership probability in closed form, with no sampling at all.
+    """Azure's frontier-membership probability, enumerated in closed form for the cost-only event.
 
     Two conditions collapse the two-coordinate comparison to a one-coordinate one. Both are
     CHECKED here, never assumed, because both are properties of this wave rather than of the
@@ -497,6 +497,8 @@ def frontier_exact(cells: list, replicates: int = 200000) -> dict:
 
     Given A and B, Azure is non-dominated exactly when GCP's resampled cost mean exceeds Azure's,
     and that probability is a rational number over the finite law of each cell's resampled mean.
+    A is arithmetic, but B is observed on the replicates drawn, not proved, so the figure is exact for
+    the cost-only event and equals membership only where B holds (Part 5, Table 5.2's note).
 
     Returns the probability, the two condition checks, and the bootstrap's own estimate beside it.
     Raises SystemExit if either condition fails.

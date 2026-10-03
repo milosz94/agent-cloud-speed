@@ -61,18 +61,19 @@ _FLOOR_EPS = 0.10
 
 
 def _competitive_ratio_interval(m_actual: float, floor: float, best_achieved: float) -> List[float]:
-    """The competitive ratio M/OPT reported as an INTERVAL, never a point (literature P0). Because
-    F_C <= OPT <= best_achieved, the true ratio M/OPT lies in [M/best_achieved, M/F_C] = [best_ratio,
-    floor_ratio]. Reporting a single number against a self-declared two-sided bracket is internally
-    inconsistent; the interval is the honest object (the OR optimality-gap convention)."""
+    """The ratio of M to two measured references, reported as an INTERVAL [M/best_achieved, M/F_C] =
+    [best_ratio, floor_ratio], never a point (the OR optimality-gap convention of reporting both arms).
+    It is an interval between two measured references, not a proved bracket on M/OPT: F_C is a sample
+    minimum over the runs it scores, so F_C <= OPT is not guaranteed (Part 3, section 2; Part 5,
+    section 3). The field names keep the word bracket."""
     return [round(m_actual / best_achieved, 3), round(m_actual / floor, 3)]
 
 
 def _floor_sensitivity(best_achieved: float, floor: float, eps: float = _FLOOR_EPS) -> dict:
-    """How the headline bracket ratio moves when the estimated floor F_C is perturbed +/- eps. A ratio
-    that swings wildly under a small floor change is denominator-driven and must be read with that
-    caveat; a stable one shows the estimate is not load-bearing. This is the auditable answer to the
-    top reviewer objection to an estimated optimum."""
+    """How the ratio to the estimated floor F_C moves when F_C is perturbed +/- eps. The ratio is
+    inversely proportional to its denominator, so this bounds the denominator's arithmetic influence
+    (a 10 percent error in F_C is at most an 11.1 percent error in the ratio); it is not an answer to
+    the objection that an estimated optimum is tuned (Part 5, section 3)."""
     return {
         "epsilon": eps,
         "F_C_minus_s": round(floor * (1 - eps), 1),

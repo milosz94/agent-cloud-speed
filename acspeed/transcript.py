@@ -36,7 +36,7 @@ not only the identity):
   its result row looks like the platform. It is HUMAN.
 * A retry is labelled like any other gap, by the event that ends it: this module
   has no broken-response, retry or deadline branch. The paper publishes this lane
-  rule as the codebook of release 1.2.2 (Part 5, section 3); the broken-response
+  rule as the codebook of release 1.2.3 (Part 5, section 3); the broken-response
   criterion and annotator study of earlier drafts were never applied and are not
   part of the published method.
 
