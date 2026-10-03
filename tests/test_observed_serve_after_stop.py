@@ -44,7 +44,7 @@ class ObservedServe(unittest.TestCase):
                 # the stopped-site page may carry a 200 token in its markup; it must still not count, and neither may a
                 # 200 inside a longer number (1200, 12000)
                 _result(30, "b", "hb=200 <title>Web App - Unavailable</title><style>#f{width:200px}</style>\n"
-                                 "hb=503 time=1.200s size=12000\nhb=000"),
+                                 "hb=503 time=1.200s size=12000 len=2000\nhb=000"),
                 _call(40, "c", "curl https://%s/api/heartbeat" % HOST),
                 _result(55, "c", "hb=403 <title>Web App - Unavailable</title>\nhb=200 {\"ok\":true}")]
         stop, seen = self.f(_rec(10.0), rows)          # stop = first event (t=0) + 10 s
