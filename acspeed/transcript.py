@@ -14,9 +14,11 @@ between two consecutive events is charged to the lane of the event that ENDS it,
 so each second is attributed exactly once and the owner durations sum to wall by
 construction. Consequences carried honestly:
 
-* AGENT time is a FLOOR and PLATFORM time a CEILING: a gap ending in a tool
-  result is charged wholly to the platform even if the model was still streaming
-  through part of it.
+* Neither lane is a proved bound: a gap ending in a tool result is charged
+  wholly to the platform even if the model was still streaming through part of
+  it, while inside an operation window a gap of 60 s or less ending in an agent
+  event is charged wholly to the agent (Part 5, Table 5.1's note). The output
+  flags ``agent_is_floor`` and ``platform_is_ceiling`` keep their names.
 * Percentages are of WALL, never of attributed-only time. Dividing by attributed
   would drop held-out idle from the denominator, so a slower platform would
   mechanically raise the agent's share. Idle gaps therefore stay in the chain as
@@ -234,7 +236,7 @@ def _spans_from_rows(rows: Sequence[dict], cap: float, idle_is_platform: bool = 
         lane = lane_of(cur, tool_names)
         # A platform-ending gap is the client-observed latency of a blocking cloud call (a
         # provisioning/readiness poll that blocks for minutes): platform critical-path time at ANY length
-        # (platform is a ceiling; capping it dropped real provisioning wall by ~2.5x). An agent-ending gap
+        # (capping it dropped real provisioning wall by ~2.5x). An agent-ending gap
         # up to MAX_GEN_GAP is model generation (agent). A LONGER agent-ending gap is the agent sitting idle
         # -- but that only means "the cloud is doing the work" INSIDE a single provisioning operation
         # window (`idle_is_platform`, set by the per-operation split); across a raw multi-op trace the same
@@ -315,7 +317,7 @@ def lane_summary(path: str, cap: float = DEFAULT_IDLE_CAP,
         "lane_pct_of_wall": pct,
         "agent_split": _agent_first_token_split(rows, cap, idle_is_platform),
         "events": len(rows),
-        # agent is a floor and platform a ceiling: see the module docstring.
+        # flag names kept; neither lane is a proved bound (see the module docstring).
         "agent_is_floor": True,
         "platform_is_ceiling": True,
     }

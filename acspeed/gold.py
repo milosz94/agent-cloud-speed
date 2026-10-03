@@ -5,8 +5,8 @@ decomposition, two-ratio bracket). This module is the glue that AUTHORS a concre
 acspeed run records, so Part 3 stops being a library and produces a real number.
 
 The degenerate instance is the PROVISION operation as a ONE-edge operation-state graph
-(start -> served). Its floor weight is the min-observed critical-platform-time (the empirical lower
-bound, paper Part 3 Sec. 2 'the floor weights are estimated as minimum-observed
+(start -> served). Its floor weight is the min-observed critical-platform-time (a sample minimum, not a guaranteed
+lower bound; paper Part 3 Sec. 2 'the floor weights are estimated as minimum-observed
 critical-platform-times'); the realized weight of a run is its critical-path makespan. For a
 single-operation suite there are no alternative edges, so selection excess is 0 by construction and
 all excess over the floor is execution excess -- honest for a linear op sequence. The multi-VM suites
@@ -55,8 +55,9 @@ _PROVISIONED = "provisioned"
 GOLD_VERSION = "provision-deploy/1.1.0"
 
 # Floor-sensitivity perturbation (literature P0: the competitive ratio is only as trustworthy as F_C, an
-# ESTIMATED denominator; report how the ratio moves under +/- this fraction so "revised down if undercut"
-# cannot read as "we tuned the denominator").
+# ESTIMATED denominator; report how the ratio moves under +/- this fraction. The ratio is inversely
+# proportional to F_C, so this bounds F_C's arithmetic leverage; it is not an answer to the objection that
+# an estimated optimum is tuned (Part 5, section 3)).
 _FLOOR_EPS = 0.10
 
 
@@ -80,9 +81,9 @@ def _floor_sensitivity(best_achieved: float, floor: float, eps: float = _FLOOR_E
         "F_C_plus_s": round(floor * (1 + eps), 1),
         "bracket_ratio_at_F_C_minus": round(best_achieved / (floor * (1 - eps)), 3) if floor > 0 else None,
         "bracket_ratio_at_F_C_plus": round(best_achieved / (floor * (1 + eps)), 3) if floor > 0 else None,
-        "note": ("bracket ratio = best-achieved / F_C, recomputed at F_C(1-eps) and F_C(1+eps); the spread "
-                 "is the estimated floor's leverage on the headline (a stable spread means the ratio is "
-                 "not denominator-driven)."),
+        "note": ("bracket ratio = best-achieved / F_C, recomputed at F_C(1-eps) and F_C(1+eps); this rescales "
+                 "every cell by the same factor, so it bounds the estimated floor's arithmetic leverage on the "
+                 "ratio and cannot tell a denominator-driven ratio from a stable one (Part 5, section 3)."),
     }
 
 
@@ -211,8 +212,8 @@ def part3_provision(records: Sequence[dict]) -> Optional[dict]:
         "n_runs": len(runs),
         "n_excluded_suspect": excluded_suspect,
         "per_run": per_run,
-        "note": ("F_C = min-observed critical-platform-time over clean goal-reaching runs (empirical "
-                 "floor, loose by construction, so the bracket width is the first-class result). "
+        "note": ("F_C = min-observed critical-platform-time over clean goal-reaching runs (a sample "
+                 "minimum whose bias has no established direction, so the interval width is the first-class result). "
                  "First-poll-flagged (possible leftover-deployment) runs are excluded from the floor "
                  "and frontier. Selection excess is 0 for this on-suite degenerate single-operation "
                  "task (one edge, no alternatives); the multi-VM suites add it. Two-layer disclosure "
