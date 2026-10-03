@@ -830,16 +830,22 @@ def _name_heads(attrs: dict) -> set:
 
 def _standing_hourly(unit: str, usd: float) -> Optional[float]:
     """A list price in its own unit -> dollars per hour, or None when the unit is not a standing one.
-    Hour-family units (Hrs, hours, usagehours, LCU-Hrs) are already hourly; month-family units (Mo,
-    GB-Mo, IOPS-Mo) divide by 730; a per-event unit (Position, NetworkInterface-Assessment, Requests)
+    Hour-family units (Hrs, hours, usagehours, LCU-Hrs, ACU-Hr) are already hourly; month-family units
+    (Mo, GB-Mo, IOPS-Mo) divide by 730; a per-event unit (Position, NetworkInterface-Assessment, Requests)
     has no standing hourly reading and must not be summed into a run-rate."""
     from acspeed.adapters.aws_price_index import _norm
     u = _norm(unit)
-    if "hour" in u or u.startswith("hr") or u.endswith("hrs"):
+    if "hour" in u or u.startswith("hr") or u.endswith("hrs") or u.endswith("hr"):
         return usd
     if "month" in u or u.startswith("mo") or u.endswith("mo"):
         return usd / HOURS_PER_MONTH
     return None
+
+
+def _refusal(reason: str) -> bool:
+    """A line the pricer found and declined (another product's line, or a unit with no standing hourly
+    rate): its reason is kept in no_sku_match so the refusal is explicit, not a silent zero."""
+    return "no standing hourly rate" in reason or "is not this resource's own line" in reason
 
 
 def _denotes(resource: dict, sel: Dict[str, str], m: dict) -> bool:
@@ -1057,8 +1063,10 @@ def _price_with_selectors(resource: dict, sel: Dict[str, str], region: str,
             # CloudFront distribution or S3 bucket per hour, Network Access Analyzer per ENI assessed, IoT
             # per position solved (a target group's words IP and HTTP). A real cross-service line still
             # passes: the usagetype the part names explicitly (a load balancer's public IPv4) or one whose
-            # head noun IS the resource's (USE1-PublicIPv4:InUseAddress for AllocateAddress).
-            if dim and pool is None and not _denotes(resource, sel, m):
+            # head noun IS the resource's (USE1-PublicIPv4:InUseAddress for AllocateAddress). The VPC API
+            # is logged under ec2, so an AmazonVPC line is an ec2 resource's own product (an endpoint's
+            # or a transit gateway's hours); the unit rule below still refuses its per-event lines.
+            if dim and pool is None and not (_denotes(resource, sel, m) or (code == "AmazonVPC" and src == "ec2")):
                 return {"priced": False, "selectors": sel,
                         "reason": f"{m['usagetype']} ({code}) is not this resource's own line"}
             hourly = _standing_hourly(dim["unit"], dim["usd"]) if dim else None
@@ -1418,7 +1426,7 @@ def run_rate_universal(run_token: str, capture_date: str, regions: Optional[List
                     # billable resource that failed to match is visible instead of silently absent, and
                     # so it does not make `ok` false on every run.
                     no_sku.append(f"{part['src']}:{part['event'] or part['kind']}@{part['region']}"
-                                  + (f" ({reason})" if reason.startswith("ambiguous") else ""))
+                                  + (f" ({reason})" if reason.startswith("ambiguous") or _refusal(reason) else ""))
     if not comps and not resources:
         return {"ok": False, "error": f"no billable resource recorded for run token {run_token}",
                 "discovery": "cloudtrail", "unpriced_resources": unpriced}

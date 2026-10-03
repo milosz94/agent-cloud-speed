@@ -84,7 +84,8 @@ def reprice(rec: dict, regions, profile=None) -> dict:
                 if reason.startswith("ambiguous") and p.get("from_own_service"):
                     unpriced.append(f"{part['kind']}[{part.get('part')}]@{part['region']}: {reason}")
                 else:
-                    no_sku.append(f"{part['src']}:{part['event'] or part['kind']}@{part['region']}")
+                    no_sku.append(f"{part['src']}:{part['event'] or part['kind']}@{part['region']}"
+                                  + (f" ({reason})" if ct._refusal(reason) else ""))
     if not comps and not resources:
         return {"ok": False, "error": f"no billable resource recorded for token {token}",
                 "window": [start, end], "unpriced_resources": unpriced}

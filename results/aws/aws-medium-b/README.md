@@ -26,5 +26,6 @@ zero overlapping windows across the 62 medium rows whose per-run records are pub
 7 of this cell's records carried cost lines priced from another product, billed FOR a resource rather than the
 resource (VPC Network Access Analyzer per network interface assessed, IoT positioning per position solved, DevOps Guru
 per analysed resource-hour), none of which any run used. `tools/drop_foreign_aws_lines.py` removes them under the fixed
-pricer rules and lists each under `no_sku_match`; each total moves by less than a cent an hour and no figure in the paper
-changes. No time, split or score changed.
+pricer rules, lists each under `no_sku_match` and keeps the removed lines with the totals before under
+`removed_2026_10_03`; each total falls by at most $0.00002 an hour and no figure in the paper changes.
+No time, split or score changed.

@@ -122,14 +122,6 @@
     "usagetype": "RDS:GP2-Storage"
    },
    {
-    "kind": "networkinterface",
-    "part": "self",
-    "quantity": 1.0,
-    "region": "us-east-1",
-    "sku": "3MUZ8GNDVB5XPGSB",
-    "usagetype": "USE1-NetworkInterface-Assessment"
-   },
-   {
     "kind": "instances",
     "part": "self",
     "quantity": 1.0,
@@ -198,7 +190,25 @@
   "window": [
    "2026-09-03T17:25:39Z",
    "2026-09-04T01:40:39Z"
-  ]
+  ],
+  "removed_2026_10_03": {
+   "reason": "another product's rate, not this resource's own line (pricer fix of 2026-10-03)",
+   "all_in_hourly_usd_before": 0.136041,
+   "monthly_usd_before": 99.3099,
+   "lines": [
+    {
+     "kind": "networkinterface",
+     "part": "self",
+     "quantity": 1.0,
+     "region": "us-east-1",
+     "sku": "3MUZ8GNDVB5XPGSB",
+     "usagetype": "USE1-NetworkInterface-Assessment",
+     "native_unit": "NetworkInterface-Assessment",
+     "raw_unit_price": 0.002,
+     "hourly_usd": 2.7397260273972604e-06
+    }
+   ]
+  }
  },
  "deploy": {
   "agent_model": "claude-opus-5",

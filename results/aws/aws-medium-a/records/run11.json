@@ -112,14 +112,6 @@
     "usagetype": "RDS:GP3-Storage"
    },
    {
-    "kind": "networkinterface",
-    "part": "self",
-    "quantity": 1.0,
-    "region": "us-east-1",
-    "sku": "3MUZ8GNDVB5XPGSB",
-    "usagetype": "USE1-NetworkInterface-Assessment"
-   },
-   {
     "kind": "loadbalancer",
     "part": "self",
     "quantity": 1.0,
@@ -134,14 +126,6 @@
     "region": "us-east-1",
     "sku": "4GQUNXTFWVSGPUZK",
     "usagetype": "USE1-PublicIPv4:InUseAddress"
-   },
-   {
-    "kind": "targetgroup",
-    "part": "self",
-    "quantity": 1.0,
-    "region": "us-east-1",
-    "sku": "8RX8KTTE6KN795F2",
-    "usagetype": "USE1-Solved-IP-Positions"
    },
    {
     "kind": "gb",
@@ -166,22 +150,6 @@
     "region": "us-east-1",
     "sku": "TVRJUC9D5VVSWH8Q",
     "usagetype": "USE1-ContainerSvcUsage:Nano-0.25CPU-0.5GB"
-   },
-   {
-    "kind": "distribution",
-    "part": "self",
-    "quantity": 1.0,
-    "region": "us-east-1",
-    "sku": "4X73UKZD9KT9X5B3",
-    "usagetype": "USE1-CloudFront-Distribution-GroupB"
-   },
-   {
-    "kind": "distribution",
-    "part": "self",
-    "quantity": 1.0,
-    "region": "us-east-1",
-    "sku": "4X73UKZD9KT9X5B3",
-    "usagetype": "USE1-CloudFront-Distribution-GroupB"
    }
   ],
   "provider": "aws",
@@ -198,7 +166,58 @@
   "window": [
    "2026-09-06T14:26:33Z",
    "2026-09-06T22:41:33Z"
-  ]
+  ],
+  "removed_2026_10_03": {
+   "reason": "another product's rate, not this resource's own line (pricer fix of 2026-10-03)",
+   "all_in_hourly_usd_before": 0.09076,
+   "monthly_usd_before": 66.2548,
+   "lines": [
+    {
+     "kind": "networkinterface",
+     "part": "self",
+     "quantity": 1.0,
+     "region": "us-east-1",
+     "sku": "3MUZ8GNDVB5XPGSB",
+     "usagetype": "USE1-NetworkInterface-Assessment",
+     "native_unit": "NetworkInterface-Assessment",
+     "raw_unit_price": 0.002,
+     "hourly_usd": 2.7397260273972604e-06
+    },
+    {
+     "kind": "targetgroup",
+     "part": "self",
+     "quantity": 1.0,
+     "region": "us-east-1",
+     "sku": "8RX8KTTE6KN795F2",
+     "usagetype": "USE1-Solved-IP-Positions",
+     "native_unit": "Position",
+     "raw_unit_price": 0.001,
+     "hourly_usd": 1.3698630136986302e-06
+    },
+    {
+     "kind": "distribution",
+     "part": "self",
+     "quantity": 1.0,
+     "region": "us-east-1",
+     "sku": "4X73UKZD9KT9X5B3",
+     "usagetype": "USE1-CloudFront-Distribution-GroupB",
+     "native_unit": "usagehours",
+     "raw_unit_price": 0.0042,
+     "hourly_usd": 5.753424657534246e-06
+    },
+    {
+     "kind": "distribution",
+     "part": "self",
+     "quantity": 1.0,
+     "region": "us-east-1",
+     "sku": "4X73UKZD9KT9X5B3",
+     "usagetype": "USE1-CloudFront-Distribution-GroupB",
+     "native_unit": "usagehours",
+     "raw_unit_price": 0.0042,
+     "hourly_usd": 5.753424657534246e-06
+    }
+   ]
+  }
  },
  "deploy": {
   "agent_model": "claude-opus-5",
