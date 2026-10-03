@@ -4,8 +4,9 @@
 M is the per-task critical-path total (paper_tables.task_M). The elapsed span is the task from its session's first
 transcript event to its last verification. Their difference is split into the parts the records can name:
 
-    t1 -> first window   from the deploy leg's end (its makespan, which ends at t1) to the next operation's window;
-                         the deploy session goes on after the app serves and that work lies in no timed leg
+    t1 -> first window   from the end of the deploy leg's measured span (t1, except on a deploy leg that holds out
+                         idle time, where it falls that much earlier) to the next operation's window; the deploy
+                         session goes on after the app serves and that work lies in no timed leg
     between cycles       gaps between one restart cycle's verification and the next cycle's start
     window edges         each split leg's declared window less its measured makespan
     unsplit windows      windows with no split (the harness's deploy check)
