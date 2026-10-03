@@ -141,6 +141,49 @@ def _first_under_500_s(serving: dict):
     return min(ts) if ts else None
 
 
+_STATUS_200 = re.compile(r"(?<![0-9.])200(?![0-9])")
+_NOT_THE_APP = ("Web App - Unavailable",)        # the platform's stopped-site page is not the app serving
+
+
+def _result_text(block: dict) -> str:
+    c = block.get("content")
+    if isinstance(c, str):
+        return c
+    return "\n".join(x.get("text", "") for x in (c or []) if isinstance(x, dict))
+
+
+def observed_serve_after_stop(rec: dict, rows: list):
+    """For a run whose clock the original predicate stopped on a non-200, the first moment after that stop at which
+    the agent's own tool output shows the app answering: the result of a tool call aimed at the app's host with a line
+    that carries a 200 and is not the platform's stopped-site page. Returns (stop_epoch, serve_epoch) in transcript
+    time, the stop anchored as the deploy split is (first event + split.makespan_s); serve_epoch is None if the agent
+    never shows the app answering. The agent may look late, so the serve epoch bounds when the app came up from above;
+    it is still far tighter than the cap (the end of the agent's deploy work), which also holds its post-serve work."""
+    stop = T._epoch(rows[0]) + rec["split"]["makespan_s"]
+    host = re.sub(r"^https?://", "", rec.get("url") or "").split("/")[0]
+    if not host:
+        return stop, None
+    uses = {}
+    for row in rows:
+        for b in T._blocks(row):
+            if b.get("type") == "tool_use":
+                uses[b.get("id")] = b
+    for row in rows:
+        if T._epoch(row) <= stop:
+            continue
+        for b in T._blocks(row):
+            if b.get("type") != "tool_result":
+                continue
+            u = uses.get(b.get("tool_use_id"))
+            if not u or host not in json.dumps(u.get("input")):
+                continue
+            # line by line: a check loop prints the stopped-site page and the app's later 200 in one output
+            for line in _result_text(b).splitlines():
+                if _STATUS_200.search(line) and not any(x in line for x in _NOT_THE_APP):
+                    return stop, T._epoch(row)
+    return stop, None
+
+
 def load() -> dict:
     cells = {}
     for cloud in CLOUDS:
@@ -174,6 +217,9 @@ def load() -> dict:
                                                     or "the second site's public hostname" in x for x in sb)
                 if state == "durable-serve":
                     run["t1_original_s"] = _first_under_500_s(s)
+                if state == "original" and s.get("http_code") not in (None, "200") and key != "easy":
+                    stop, seen = observed_serve_after_stop(r, rows)
+                    run["observed_missing_s"] = None if seen is None else seen - stop
                 runs.append(run)
             cells[(cloud, name)] = runs
     return cells
@@ -256,6 +302,16 @@ def azure403_cap(run) -> float:
     deploy work (Part 5, section 6's cap). Returned NEGATIVE: the run gets slower."""
     if run["state"] == "original" and run["stop_code"] not in (None, "200"):
         return -max(0.0, run["agent_finished_at_s"] - run["served_at_s"])
+    return 0.0
+
+
+def azure403_observed(run) -> float:
+    """S3obs: each run the original predicate stopped on a non-200 charged the deploy time its app was measured to
+    still need, from the stop to the agent's own first sight of the app answering (observed_serve_after_stop); a run
+    with no such sight falls back to the cap. Returned NEGATIVE: the run gets slower."""
+    if run["state"] == "original" and run["stop_code"] not in (None, "200"):
+        seen = run.get("observed_missing_s")
+        return -seen if seen is not None else azure403_cap(run)
     return 0.0
 
 
@@ -447,6 +503,11 @@ def build_scenarios(cells_runs):
                 lambda r: azure403_cap(r) if r["tier"] == ONLINE else 0.0, None)
     S["S3b"] = ("Azure 403 cap box corner: only the four Azure Medium (disclosed) runs capped",
                 lambda r: azure403_cap(r) if r["tier"] == DISCL else 0.0, None)
+    S["S3obs"] = ("Azure 403 runs charged the deploy time their app was measured to still need: from the stop to the "
+                  "agent's own first sight of the app answering (the cap's upper bound also holds post-serve work)",
+                  azure403_observed, None)
+    S["S11lowobs"] = ("S1 + S3obs + S9: the rework and the visit change at their low counts with the measured 403 time",
+                      add(both_checker_low, azure403_observed), None)
     S["S3x"] = ("Azure 403 runs excluded (Part 5 section 3's own sensitivity)", None,
                 lambda r: azure403_cap(r) == 0.0)
     S["S4after"] = ("AWS Medium (disclosed) restricted to its runs read by the post-2026-09-05 engine",
@@ -498,12 +559,14 @@ def build_scenarios(cells_runs):
 # the clock stop the 2026-09-04 amendment exists to remove, so it is not an adjustment FOR that change.
 NOT_COUNTED = {"S7"}
 
-# What the paper (Part 5, section 5, "Which verdicts hold across the instrument's changes") counts: only the split
-# of AWS Medium (disclosed) at the 2026-09-05 change. The integration check's rejections (S1, S2) and the five
-# Azure runs stopped on an edge 403 (S3) are part of the clouds as the agent met them and are SIZED in the paper
-# rather than counted; S5 and S8 restrict by date or by prompt form, which the paper's dating to the ten days
-# measured covers. The full table above keeps every scenario, so a reader can count differently.
-PAPER_COUNTED = {"S4after", "S4before"}
+# What the paper (Part 5, section 5, "Which verdicts hold across the instrument's changes") counts: the split of
+# AWS Medium (disclosed) at the 2026-09-05 change, and the five Azure runs the original predicate stopped early
+# charged the deploy time their app was measured to still need (S3obs). The cap (S3) is the upper bound and is
+# reported, not counted: it also charges the agent's post-serve work. Leaving the five out (S3x) is not a correction.
+# The integration check's rejections (S1, S2) are part of the task and SIZED rather than counted; S5 and S8 restrict
+# by date or by prompt form, which the paper's dating to the ten days measured covers. The full table above keeps
+# every scenario, so a reader can count differently.
+PAPER_COUNTED = {"S4after", "S4before", "S3obs"}
 
 
 def verdict_rows(results):
@@ -727,6 +790,7 @@ def main():
             "d9b_low": d9b_low(r), "d9b_high": d9b_high(r), "d9b_high_leg": d9b_high_leg(r),
             "visit_low": visit_low(r), "visit_high": visit_high(r), "azure403_cap": -azure403_cap(r),
             "original_predicate": original_predicate(r),
+            "observed_missing_s": r.get("observed_missing_s"), "azure403_observed": -azure403_observed(r),
             "attempts": (r.get("integrate") or {}).get("attempts"),
             "cycles_lost": r.get("cycles_lost")} for k, rs in cells_runs.items() for r in rs}
         json.dump({"calibration": cal, "seed_spread": spread, "results": results, "verdicts": rows,
