@@ -828,6 +828,33 @@ def _name_heads(attrs: dict) -> set:
     return out
 
 
+def _standing_hourly(unit: str, usd: float) -> Optional[float]:
+    """A list price in its own unit -> dollars per hour, or None when the unit is not a standing one.
+    Hour-family units (Hrs, hours, usagehours, LCU-Hrs) are already hourly; month-family units (Mo,
+    GB-Mo, IOPS-Mo) divide by 730; a per-event unit (Position, NetworkInterface-Assessment, Requests)
+    has no standing hourly reading and must not be summed into a run-rate."""
+    from acspeed.adapters.aws_price_index import _norm
+    u = _norm(unit)
+    if "hour" in u or u.startswith("hr") or u.endswith("hrs"):
+        return usd
+    if "month" in u or u.startswith("mo") or u.endswith("mo"):
+        return usd / HOURS_PER_MONTH
+    return None
+
+
+def _denotes(resource: dict, sel: Dict[str, str], m: dict) -> bool:
+    """Whether a SKU names this resource: its usagetype was asked for explicitly, or the head noun of
+    the usagetype's last part is the resource's own head noun (see `_head_noun`)."""
+    from acspeed.adapters.aws_price_index import _norm
+    ut = str(m.get("usagetype") or "")
+    if _norm(ut) in {_norm(v) for k, v in sel.items() if k.lower() == "usagetype"}:
+        return True
+    chunks = [c for c in re.split(r"[^A-Za-z0-9]+", ut) if c]
+    words = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+", chunks[-1]) if chunks else []
+    head = _head_noun(resource)
+    return bool(head and words and _norm(words[-1]) == head)
+
+
 def price_resource_universal(resource: dict, describe=None, profile: Optional[str] = None) -> dict:
     """Price one discovered resource from the published disclosure. No per-service pricing code.
 
@@ -1024,8 +1051,21 @@ def _price_with_selectors(resource: dict, sel: Dict[str, str], region: str,
         if len(hits) == 1:
             code, m = hits[0]
             dim = next((d for d in m["prices"] if d["usd"] > 0), None)
+            # FOUND ONLY BY THE WHOLE-DISCLOSURE SWEEP, the SKU must DENOTE this resource. Reaching this
+            # pass means the resource's own service had no candidate at all, and what the sweep then finds
+            # is a product that bills FOR the resource, not the resource: DevOps Guru per analysed
+            # CloudFront distribution or S3 bucket per hour, Network Access Analyzer per ENI assessed, IoT
+            # per position solved (a target group's words IP and HTTP). A real cross-service line still
+            # passes: the usagetype the part names explicitly (a load balancer's public IPv4) or one whose
+            # head noun IS the resource's (USE1-PublicIPv4:InUseAddress for AllocateAddress).
+            if dim and pool is None and not _denotes(resource, sel, m):
+                return {"priced": False, "selectors": sel,
+                        "reason": f"{m['usagetype']} ({code}) is not this resource's own line"}
+            hourly = _standing_hourly(dim["unit"], dim["usd"]) if dim else None
+            if dim and hourly is None:
+                return {"priced": False, "selectors": sel,
+                        "reason": f"{m['usagetype']} is billed per {dim['unit']}: no standing hourly rate"}
             if dim:
-                hourly = dim["usd"] if dim["unit"].lower().startswith("hr") else dim["usd"] / HOURS_PER_MONTH
                 return {"priced": True, "service": code, "sku": m["sku"], "usagetype": m["usagetype"],
                         "hourly_usd": hourly, "unit": dim["unit"], "raw": dim["usd"],
                         "selectors": sel}

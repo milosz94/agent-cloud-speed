@@ -28,9 +28,13 @@ _TARGET_GROUP = {"kind": "targetgroup", "event": "CreateTargetGroup", "region": 
                  "params": {"protocol": "HTTP", "healthCheckPath": "/healthz"}}
 
 
+_ADDRESS = {"kind": "address", "event": "AllocateAddress", "region": "us-east-1", "src": "ec2",
+            "params": {"domain": "vpc"}}
+
+
 class TestAmbiguityFromAStrangerIsNotAMissingPrice(unittest.TestCase):
 
-    def _price(self, own_service_hits, other_service_hits):
+    def _price(self, own_service_hits, other_service_hits, resource=_TARGET_GROUP):
         px = "acspeed.adapters.aws_price_index"
 
         def coverage(code, _region, _values, anchor="", unit=""):
@@ -44,7 +48,7 @@ class TestAmbiguityFromAStrangerIsNotAMissingPrice(unittest.TestCase):
              mock.patch(f"{px}.find_sku_by_words", return_value=[]), \
              mock.patch(f"{px}.ondemand_only", side_effect=lambda m, **k: m), \
              mock.patch(f"{px}.resolve_one", side_effect=lambda m, _w: m):
-            return ct.price_resource_universal(_TARGET_GROUP)
+            return ct.price_resource_universal(resource)
 
     def test_candidates_only_from_other_services_are_flagged(self):
         got = self._price([], [_sku("Unrelated-A", 0.01), _sku("Unrelated-B", 0.02)])
@@ -63,7 +67,7 @@ class TestAmbiguityFromAStrangerIsNotAMissingPrice(unittest.TestCase):
     def test_only_an_ambiguous_result_is_triaged_at_all(self):
         """A single candidate is a PRICE, wherever it is published: a public IPv4 is created by ec2 and
         billed by AmazonVPC. The triage must never turn that into a refusal."""
-        got = self._price([], [_sku("USE1-PublicIPv4:InUseAddress", 0.005)])
+        got = self._price([], [_sku("USE1-PublicIPv4:InUseAddress", 0.005)], resource=_ADDRESS)
         self.assertTrue(got["priced"], got)
         self.assertEqual(got["usagetype"], "USE1-PublicIPv4:InUseAddress")
 
