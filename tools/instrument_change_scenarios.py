@@ -184,6 +184,20 @@ def observed_serve_after_stop(rec: dict, rows: list):
     return stop, None
 
 
+def own_stop_lead_s(rec: dict, rows: list):
+    """Seconds from the agent's own last `webapp stop` command before the early stop to that stop (Part 5 section 5:
+    each 403 came seconds after the agent itself had stopped its web app during a repair). None if it issued none."""
+    stop = T._epoch(rows[0]) + rec["split"]["makespan_s"]
+    last = None
+    for row in rows:
+        if T._epoch(row) > stop:
+            break
+        for b in T._blocks(row):
+            if b.get("type") == "tool_use" and "webapp stop" in json.dumps(b.get("input")):
+                last = T._epoch(row)
+    return None if last is None else stop - last
+
+
 def load() -> dict:
     cells = {}
     for cloud in CLOUDS:
@@ -220,6 +234,7 @@ def load() -> dict:
                 if state == "original" and s.get("http_code") not in (None, "200") and key != "easy":
                     stop, seen = observed_serve_after_stop(r, rows)
                     run["observed_missing_s"] = None if seen is None else seen - stop
+                    run["own_stop_lead_s"] = own_stop_lead_s(r, rows)
                 runs.append(run)
             cells[(cloud, name)] = runs
     return cells
@@ -790,7 +805,8 @@ def main():
             "d9b_low": d9b_low(r), "d9b_high": d9b_high(r), "d9b_high_leg": d9b_high_leg(r),
             "visit_low": visit_low(r), "visit_high": visit_high(r), "azure403_cap": -azure403_cap(r),
             "original_predicate": original_predicate(r),
-            "observed_missing_s": r.get("observed_missing_s"), "azure403_observed": -azure403_observed(r),
+            "observed_missing_s": r.get("observed_missing_s"), "own_stop_lead_s": r.get("own_stop_lead_s"),
+            "azure403_observed": -azure403_observed(r),
             "attempts": (r.get("integrate") or {}).get("attempts"),
             "cycles_lost": r.get("cycles_lost")} for k, rs in cells_runs.items() for r in rs}
         json.dump({"calibration": cal, "seed_spread": spread, "results": results, "verdicts": rows,

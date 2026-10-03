@@ -41,7 +41,10 @@ class ObservedServe(unittest.TestCase):
     def test_stopped_site_page_and_failures_do_not_count_but_a_later_200_line_does(self):
         rows = [_call(0, "a", "echo start"), _result(1, "a", "ok"),
                 _call(20, "b", "curl https://%s/api/heartbeat" % HOST),
-                _result(30, "b", "hb=403 <title>Web App - Unavailable</title>\nhb=503\nhb=000"),
+                # the stopped-site page may carry a 200 token in its markup; it must still not count, and neither may a
+                # 200 inside a longer number (1200, 12000)
+                _result(30, "b", "hb=200 <title>Web App - Unavailable</title><style>#f{width:200px}</style>\n"
+                                 "hb=503 time=1.200s size=12000\nhb=000"),
                 _call(40, "c", "curl https://%s/api/heartbeat" % HOST),
                 _result(55, "c", "hb=403 <title>Web App - Unavailable</title>\nhb=200 {\"ok\":true}")]
         stop, seen = self.f(_rec(10.0), rows)          # stop = first event (t=0) + 10 s
@@ -58,7 +61,9 @@ class ObservedServe(unittest.TestCase):
         import paper_tables as pt
         from acspeed import transcript as T
         want = {"bef9e3ac": 872.5, "4e6d51a7": 119.8, "ca89af8f": 765.7, "432c2ee4": 111.3, "4a7318ab": 558.7}
-        got = {}
+        lead_want = {"bef9e3ac": 8.2, "4e6d51a7": 3.6, "ca89af8f": 7.9, "432c2ee4": 3.7, "4a7318ab": 39.5}
+        import instrument_change_scenarios as ics
+        got, lead = {}, {}
         try:
             for key, sfx, _name in pt.TIERS:
                 for u, r in zip(pt.published_uuids("azure", key), pt.published_records("azure", sfx, key)):
@@ -66,9 +71,11 @@ class ObservedServe(unittest.TestCase):
                         rows = T._load_rows(os.path.join(pt.RESULTS, "azure", "azure-" + key, "sessions", u + ".jsonl"))
                         stop, seen = self.f(r, rows)
                         got[u[:8]] = round(seen - stop, 1)
+                        lead[u[:8]] = round(ics.own_stop_lead_s(r, rows), 1)
         except (OSError, KeyError) as e:                # published tree absent
             self.skipTest("published records not available: %s" % e)
         self.assertEqual(got, want)
+        self.assertEqual(lead, lead_want)
 
 
 if __name__ == "__main__":
