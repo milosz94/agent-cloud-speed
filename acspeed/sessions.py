@@ -18,8 +18,8 @@ from .redact import redact_transcript, scan_for_secrets, scan_for_substrate
 
 _README = """# Sessions (credential-stripped, infrastructure-neutral)
 
-These are the raw agent deploy/measurement sessions behind the paper's numbers and its falsifiability
-claims, redacted so they can ship as auditable evidence: they show what the agent DID, the app it
+These are the raw agent deploy/measurement sessions of this cell, the evidence behind its published
+numbers, redacted so they can ship as auditable evidence: they show what the agent DID, the app it
 deployed and the timing, not any secret or how the cloud is built underneath.
 
 Removed: generated app secrets (passwords, API tokens, encryption keys), any cloud OAuth bearer/JWT,

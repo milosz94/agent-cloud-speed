@@ -125,7 +125,7 @@ new code path.
 
 acspeed is the reference implementation for *A Reproducible, Cloud-Agnostic Baseline for Measuring
 Agent-Cloud Operation Efficiency*, which defines the measurement and reports the study behind
-[`results/`](results/). Not yet published; the link and citation land here when it is.
+the `aws`, `gcp` and `azure` cells of [`results/`](results/). Not yet published; the link and citation land here when it is.
 
 ## Contributing
 
