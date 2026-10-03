@@ -12,3 +12,11 @@
 | [8](sessions/39ed9fee-8d77-4b8c-b1ea-529a06fee622.jsonl) | 256.3 | 152.6 | 103.7 | 12 | 10908 | $0.72 | $66.66 | $66.66 | $66.66 | $66.66 |
 | [9](sessions/d824e1e6-cee3-4768-befa-9680875b1c85.jsonl) | 565.3 | 233.7 | 331.6 | 34 | 32593 | $2.15 | $44.16 | $44.16 | $44.16 | $44.16 |
 | [10](sessions/f3b007ef-2c70-4ce5-a0a5-673abec668fc.jsonl) | 1000.8 | 807.6 | 193.2 | 35 | 19776 | $1.65 | $81.05 | $81.05 | $81.05 | $81.05 |
+
+## Record correction (release 1.2.3, pricer fix)
+
+9 of this cell's records carried cost lines priced from another product, billed FOR a resource rather than the
+resource (VPC Network Access Analyzer per network interface assessed, IoT positioning per position solved, DevOps Guru
+per analysed resource-hour), none of which any run used. `tools/drop_foreign_aws_lines.py` removes them under the fixed
+pricer rules and lists each under `no_sku_match`; each total moves by less than a cent an hour and no figure in the paper
+changes. No time, split or score changed.

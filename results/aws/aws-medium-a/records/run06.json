@@ -7,7 +7,7 @@
  },
  "cloud": "aws",
  "cost_run_rate": {
-  "all_in_hourly_usd": 0.106039,
+  "all_in_hourly_usd": 0.106021,
   "capture_date": "2026-09-01",
   "components": [
    {
@@ -39,34 +39,6 @@
     "raw_unit_price": 0.005
    },
    {
-    "hourly_usd": 1.3698630136986302e-06,
-    "name": "targetgroup",
-    "native_unit": "Position",
-    "quantity": 1.0,
-    "raw_unit_price": 0.001
-   },
-   {
-    "hourly_usd": 2.7397260273972604e-06,
-    "name": "networkinterface",
-    "native_unit": "NetworkInterface-Assessment",
-    "quantity": 1.0,
-    "raw_unit_price": 0.002
-   },
-   {
-    "hourly_usd": 5.753424657534246e-06,
-    "name": "distribution",
-    "native_unit": "usagehours",
-    "quantity": 1.0,
-    "raw_unit_price": 0.0042
-   },
-   {
-    "hourly_usd": 5.753424657534246e-06,
-    "name": "distribution",
-    "native_unit": "usagehours",
-    "quantity": 1.0,
-    "raw_unit_price": 0.0042
-   },
-   {
     "hourly_usd": 0.00889,
     "name": "gb",
     "native_unit": "hours",
@@ -79,13 +51,6 @@
     "native_unit": "hours",
     "quantity": 1.0,
     "raw_unit_price": 0.04048
-   },
-   {
-    "hourly_usd": 2.7397260273972604e-06,
-    "name": "networkinterface",
-    "native_unit": "NetworkInterface-Assessment",
-    "quantity": 1.0,
-    "raw_unit_price": 0.002
    }
   ],
   "discovery": "cloudtrail",
@@ -100,7 +65,7 @@
   "flavor": "bucket+cluster+dbinstance+dbsubnetgroup+distribution+listener+loadbalancer+loggroup+logstream+networkinterface+project+role+securitygroup+service+targetgroup+taskdefinition",
   "fx": null,
   "kind": "standing",
-  "monthly_usd": 77.4085,
+  "monthly_usd": 77.3953,
   "n_resources": 54,
   "no_sku_match": [
    "cloudfront:CreateDistribution@us-east-1",
@@ -115,7 +80,12 @@
    "logs:CreateLogGroup@us-east-1",
    "logs:CreateLogStream@us-east-1",
    "rds:CreateDBSubnetGroup@us-east-1",
-   "s3:CreateBucket@us-east-1"
+   "s3:CreateBucket@us-east-1",
+   "targetgroup (another product's rate, not this resource's own line: IoT positioning per position solved; removed 2026-10-03)",
+   "networkinterface (another product's rate, not this resource's own line: VPC Network Access Analyzer per interface assessed; removed 2026-10-03)",
+   "distribution (another product's rate, not this resource's own line: DevOps Guru per analysed resource-hour; removed 2026-10-03)",
+   "distribution (another product's rate, not this resource's own line: DevOps Guru per analysed resource-hour; removed 2026-10-03)",
+   "networkinterface (another product's rate, not this resource's own line: VPC Network Access Analyzer per interface assessed; removed 2026-10-03)"
   ],
   "ok": true,
   "price_source": "AWS published price list (bulk offer index), on-demand per C19; resources discovered from CloudTrail management events; re-priced retroactively, no live describe",
@@ -216,9 +186,9 @@
    "umami-acs02f78732: 6 revision(s) -> 1 bundle x 1 runner(s)"
   ],
   "traffic_estimate": {
-   "high": 77.41,
-   "low": 77.41,
-   "medium": 77.41
+   "high": 77.4,
+   "low": 77.4,
+   "medium": 77.4
   },
   "unpriced_resources": [],
   "window": [

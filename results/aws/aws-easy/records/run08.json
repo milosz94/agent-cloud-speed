@@ -7,7 +7,7 @@
  },
  "cloud": "aws",
  "cost_run_rate": {
-  "all_in_hourly_usd": 0.091316,
+  "all_in_hourly_usd": 0.091315,
   "capture_date": "2026-08-29",
   "components": [
    {
@@ -23,13 +23,6 @@
     "native_unit": "Hrs",
     "quantity": 3.0,
     "raw_unit_price": 0.005
-   },
-   {
-    "hourly_usd": 1.3698630136986302e-06,
-    "name": "targetgroup",
-    "native_unit": "Position",
-    "quantity": 1.0,
-    "raw_unit_price": 0.001
    },
    {
     "hourly_usd": 0.013335,
@@ -58,7 +51,7 @@
   "flavor": "cluster+listener+loadbalancer+loggroup+logstream+networkinterface+role+securitygroup+service+targetgroup+targetgroupattributes+targets+taskdefinition",
   "fx": null,
   "kind": "standing",
-  "monthly_usd": 66.6607,
+  "monthly_usd": 66.6599,
   "n_resources": 17,
   "no_sku_match": [
    "ec2:CreateNetworkInterface@us-east-1",
@@ -71,7 +64,8 @@
    "elasticloadbalancing:RegisterTargets@us-east-1",
    "iam:CreateRole@us-east-1",
    "logs:CreateLogGroup@us-east-1",
-   "logs:CreateLogStream@us-east-1"
+   "logs:CreateLogStream@us-east-1",
+   "targetgroup (another product's rate, not this resource's own line: IoT positioning per position solved; removed 2026-10-03)"
   ],
   "ok": true,
   "price_source": "AWS published price list (bulk offer index), on-demand per C19; resources discovered from CloudTrail management events; re-priced retroactively, no live describe",

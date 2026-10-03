@@ -20,3 +20,11 @@ operation, plus the durability cycles. Teardown is harness bookkeeping and stays
 `PLAYBOOK.md` states for the easy tier. The parts are disjoint time windows of one session (verified:
 zero overlapping windows across the 62 medium rows whose per-run records are published here), so they sum without double counting, and the
 `deploy-serve` operation carries no cost of its own on any row because the deploy round already holds it.
+
+## Record correction (release 1.2.3, pricer fix)
+
+7 of this cell's records carried cost lines priced from another product, billed FOR a resource rather than the
+resource (VPC Network Access Analyzer per network interface assessed, IoT positioning per position solved, DevOps Guru
+per analysed resource-hour), none of which any run used. `tools/drop_foreign_aws_lines.py` removes them under the fixed
+pricer rules and lists each under `no_sku_match`; each total moves by less than a cent an hour and no figure in the paper
+changes. No time, split or score changed.

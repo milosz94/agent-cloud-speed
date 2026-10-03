@@ -7,7 +7,7 @@
  },
  "cloud": "aws",
  "cost_run_rate": {
-  "all_in_hourly_usd": 0.042003,
+  "all_in_hourly_usd": 0.042,
   "capture_date": "2026-09-06",
   "components": [
    {
@@ -37,13 +37,6 @@
     "native_unit": "Hrs",
     "quantity": 1.0,
     "raw_unit_price": 0.009408602
-   },
-   {
-    "hourly_usd": 2.7397260273972604e-06,
-    "name": "networkinterface",
-    "native_unit": "NetworkInterface-Assessment",
-    "quantity": 1.0,
-    "raw_unit_price": 0.002
    }
   ],
   "discovery": "cloudtrail",
@@ -58,10 +51,11 @@
   "flavor": "containerservice+dbinstance+networkinterface+securitygroup",
   "fx": null,
   "kind": "standing",
-  "monthly_usd": 30.6622,
+  "monthly_usd": 30.66,
   "n_resources": 5,
   "no_sku_match": [
-   "ec2:CreateSecurityGroup@us-east-1"
+   "ec2:CreateSecurityGroup@us-east-1",
+   "networkinterface (another product's rate, not this resource's own line: VPC Network Access Analyzer per interface assessed; removed 2026-10-03)"
   ],
   "ok": true,
   "price_source": "AWS published price list (bulk offer index), on-demand per C19; resources discovered from CloudTrail management events; re-priced retroactively, no live describe",

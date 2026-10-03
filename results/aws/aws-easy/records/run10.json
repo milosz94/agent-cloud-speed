@@ -7,7 +7,7 @@
  },
  "cloud": "aws",
  "cost_run_rate": {
-  "all_in_hourly_usd": 0.111025,
+  "all_in_hourly_usd": 0.111021,
   "capture_date": "2026-08-29",
   "components": [
    {
@@ -39,20 +39,6 @@
     "raw_unit_price": 0.005
    },
    {
-    "hourly_usd": 1.3698630136986302e-06,
-    "name": "targetgroup",
-    "native_unit": "Position",
-    "quantity": 1.0,
-    "raw_unit_price": 0.001
-   },
-   {
-    "hourly_usd": 2.7397260273972604e-06,
-    "name": "networkinterface",
-    "native_unit": "NetworkInterface-Assessment",
-    "quantity": 1.0,
-    "raw_unit_price": 0.002
-   },
-   {
     "hourly_usd": 0.00889,
     "name": "gb",
     "native_unit": "hours",
@@ -79,7 +65,7 @@
   "flavor": "cluster+dbinstance+dbsubnetgroup+listener+loadbalancer+loggroup+logstream+networkinterface+securitygroup+service+targetgroup+taskdefinition",
   "fx": null,
   "kind": "standing",
-  "monthly_usd": 81.0482,
+  "monthly_usd": 81.0453,
   "n_resources": 28,
   "no_sku_match": [
    "ec2:CreateNetworkInterface@us-east-1",
@@ -90,7 +76,9 @@
    "elasticloadbalancing:CreateListener@us-east-1",
    "logs:CreateLogGroup@us-east-1",
    "logs:CreateLogStream@us-east-1",
-   "rds:CreateDBSubnetGroup@us-east-1"
+   "rds:CreateDBSubnetGroup@us-east-1",
+   "targetgroup (another product's rate, not this resource's own line: IoT positioning per position solved; removed 2026-10-03)",
+   "networkinterface (another product's rate, not this resource's own line: VPC Network Access Analyzer per interface assessed; removed 2026-10-03)"
   ],
   "ok": true,
   "price_source": "AWS published price list (bulk offer index), on-demand per C19; resources discovered from CloudTrail management events; re-priced retroactively, no live describe",
